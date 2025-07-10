@@ -1,0 +1,13 @@
+sqlalchemy
+prompt_toolkit
+rich
+python-dotenv
+openai
+PyPDF2
+scholarly
+beautifulsoup4
+requests
+lxml
+thefuzz
+pyperclip
+alembic
