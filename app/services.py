@@ -9,7 +9,6 @@ import json
 import subprocess
 import webbrowser
 from typing import List, Optional, Dict, Any
-from pathlib import Path
 from datetime import datetime
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_
