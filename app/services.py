@@ -203,18 +203,34 @@ class AuthorService:
     def search_authors(self, query: str) -> List[Author]:
         """Search authors by name."""
         with get_db_session() as session:
-            return session.query(Author).filter(
+            authors = session.query(Author).filter(
                 Author.full_name.ilike(f'%{query}%')
             ).all()
+            # Force load all attributes and expunge to make detached
+            for author in authors:
+                _ = author.full_name  # Ensure name is loaded
+            session.expunge_all()
+            return authors
 
 
 class CollectionService:
     """Service for managing collections."""
     
     def get_all_collections(self) -> List[Collection]:
-        """Get all collections."""
+        """Get all collections with their papers loaded."""
         with get_db_session() as session:
-            return session.query(Collection).order_by(Collection.name).all()
+            collections = session.query(Collection).order_by(Collection.name).all()
+            # Force load all attributes and relationships
+            for collection in collections:
+                _ = collection.name  # Ensure name is loaded
+                _ = collection.description  # Ensure description is loaded
+                _ = collection.papers  # Force load papers relationship
+                # Also force load paper details to prevent lazy loading issues
+                for paper in collection.papers:
+                    _ = paper.title
+                    _ = paper.authors  # Force load authors too
+            session.expunge_all()
+            return collections
     
     def get_or_create_collection(self, name: str, description: str = None) -> Collection:
         """Get existing collection or create new one."""
@@ -299,6 +315,59 @@ class CollectionService:
                 session.commit()
             
             return removed_count, errors
+    
+    def update_collection_name(self, old_name: str, new_name: str) -> bool:
+        """Update collection name."""
+        with get_db_session() as session:
+            collection = session.query(Collection).filter(Collection.name == old_name).first()
+            if not collection:
+                return False
+            
+            # Check if new name already exists
+            existing = session.query(Collection).filter(Collection.name == new_name).first()
+            if existing and existing.id != collection.id:
+                return False
+                
+            collection.name = new_name
+            session.commit()
+            return True
+    
+    def remove_paper_from_collection(self, paper_id: int, collection_name: str) -> bool:
+        """Remove a single paper from collection."""
+        with get_db_session() as session:
+            collection = session.query(Collection).filter(Collection.name == collection_name).first()
+            if not collection:
+                return False
+                
+            paper = session.query(Paper).filter(Paper.id == paper_id).first()
+            if not paper:
+                return False
+                
+            if collection in paper.collections:
+                paper.collections.remove(collection)
+                session.commit()
+                return True
+            return False
+    
+    def create_collection(self, name: str, description: str = None) -> Collection:
+        """Create a new collection."""
+        with get_db_session() as session:
+            # Check if collection already exists
+            existing = session.query(Collection).filter(Collection.name == name).first()
+            if existing:
+                return None
+                
+            collection = Collection(name=name, description=description)
+            session.add(collection)
+            session.commit()
+            session.refresh(collection)
+            
+            # Force load attributes before expunging
+            _ = collection.name
+            _ = collection.description
+            _ = collection.papers
+            session.expunge(collection)
+            return collection
 
 
 class SearchService:
