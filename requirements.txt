@@ -10,3 +10,4 @@ fuzzywuzzy>=0.18.0
 python-Levenshtein>=0.21.0
 click>=8.1.0
 colorama>=0.4.6
+rich

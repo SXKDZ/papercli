@@ -13,8 +13,9 @@ from prompt_toolkit.layout import Layout, HSplit, VSplit, Window, WindowAlign
 from prompt_toolkit.layout.containers import ConditionalContainer, ScrollOffsets, Float, FloatContainer
 from prompt_toolkit.layout.controls import FormattedTextControl, BufferControl
 from prompt_toolkit.layout.menus import CompletionsMenu
-from prompt_toolkit.widgets import Frame, TextArea, Label
+from prompt_toolkit.widgets import Frame, TextArea, Label, Dialog
 from prompt_toolkit.buffer import Buffer
+from prompt_toolkit.document import Document
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.shortcuts import message_dialog, input_dialog, button_dialog
 from prompt_toolkit.filters import Condition, has_focus
@@ -32,64 +33,66 @@ from .export_dialog import ExportDialog, SimpleExportDialog
 
 
 class SmartCompleter(Completer):
-    """Smart command completer with subcommand support."""
+    """Smart command completer with subcommand and description support."""
     
     def __init__(self):
         self.commands = {
-            '/add': ['pdf', 'arxiv', 'dblp', 'manual', 'sample'],
-            '/search': [],  # Free text search
-            '/filter': ['year', 'author', 'venue', 'type'],
-            '/select': [],
-            '/help': [],
-            '/chat': [],
-            '/update': ['title', 'authors', 'venue', 'year', 'abstract', 'pdf_path', 'notes'],
-            '/export': ['bibtex', 'markdown', 'html', 'json'],
-            '/delete': [],
-            '/show': [],
-            '/back': [],
-            '/all': [],
-            '/exit': [],
-            '/sort': ['title', 'authors', 'venue', 'year']
+            '/add': ('Add a new paper (from PDF, arXiv, DBLP, etc.)', ['pdf', 'arxiv', 'dblp', 'manual', 'sample']),
+            '/search': ('Search papers by keyword (title, author, etc.)', []),
+            '/filter': ('Filter papers by specific criteria', ['year', 'author', 'venue', 'type']),
+            '/sort': ('Sort the paper list by a field', ['title', 'authors', 'venue', 'year']),
+            '/select': ('Enter multi-selection mode', []),
+            '/clear': ('Clear all selected papers', []),
+            '/chat': ('Chat with an LLM about the selected paper(s)', []),
+            '/edit': ('Edit metadata of the selected paper(s)', ['title', 'authors', 'venue', 'year', 'abstract', 'notes']),
+            '/export': ('Export selected paper(s) to a file or clipboard', ['bibtex', 'markdown', 'html', 'json']),
+            '/delete': ('Delete the selected paper(s)', []),
+            '/show': ('Open the PDF for the selected paper(s)', []),
+            '/help': ('Show the help panel', []),
+            '/exit': ('Exit the application', []),
         }
-    
+
     def get_completions(self, document, complete_event):
         text = document.text_before_cursor
         words = text.split()
         
+        # Completion for main commands
         if not words or (len(words) == 1 and not text.endswith(' ')):
-            # No text yet or partial first word, suggest all commands
             partial_cmd = words[0] if words else ''
-            for cmd in self.commands.keys():
+            for cmd, (description, _) in self.commands.items():
                 if cmd.startswith(partial_cmd):
                     yield Completion(
                         cmd, 
                         start_position=-len(partial_cmd),
-                        display_meta=f"Command: {cmd}"
+                        display_meta=description
                     )
-        elif len(words) == 1 and text.endswith(' '):
-            # Command entered, suggest subcommands
+        
+        # Completion for subcommands
+        elif len(words) >= 1 and text.endswith(' '):
             cmd = words[0]
-            if cmd in self.commands and self.commands[cmd]:
-                for subcmd in self.commands[cmd]:
-                    yield Completion(
-                        subcmd, 
-                        start_position=0,
-                        display_meta=f"Option for {cmd}"
-                    )
+            if cmd in self.commands:
+                _, subcommands = self.commands[cmd]
+                if subcommands:
+                    for subcmd in subcommands:
+                        yield Completion(
+                            subcmd, 
+                            start_position=0,
+                            display_meta=f"Option for {cmd}"
+                        )
+
+        # Completion for partial subcommands
         elif len(words) == 2 and not text.endswith(' '):
-            # Command + partial subcommand (still typing the subcommand)
             cmd = words[0]
-            if cmd in self.commands and self.commands[cmd]:
+            if cmd in self.commands:
+                _, subcommands = self.commands[cmd]
                 partial_subcmd = words[1]
-                for subcmd in self.commands[cmd]:
+                for subcmd in subcommands:
                     if subcmd.startswith(partial_subcmd):
                         yield Completion(
                             subcmd, 
                             start_position=-len(partial_subcmd),
                             display_meta=f"Option for {cmd}"
                         )
-        # Don't offer any completions for commands with 2+ complete words (e.g., "/add pdf ")
-        # This prevents showing completions after a subcommand is already selected
 
 
 class PaperCLI:
@@ -135,9 +138,9 @@ class PaperCLI:
     def load_papers(self):
         """Load papers from database."""
         try:
-            # Preserve selection state
+            # Preserve selection state using paper IDs
             old_selected_index = getattr(self.paper_list_control, 'selected_index', 0)
-            old_selected_papers = getattr(self.paper_list_control, 'selected_papers', set()).copy()
+            old_selected_paper_ids = getattr(self.paper_list_control, 'selected_paper_ids', set()).copy()
             old_in_select_mode = getattr(self.paper_list_control, 'in_select_mode', False)
             
             self.current_papers = self.paper_service.get_all_papers()
@@ -145,7 +148,7 @@ class PaperCLI:
             
             # Restore selection state
             self.paper_list_control.selected_index = min(old_selected_index, len(self.current_papers) - 1) if self.current_papers else 0
-            self.paper_list_control.selected_papers = old_selected_papers
+            self.paper_list_control.selected_paper_ids = old_selected_paper_ids
             self.paper_list_control.in_select_mode = old_in_select_mode
             
             self.status_bar.set_status(f"📚 Loaded {len(self.current_papers)} papers")
@@ -159,27 +162,25 @@ class PaperCLI:
         self.kb = KeyBindings()
         
         # Navigation
-        @self.kb.add('up')
+        @self.kb.add('up', filter=~has_focus(self.help_control))
         def move_up(event):
-            # Check if input buffer has focus
-            if event.app.layout.current_buffer == self.input_buffer:
-                # If completion menu is open, navigate it
-                if self.input_buffer.complete_state:
-                    self.input_buffer.complete_previous()
-                # No history navigation - do nothing for up arrow in input
+            # If completion menu is open, navigate it
+            if self.input_buffer.complete_state:
+                self.input_buffer.complete_previous()
             else:
+                # Otherwise, navigate the paper list
                 self.paper_list_control.move_up()
-        
-        @self.kb.add('down')
+                event.app.invalidate()
+
+        @self.kb.add('down', filter=~has_focus(self.help_control))
         def move_down(event):
-            # Check if input buffer has focus
-            if event.app.layout.current_buffer == self.input_buffer:
-                # If completion menu is open, navigate it
-                if self.input_buffer.complete_state:
-                    self.input_buffer.complete_next()
-                # No history navigation - do nothing for down arrow in input
+            # If completion menu is open, navigate it
+            if self.input_buffer.complete_state:
+                self.input_buffer.complete_next()
             else:
+                # Otherwise, navigate the paper list
                 self.paper_list_control.move_down()
+                event.app.invalidate()
         
         # Selection (in select mode) - smart space key handling
         @self.kb.add('space')
@@ -194,7 +195,7 @@ class PaperCLI:
             elif self.in_select_mode:
                 # Only toggle selection if input is truly empty and we're in select mode
                 self.paper_list_control.toggle_selection()
-                selected_count = len(self.paper_list_control.selected_papers)
+                selected_count = len(self.paper_list_control.selected_paper_ids)
                 self.status_bar.set_status(f"✓ Toggled selection. Selected: {selected_count} papers")
                 event.app.invalidate()  # Force refresh of UI
             else:
@@ -221,7 +222,7 @@ class PaperCLI:
                 self.in_select_mode = False
                 self.paper_list_control.in_select_mode = False
                 # Don't clear selected papers - preserve selection for future operations
-                selected_count = len(self.paper_list_control.selected_papers)
+                selected_count = len(self.paper_list_control.selected_paper_ids)
                 if selected_count > 0:
                     self.status_bar.set_status(f"← Exited selection mode ({selected_count} papers remain selected)")
                 else:
@@ -243,11 +244,13 @@ class PaperCLI:
                 return  # Important: prevent further processing
             elif self.show_error_panel:
                 self.show_error_panel = False
+                self.app.layout.focus(self.input_buffer)
                 self.status_bar.set_status("← Closed error panel")
                 event.app.invalidate()
                 return  # Important: prevent further processing
             elif self.show_help:
                 self.show_help = False
+                self.app.layout.focus(self.input_buffer)
                 self.status_bar.set_status("← Closed help panel")
                 event.app.invalidate()
                 return  # Important: prevent further processing
@@ -255,7 +258,7 @@ class PaperCLI:
                 self.in_select_mode = False
                 self.paper_list_control.in_select_mode = False
                 # Don't clear selected papers - preserve selection for future operations
-                selected_count = len(self.paper_list_control.selected_papers)
+                selected_count = len(self.paper_list_control.selected_paper_ids)
                 if selected_count > 0:
                     self.status_bar.set_status(f"← Exited selection mode ({selected_count} papers remain selected)")
                 else:
@@ -366,18 +369,28 @@ class PaperCLI:
             align=WindowAlign.LEFT
         )
         
-        # Help dialog
-        help_dialog = ConditionalContainer(
-            content=Frame(
-                Window(
-                    content=FormattedTextControl(text=HelpDialog.HELP_TEXT),
-                    wrap_lines=True
-                ),
-                title="PaperCLI Help"
-            ),
-            filter=Condition(lambda: self.show_help)
+        # Help Dialog (as a float)
+        self.help_buffer = Buffer(
+            document=Document(HelpDialog.HELP_TEXT, 0),
+            read_only=True,
+            multiline=True,
         )
-        
+        self.help_control = BufferControl(
+            buffer=self.help_buffer,
+            focusable=True,
+        )
+        self.help_dialog = Dialog(
+            title="PaperCLI Help",
+            body=Window(
+                content=self.help_control,
+                wrap_lines=True,
+                dont_extend_height=False,
+                cursorline=True,
+            ),
+            with_background=False,
+            modal=True,
+        )
+
         # Error panel
         error_panel = ConditionalContainer(
             content=Frame(
@@ -411,13 +424,11 @@ class PaperCLI:
             ),
             # Status
             status_window,
-            # Help dialog overlay
-            help_dialog,
             # Error panel overlay
             error_panel
         ])
         
-        # Wrap in FloatContainer to support completion menu
+        # Wrap in FloatContainer to support completion menu and help dialog
         self.layout = Layout(
             FloatContainer(
                 content=main_container,
@@ -427,7 +438,18 @@ class PaperCLI:
                         bottom=3,  # Position above status bar
                         left=2,
                         transparent=True
-                    )
+                    ),
+                    # Add the help dialog as a float, controlled by the 'show_help' flag
+                    Float(
+                        content=ConditionalContainer(
+                            content=self.help_dialog,
+                            filter=Condition(lambda: self.show_help),
+                        ),
+                        top=2,
+                        bottom=2,
+                        left=10,
+                        right=10,
+                    ),
                 ]
             )
         )
@@ -442,7 +464,7 @@ class PaperCLI:
             width = 120  # Fallback
 
         mode = "SELECT" if self.in_select_mode else "LIST"
-        selected_count = len(self.paper_list_control.selected_papers)
+        selected_count = len(self.paper_list_control.selected_paper_ids)
         
         # Left side of the header
         left_parts = []
@@ -565,32 +587,41 @@ class PaperCLI:
                 self.show_help_dialog()
             elif cmd == '/chat':
                 self.handle_chat_command()
-            elif cmd == '/update':
-                self.handle_update_command(parts[1:])
+            elif cmd == '/edit':
+                self.handle_edit_command(parts[1:])
             elif cmd == '/export':
                 self.handle_export_command(parts[1:])
             elif cmd == '/delete':
                 self.handle_delete_command()
             elif cmd == '/show':
                 self.handle_show_command()
-            elif cmd == '/back':
-                self.handle_back_command()
-            elif cmd == '/all':
-                self.handle_all_command()
+            elif cmd == '/clear':
+                self.handle_clear_command()
             elif cmd == '/exit':
                 self.handle_exit_command()
             elif cmd == '/sort':
                 self.handle_sort_command(parts[1:])
             else:
-                self.status_bar.set_status(f"❓ Unknown command: {cmd}")
+                # If not a known command, assume it's a search query
+                self.handle_search_command(parts)
         
         except Exception as e:
             # Show detailed error in error panel instead of just status bar
             self.show_error_panel_with_message(
                 "Command Error",
-                f"Failed to execute command: {cmd}",
+                f"Failed to execute command: {command}",
                 str(e)
             )
+
+    def handle_clear_command(self):
+        """Handle /clear command - deselect all papers."""
+        if not self.paper_list_control.selected_paper_ids:
+            self.status_bar.set_status("No papers were selected.")
+            return
+            
+        count = len(self.paper_list_control.selected_paper_ids)
+        self.paper_list_control.selected_paper_ids.clear()
+        self.status_bar.set_status(f"✓ Cleared {count} selected paper(s).")
     
     def handle_add_command(self, args: List[str]):
         """Handle /add command."""
@@ -861,8 +892,8 @@ class PaperCLI:
         except Exception as e:
             self.status_bar.set_status(f"❌ Error opening chat: {e}")
     
-    def handle_update_command(self, args: List[str] = None):
-        """Handle /update command."""
+    def handle_edit_command(self, args: List[str] = None):
+        """Handle /edit command."""
         papers_to_update = []
         
         if self.in_select_mode:
@@ -886,7 +917,7 @@ class PaperCLI:
             
             # Parse command line arguments for quick update
             if args and len(args) >= 2:
-                # Quick update: /update field value
+                # Quick update: /edit field value
                 field = args[0].lower()
                 value = " ".join(args[1:])  # Support values with spaces
                 
@@ -894,7 +925,7 @@ class PaperCLI:
                 valid_fields = ['title', 'abstract', 'notes', 'venue_full', 'venue_acronym', 
                               'year', 'paper_type', 'doi', 'pages', 'arxiv_id', 'dblp_url']
                 if field not in valid_fields:
-                    self.status_bar.set_status(f"📖 Usage: /update [title|abstract|notes|venue_full|venue_acronym|year|paper_type|doi|pages] <value>")
+                    self.status_bar.set_status(f"📖 Usage: /edit [title|abstract|notes|venue_full|venue_acronym|year|paper_type|doi|pages] <value>")
                     return
                 
                 # Convert year to int if needed
@@ -1034,124 +1065,6 @@ class PaperCLI:
             self.status_bar.set_status(f"❌ Error exporting papers: {e}")
     
     def handle_delete_command(self):
-        """Handle /delete command."""
-        papers_to_delete = []
-        
-        if self.in_select_mode:
-            papers_to_delete = self.paper_list_control.get_selected_papers()
-            if not papers_to_delete:
-                self.status_bar.set_status(f"⚠️ No papers selected")
-                return
-        else:
-            # Check if there are previously selected papers, otherwise use current paper under cursor
-            selected_papers = self.paper_list_control.get_selected_papers()
-            if selected_papers:
-                papers_to_delete = selected_papers
-            else:
-                current_paper = self.paper_list_control.get_current_paper()
-                if not current_paper:
-                    self.status_bar.set_status(f"⚠️ No paper under cursor")
-                    return
-                papers_to_delete = [current_paper]
-        
-        try:
-            # Confirm deletion
-            from prompt_toolkit.shortcuts import yes_no_dialog
-            
-            paper_titles = [paper.title[:50] + "..." if len(paper.title) > 50 else paper.title 
-                          for paper in papers_to_delete]
-            
-            confirmation = yes_no_dialog(
-                title="Confirm Deletion",
-                text=f"Are you sure you want to delete {len(papers_to_delete)} papers?\n\n" + 
-                     "\n".join(f"• {title}" for title in paper_titles[:5]) +
-                     (f"\n... and {len(paper_titles) - 5} more" if len(paper_titles) > 5 else "")
-            )
-            
-            if confirmation:
-                paper_ids = [paper.id for paper in papers_to_delete]
-                deleted_count = self.paper_service.delete_papers(paper_ids)
-                
-                # Refresh paper list
-                self.load_papers()
-                
-                self.status_bar.set_status(f"🗑️ ✓ Deleted {deleted_count} papers")
-            else:
-                self.status_bar.set_status(f"❌ Deletion cancelled")
-            
-        except Exception as e:
-            self.status_bar.set_status(f"❌ Error deleting papers: {e}")
-    
-    def handle_show_command(self):
-        """Handle /show command."""
-        papers_to_show = []
-        
-        if self.in_select_mode:
-            papers_to_show = self.paper_list_control.get_selected_papers()
-            if not papers_to_show:
-                self.status_bar.set_status(f"⚠️ No papers selected")
-                return
-        else:
-            # Check if there are previously selected papers, otherwise use current paper under cursor
-            selected_papers = self.paper_list_control.get_selected_papers()
-            if selected_papers:
-                papers_to_show = selected_papers
-            else:
-                current_paper = self.paper_list_control.get_current_paper()
-                if not current_paper:
-                    self.status_bar.set_status(f"⚠️ No paper under cursor")
-                    return
-                papers_to_show = [current_paper]
-        
-        try:
-            opened_count = 0
-            for paper in papers_to_show:
-                if paper.pdf_path:
-                    success, error_msg = self.system_service.open_pdf(paper.pdf_path)
-                    if success:
-                        opened_count += 1
-                    else:
-                        # Show detailed error in error panel instead of just status bar
-                        self.show_error_panel_with_message(
-                            "PDF Viewer Error",
-                            f"Failed to open PDF for: {paper.title}",
-                            error_msg
-                        )
-                        break  # Show only first error to avoid spam
-                else:
-                    self.status_bar.set_status(f"📄 ⚠️ No PDF available for: {paper.title}")
-                    break
-            
-            if opened_count > 0:
-                if self.in_select_mode:
-                    mode_info = "selected"
-                elif len(papers_to_show) > 1:
-                    mode_info = "previously selected"
-                else:
-                    mode_info = "current"
-                self.status_bar.set_status(f"📖 ✓ Opened {opened_count} {mode_info} PDF(s)")
-            else:
-                self.status_bar.set_status(f"📄 No PDFs found to open")
-            
-        except Exception as e:
-            self.status_bar.set_status(f"❌ Error opening PDFs: {e}")
-    
-    def handle_back_command(self):
-        """Handle /back command - return to full paper list."""
-        if self.in_select_mode:
-            # Don't exit selection mode, just show all papers while maintaining selection
-            self.load_papers()
-            self.status_bar.set_status(f"📚 Showing all papers (selection mode active)")
-        else:
-            # Return to full list from search/filter results
-            self.load_papers() 
-            self.status_bar.set_status(f"📚 Showing all papers")
-    
-    def handle_all_command(self):
-        """Handle /all command - same as /back but more intuitive."""
-        self.handle_back_command()
-    
-    def handle_exit_command(self):
         """Handle /exit command - exit the application."""
         self.app.exit()
     
@@ -1177,7 +1090,7 @@ class PaperCLI:
         
         try:
             # Preserve selection state
-            old_selected_papers = self.paper_list_control.selected_papers.copy()
+            old_selected_paper_ids = self.paper_list_control.selected_paper_ids.copy()
             old_in_select_mode = self.paper_list_control.in_select_mode
             
             # Sort papers
@@ -1194,7 +1107,7 @@ class PaperCLI:
             
             # Update paper list control
             self.paper_list_control = PaperListControl(self.current_papers)
-            self.paper_list_control.selected_papers = old_selected_papers
+            self.paper_list_control.selected_paper_ids = old_selected_paper_ids
             self.paper_list_control.in_select_mode = old_in_select_mode
             
             order_text = "descending" if reverse else "ascending"
@@ -1210,8 +1123,9 @@ class PaperCLI:
         self.status_bar.set_status(f"❌ {title} - Press ESC to see details")
     
     def show_help_dialog(self):
-        """Show help dialog."""
+        """Show help dialog and focus it."""
         self.show_help = True
+        self.app.layout.focus(self.help_control)
         self.status_bar.set_status("📖 Help panel opened - Press ESC to close")
     
     def run(self):

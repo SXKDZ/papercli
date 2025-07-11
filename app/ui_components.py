@@ -10,13 +10,18 @@ from prompt_toolkit.layout.containers import ConditionalContainer, ScrollOffsets
 from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.widgets import Frame, Box, TextArea, Label, Button, Dialog, RadioList
 from prompt_toolkit.buffer import Buffer
-from prompt_toolkit.formatted_text import FormattedText, HTML
+from prompt_toolkit.formatted_text import FormattedText, HTML, ANSI
 from prompt_toolkit.shortcuts import message_dialog, input_dialog, button_dialog
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.styles import Style
 from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.validation import Validator, ValidationError
 
+from rich.table import Table
+from rich.console import Console
+from rich.text import Text
+from rich.style import Style as RichStyle
+from io import StringIO
 from .models import Paper, Author, Collection
 
 
@@ -25,76 +30,77 @@ class PaperListControl:
     
     def __init__(self, papers: List[Paper]):
         self.papers = papers
+        self.paper_ids = {p.id: i for i, p in enumerate(papers)} # Map paper ID to index
         self.selected_index = 0
-        self.selected_papers = set()
+        self.selected_paper_ids = set() # Store paper IDs, not indices
         self.in_select_mode = False
     
     def get_formatted_text(self) -> FormattedText:
-        """Get formatted text for the paper list."""
+        """Get formatted text for the paper list using rich."""
         if not self.papers:
             return FormattedText([
                 ("class:empty", "No papers found.\n"),
                 ("class:help", "Use /add to add your first paper.")
             ])
-        
-        text = []
-        
-        # Calculate responsive column widths
-        terminal_width = 120  # Assume reasonable terminal width
-        prefix_width = 2  # For ► or ✓/□ 
-        id_width = 6  # For ID column
-        
-        # Minimum widths
-        title_min, authors_min, venue_min, year_width = 30, 20, 15, 4
-        available_width = terminal_width - prefix_width - id_width - year_width - 12  # 12 for spacing and separators
-        
-        # Distribute remaining width proportionally
-        title_width = max(title_min, int(available_width * 0.45))
-        authors_width = max(authors_min, int(available_width * 0.35))
-        venue_width = max(venue_min, available_width - title_width - authors_width)
-        
-        # Add table headers without border (Frame provides it)
-        header_line = f"{'':>{prefix_width}}{'ID':<{id_width}} │ {'Title':<{title_width}} │ {'Authors':<{authors_width}} │ {'Year':<{year_width}} │ {'Collections':<{venue_width}}"
-        separator_line = f"{'':>{prefix_width}}{'─' * id_width}─┼─{'─' * title_width}─┼─{'─' * authors_width}─┼─{'─' * year_width}─┼─{'─' * venue_width}"
-        
-        text.append(("class:table_header", header_line + "\n"))
-        text.append(("class:table_border", separator_line + "\n"))
-        
+
+        console = Console(file=StringIO(), force_terminal=True, width=120) # Use a fixed width for consistent layout
+        table = Table(show_header=True, header_style="bold magenta", box=None, padding=(0, 1), expand=True)
+
+        table.add_column(" ", width=3)  # For selector
+        table.add_column("ID", width=4)
+        table.add_column("Title", no_wrap=True, style="dim", ratio=2)
+        table.add_column("Authors", no_wrap=True, ratio=2)
+        table.add_column("Year", width=6, justify="right")
+        table.add_column("Collections", no_wrap=True, width=25)
+
         for i, paper in enumerate(self.papers):
-            # Determine style and prefix
-            if i == self.selected_index:
-                if i in self.selected_papers:
-                    prefix = "✓ " if self.in_select_mode else "► "
-                    style = "class:selected_highlighted"  # Both selected and current
-                else:
-                    prefix = "□ " if self.in_select_mode else "► "
-                    style = "class:selected"
+            is_current = (i == self.selected_index)
+            is_selected = (paper.id in self.selected_paper_ids)
+
+            # Determine style based on state
+            if is_current:
+                row_style = RichStyle(bgcolor="blue") # Standard blue for the cursor line
+            elif is_selected:
+                row_style = RichStyle(bgcolor="green4") # Muted green for other selected lines
             else:
-                if i in self.selected_papers:
-                    prefix = "✓ "
-                    style = "class:highlighted"  # Selected but not current
-                else:
-                    prefix = "  " if not self.in_select_mode else "□ "
-                    style = "class:paper"
+                row_style = ""
+
+            # Determine prefix based on state
+            if is_current and is_selected:
+                prefix = "► ✓"
+            elif is_current:
+                prefix = "►  "
+            elif is_selected:
+                prefix = "  ✓"
+            elif self.in_select_mode:
+                prefix = "□  "
+            else:
+                prefix = "   "
             
-            # Format paper info with proper truncation
-            paper_id = str(paper.id) if hasattr(paper, 'id') and paper.id else str(i+1)
-            authors = (paper.author_names[:authors_width-3] + "...") if len(paper.author_names) > authors_width else paper.author_names
-            title = (paper.title[:title_width-3] + "...") if len(paper.title) > title_width else paper.title
+            # Truncate text manually for display
+            authors = (paper.author_names[:35] + "...") if len(paper.author_names) > 35 else paper.author_names
+            title = (paper.title[:45] + "...") if len(paper.title) > 45 else paper.title
             year = str(paper.year) if paper.year else "----"
             
-            # Get collections for display
             collections = ""
             if hasattr(paper, 'collections') and paper.collections:
                 collection_names = [c.name if hasattr(c, 'name') else str(c) for c in paper.collections]
                 collections = ", ".join(collection_names)
-            collections = (collections[:venue_width-3] + "...") if len(collections) > venue_width else collections
-            
-            # Create properly aligned table row with column separators
-            line = f"{prefix}{paper_id:<{id_width}} │ {title:<{title_width}} │ {authors:<{authors_width}} │ {year:<{year_width}} │ {collections:<{venue_width}}"
-            text.append((style, line + "\n"))
-        
-        return FormattedText(text)
+            collections = (collections[:23] + "...") if len(collections) > 23 else collections
+
+            table.add_row(
+                Text(prefix),
+                Text(str(paper.id)),
+                Text(title),
+                Text(authors),
+                Text(year),
+                Text(collections),
+                style=row_style
+            )
+
+        console.print(table)
+        output = console.file.getvalue()
+        return ANSI(output)
     
     def move_up(self):
         """Move selection up."""
@@ -109,10 +115,12 @@ class PaperListControl:
     def toggle_selection(self):
         """Toggle selection of current paper (in select mode)."""
         if self.in_select_mode:
-            if self.selected_index in self.selected_papers:
-                self.selected_papers.remove(self.selected_index)
-            else:
-                self.selected_papers.add(self.selected_index)
+            current_paper = self.get_current_paper()
+            if current_paper:
+                if current_paper.id in self.selected_paper_ids:
+                    self.selected_paper_ids.remove(current_paper.id)
+                else:
+                    self.selected_paper_ids.add(current_paper.id)
     
     def get_current_paper(self) -> Optional[Paper]:
         """Get currently selected paper."""
@@ -122,7 +130,7 @@ class PaperListControl:
     
     def get_selected_papers(self) -> List[Paper]:
         """Get all selected papers."""
-        return [self.papers[i] for i in self.selected_papers if i < len(self.papers)]
+        return [p for p in self.papers if p.id in self.selected_paper_ids]
 
 
 class StatusBar:
@@ -227,45 +235,39 @@ class HelpDialog:
 PaperCLI Help
 =============
 
-Commands:
----------
-/add      Add a new paper (PDF, arXiv, DBLP, Google Scholar)
-/search   Search papers by title, author, venue, etc.
-/filter   Filter papers by criteria
-/select   Enter multi-selection mode
-/help     Show this help
+Core Commands:
+--------------
+/add      Add a new paper (from PDF, arXiv, DBLP, etc.)
+/search   Search papers by keyword (or just type to search)
+/filter   Filter papers by specific criteria (e.g., year, author)
+/sort     Sort the paper list by a field (e.g., title, year)
+/select   Enter multi-selection mode to act on multiple papers
+/clear    Clear all selected papers
+/help     Show this help panel (or press F1)
+/exit     Exit the application (or press Ctrl+C)
 
-Paper Operations (work on cursor or selection):
------------------------------------------------
-/chat     Chat with LLM about paper(s)
-/update   Update any field of paper(s)
-/show     Show PDF(s) in system viewer
+Paper Operations (work on the paper under the cursor ► or selected papers ✓):
+-----------------------------------------------------------------------------
+/chat     Chat with an LLM about the paper(s)
+/edit     Edit metadata of the paper(s)
+/show     Open the PDF for the paper(s)
+/export   Export paper(s) to a file or clipboard (BibTeX, Markdown, etc.)
+/delete   Delete the paper(s) from the library
 
-Multi-Selection Commands (require /select):
-------------------------------------------
-/export   Export papers to various formats
-/delete   Delete selected papers
-/back     Show all papers
+Navigation & Interaction:
+-------------------------
+↑/↓       Navigate the paper list
+Space     Toggle selection for a paper (only in /select mode)
+Enter     Execute a command from the input bar
+ESC       Close panels (Help, Error), exit selection mode, or clear the input bar
+Tab       Trigger and cycle through auto-completions
 
-Navigation:
+Indicators:
 -----------
-↑/↓       Navigate paper list
-Space     Toggle selection (in multi-select mode)
-ESC       Exit multi-selection mode / Clear input
-Enter     Execute command
-Ctrl+C    Exit application
-
-Usage Modes:
-------------
-LIST MODE:    /chat, /update, /show work on current paper (cursor)
-SELECT MODE:  /chat, /update, /show work on selected papers
-              Use Space to select multiple papers
-
-Icons:
-------
 ►         Current cursor position
-✓         Selected paper (in multi-select mode)
-□         Unselected paper (in multi-select mode)
+✓         Selected paper
+► ✓       Current cursor is on a selected paper
+□         An unselected paper (only shown in /select mode)
 """
     
     @staticmethod
