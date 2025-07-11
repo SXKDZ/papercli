@@ -23,7 +23,7 @@ from prompt_toolkit.layout.containers import (
 from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.layout.menus import CompletionsMenu
 from prompt_toolkit.styles import Style
-from prompt_toolkit.widgets import Dialog, Frame
+from prompt_toolkit.widgets import Dialog, Frame, Button, Label
 
 from .export_dialog import SimpleExportDialog
 from .models import Paper
@@ -1655,54 +1655,66 @@ The doctor command helps maintain database health by:
 
         if self.in_select_mode:
             papers_to_delete = self.paper_list_control.get_selected_papers()
-            if not papers_to_delete:
-                self.status_bar.set_warning("No papers selected")
-                return
         else:
-            # Check if there are previously selected papers, otherwise use current paper under cursor
             selected_papers = self.paper_list_control.get_selected_papers()
             if selected_papers:
                 papers_to_delete = selected_papers
             else:
                 current_paper = self.paper_list_control.get_current_paper()
-                if not current_paper:
-                    self.status_bar.set_warning("No paper under cursor")
-                    return
-                papers_to_delete = [current_paper]
+                if current_paper:
+                    papers_to_delete = [current_paper]
 
-        try:
-            # Confirm deletion
-            from prompt_toolkit.shortcuts import yes_no_dialog
+        if not papers_to_delete:
+            self.status_bar.set_warning("No papers selected")
+            return
 
-            paper_titles = [
-                paper.title[:50] + "..." if len(paper.title) > 50 else paper.title
-                for paper in papers_to_delete
-            ]
+        future = self.app.loop.create_future()
+        future.add_done_callback(
+            lambda future: self.app.layout.container.floats.pop()
+        )
 
-            confirmation = yes_no_dialog(
-                title="Confirm Deletion",
-                text=f"Are you sure you want to delete {len(papers_to_delete)} papers?\n\n"
-                + "\n".join(f"• {title}" for title in paper_titles[:5])
-                + (
-                    f"\n... and {len(paper_titles) - 5} more"
-                    if len(paper_titles) > 5
-                    else ""
-                ),
-            )
-
-            if confirmation:
+        def perform_delete():
+            future.set_result(None)
+            try:
                 paper_ids = [paper.id for paper in papers_to_delete]
                 deleted_count = self.paper_service.delete_papers(paper_ids)
-
-                # Refresh paper list
                 self.load_papers()
-
                 self.status_bar.set_success(f"Deleted {deleted_count} papers")
-            else:
-                self.status_bar.set_error("Deletion cancelled")
+            except Exception as e:
+                self.status_bar.set_error(f"Error during deletion: {e}")
+            
+            self.app.invalidate()
 
-        except Exception as e:
-            self.status_bar.set_error(f"Error deleting papers: {e}")
+        def cancel_delete():
+            future.set_result(None)
+            self.status_bar.set_error("Deletion cancelled")
+            self.app.invalidate()
+
+        paper_titles = [
+            paper.title[:50] + "..." if len(paper.title) > 50 else paper.title
+            for paper in papers_to_delete
+        ]
+        dialog_text = (
+            f"Are you sure you want to delete {len(papers_to_delete)} papers?\n\n"
+            + "\n".join(f"• {title}" for title in paper_titles[:5])
+            + (f"\n... and {len(paper_titles) - 5} more" if len(paper_titles) > 5 else "")
+        )
+
+        confirmation_dialog = Dialog(
+            title="Confirm Deletion",
+            body=Label(text=dialog_text, dont_extend_height=True),
+            buttons=[
+                Button(text="Yes", handler=perform_delete),
+                Button(text="No", handler=cancel_delete),
+            ],
+            with_background=False,
+            modal=True,
+        )
+
+        dialog_float = Float(content=confirmation_dialog)
+        self.app.layout.container.floats.append(dialog_float)
+        self.app.layout.focus(confirmation_dialog)
+        self.app.invalidate()
 
     def handle_open_command(self):
         """Handle /open command."""
