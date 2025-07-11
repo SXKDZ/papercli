@@ -24,6 +24,7 @@ class EditableList:
         self.editable = editable
         self.editing_mode = False
         self.edit_text = ""
+        self.cursor_position = 0  # Track cursor position within edit_text
 
         self.control = FormattedTextControl(
             text=self._get_formatted_text,
@@ -66,8 +67,13 @@ class EditableList:
         for i, item in enumerate(self.items):
             if i == self.selected_index:
                 if self.editing_mode:
-                    # Show edit cursor
-                    result.append(("class:selected", f"> {self.edit_text}"))
+                    # Show edit cursor with special edit styling and cursor indicator at the correct position
+                    text_before_cursor = self.edit_text[:self.cursor_position]
+                    text_after_cursor = self.edit_text[self.cursor_position:]
+                    display_text = f"✎ {text_before_cursor}|{text_after_cursor}"
+                    # Pad the text to highlight the full row width
+                    padding = " " * max(0, 40 - len(display_text))
+                    result.append(("class:editing", display_text + padding))
                 else:
                     # Show selection
                     result.append(("class:selected", f"> {item}"))
@@ -92,23 +98,38 @@ class EditableList:
                 self._trigger_select()
 
         @kb.add("enter")
-        def enter_edit(event):
-            if self.editable and not self.editing_mode:
+        def handle_enter(event):
+            if self.editing_mode:
+                # Save edit when in editing mode
+                if self.edit_text.strip():
+                    if 0 <= self.selected_index < len(self.items):
+                        old_item = self.items[self.selected_index]
+                        self.items[self.selected_index] = self.edit_text.strip()
+                        if self.on_edit:
+                            self.on_edit(old_item, self.edit_text.strip())
+                    self.editing_mode = False
+                    self.edit_text = ""
+                    self.cursor_position = 0
+                    self._trigger_select()
+            elif self.editable:
+                # Enter edit mode when not editing
                 current = self.get_current_item()
                 if current:
                     self.editing_mode = True
                     self.edit_text = current
+                    self.cursor_position = len(current)  # Start cursor at end
 
         @kb.add("escape")
         def escape_edit(event):
             if self.editing_mode:
                 self.editing_mode = False
                 self.edit_text = ""
+                self.cursor_position = 0
             else:
                 # Pass escape to parent
                 event.app.layout.focus_previous()
 
-        @kb.add("c-s")  # Ctrl+S to save edit
+        @kb.add("c-s")  # Ctrl+S to save edit (kept for compatibility)
         def save_edit(event):
             if self.editing_mode and self.edit_text.strip():
                 if 0 <= self.selected_index < len(self.items):
@@ -118,24 +139,46 @@ class EditableList:
                         self.on_edit(old_item, self.edit_text.strip())
                 self.editing_mode = False
                 self.edit_text = ""
+                self.cursor_position = 0
                 self._trigger_select()
+
+        @kb.add("left")
+        def move_cursor_left(event):
+            if self.editing_mode and self.cursor_position > 0:
+                self.cursor_position -= 1
+
+        @kb.add("right")
+        def move_cursor_right(event):
+            if self.editing_mode and self.cursor_position < len(self.edit_text):
+                self.cursor_position += 1
+
+        @kb.add("home")
+        def move_cursor_home(event):
+            if self.editing_mode:
+                self.cursor_position = 0
+
+        @kb.add("end")
+        def move_cursor_end(event):
+            if self.editing_mode:
+                self.cursor_position = len(self.edit_text)
 
         @kb.add("backspace")
         def handle_backspace(event):
-            if self.editing_mode:
-                self.edit_text = self.edit_text[:-1]
+            if self.editing_mode and self.cursor_position > 0:
+                self.edit_text = self.edit_text[:self.cursor_position-1] + self.edit_text[self.cursor_position:]
+                self.cursor_position -= 1
 
         @kb.add("delete")
         def handle_delete(event):
-            if self.editing_mode:
-                # Delete doesn't change text at cursor in this simple implementation
-                pass
+            if self.editing_mode and self.cursor_position < len(self.edit_text):
+                self.edit_text = self.edit_text[:self.cursor_position] + self.edit_text[self.cursor_position+1:]
 
         @kb.add("c-c")  # Ctrl+C to cancel edit
         def cancel_edit(event):
             if self.editing_mode:
                 self.editing_mode = False
                 self.edit_text = ""
+                self.cursor_position = 0
 
         # Handle text input during editing
         @kb.add("<any>")
@@ -143,7 +186,32 @@ class EditableList:
             if self.editing_mode and event.data and len(event.data) == 1:
                 char = event.data
                 if char.isprintable():
-                    self.edit_text += char
+                    # Insert character at cursor position
+                    self.edit_text = self.edit_text[:self.cursor_position] + char + self.edit_text[self.cursor_position:]
+                    self.cursor_position += 1
+
+        # Add tab navigation for the dialog (only when not editing)
+        @kb.add("tab")
+        def handle_tab_navigation(event):
+            if not self.editing_mode and hasattr(self, 'parent_dialog'):
+                try:
+                    dialog = self.parent_dialog
+                    dialog.current_focus_index = (dialog.current_focus_index + 1) % len(dialog.focusable_components)
+                    event.app.layout.focus(dialog.focusable_components[dialog.current_focus_index])
+                except Exception:
+                    # Fallback to normal tab behavior
+                    pass
+
+        @kb.add("s-tab")  # Shift+Tab
+        def handle_shift_tab_navigation(event):
+            if not self.editing_mode and hasattr(self, 'parent_dialog'):
+                try:
+                    dialog = self.parent_dialog
+                    dialog.current_focus_index = (dialog.current_focus_index - 1) % len(dialog.focusable_components)
+                    event.app.layout.focus(dialog.focusable_components[dialog.current_focus_index])
+                except Exception:
+                    # Fallback to normal shift+tab behavior
+                    pass
 
         return kb
 
@@ -182,10 +250,12 @@ class CollectionDialog:
             on_select=self.on_collection_select,
             on_edit=self.on_collection_edit,
         )
+        self.collections_list.parent_dialog = self  # Add reference to parent
 
         self.papers_in_collection_list = EditableList(
             [], on_select=self.on_paper_select, editable=False
         )
+        self.papers_in_collection_list.parent_dialog = self  # Add reference to parent
 
         all_paper_titles = [
             p.title[:50] + "..." if len(p.title) > 50 else p.title for p in papers
@@ -193,20 +263,19 @@ class CollectionDialog:
         self.other_papers_list = EditableList(
             all_paper_titles, on_select=self.on_paper_select, editable=False
         )
+        self.other_papers_list.parent_dialog = self  # Add reference to parent
 
         # Paper details display
         self.paper_details = TextArea(
             text="Select a paper to view details",
             read_only=True,
-            height=Dimension(min=4, max=6),
+            height=Dimension(min=3, max=3),
             wrap_lines=True,
         )
 
         # Action buttons between lists
-        add_button = Button(text="← Add", handler=self.add_paper_to_collection)
-        remove_button = Button(
-            text="Remove →", handler=self.remove_paper_from_collection
-        )
+        add_button = Button(text="←", handler=self.add_paper_to_collection)
+        remove_button = Button(text="→", handler=self.remove_paper_from_collection)
 
         button_container = HSplit(
             [
@@ -216,7 +285,7 @@ class CollectionDialog:
                 remove_button,
                 Window(height=2),  # More spacer
             ],
-            width=Dimension(min=15, preferred=18),
+            width=Dimension(min=3, preferred=3, max=3),
         )
 
         # Main layout with three columns
@@ -277,13 +346,15 @@ class CollectionDialog:
             body=dialog_body,
             buttons=[
                 Button(text="Save", handler=self.save_changes),
-                Button(text="Save & Close", handler=self.save_and_close),
-                Button(text="Cancel", handler=self.cancel),
+                Button(text="Discard", handler=self.discard_changes),
+                Button(text="Close", handler=self.cancel),
             ],
-            width=Dimension(min=120, preferred=140),
-            with_background=True,
-            key_bindings=self._create_dialog_key_bindings(),
+            width=Dimension(min=140, preferred=160),
+            with_background=False,
         )
+        
+        # Add dialog key bindings directly to the dialog
+        self.dialog.container.key_bindings = self._create_dialog_key_bindings()
 
         # Initialize with first collection if available
         if collections:
@@ -306,6 +377,11 @@ class CollectionDialog:
                 self.focusable_components
             )
             event.app.layout.focus(self.focusable_components[self.current_focus_index])
+
+        @kb.add("escape")
+        def quit_dialog(event):
+            # Close the dialog when escape is pressed
+            self.cancel()
 
         return kb
 
@@ -407,22 +483,33 @@ class CollectionDialog:
                 break
 
         if paper:
-            details = [
-                f"Title: {paper.title}",
-                f"Authors: {paper.author_names}",
-                f"Year: {paper.year or 'N/A'}",
-                f"Venue: {paper.venue_display}",
-                f"Type: {paper.paper_type or 'N/A'}",
-            ]
-            if paper.abstract:
-                abstract = (
-                    paper.abstract[:200] + "..."
-                    if len(paper.abstract) > 200
-                    else paper.abstract
-                )
-                details.append(f"Abstract: {abstract}")
-
-            self.paper_details.text = "\n".join(details)
+            # Create a compact one-liner citation format
+            authors = paper.author_names or "Unknown Authors"
+            title = paper.title
+            venue = paper.venue_display or "Unknown Venue"
+            year = paper.year or "N/A"
+            paper_type = paper.paper_type or "Unknown"
+            
+            # Format as: Authors, "Title," Venue, Type. Date.
+            # Truncate long fields to fit in one line
+            if len(authors) > 60:
+                authors = authors[:57] + "..."
+            if len(title) > 80:
+                title = title[:77] + "..."
+            if len(venue) > 40:
+                venue = venue[:37] + "..."
+            
+            # Create citation-style format
+            citation = f'{authors}, "{title}," {venue}'
+            
+            # Add type and date if available
+            if paper_type != "Unknown":
+                citation += f", vol. {paper_type}"
+            if year != "N/A":
+                citation += f". {year}"
+            citation += "."
+            
+            self.paper_details.text = citation
         else:
             self.paper_details.text = "Paper details not found"
 
@@ -554,6 +641,16 @@ class CollectionDialog:
         # Return updated collections to the callback
         changes = {"collections": self.all_collections, "action": "save", "close": True}
         self.callback(changes)
+
+    def discard_changes(self):
+        """Discard all changes without saving."""
+        # Clear all pending changes
+        self.collection_changes.clear()
+        self.paper_moves.clear()
+        self.new_collections.clear()
+        
+        if self.status_bar:
+            self.status_bar.set_status("Changes discarded")
 
     def cancel(self):
         """Cancel changes and close dialog."""
