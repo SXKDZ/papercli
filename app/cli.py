@@ -31,6 +31,7 @@ from .services import (
     AuthorService,
     ChatService,
     CollectionService,
+    DatabaseHealthService,
     ExportService,
     MetadataExtractor,
     PaperService,
@@ -122,6 +123,7 @@ class SmartCompleter(Completer):
             },
             "/help": {"description": "Show the help panel", "subcommands": {}},
             "/log": {"description": "Show the error log panel", "subcommands": {}},
+            "/doctor": {"description": "Diagnose and fix database/system issues", "subcommands": {}},
             "/exit": {"description": "Exit the application", "subcommands": {}},
         }
 
@@ -228,6 +230,7 @@ Indicators (in the first column):
         self.export_service = ExportService()
         self.chat_service = ChatService()
         self.system_service = SystemService()
+        self.db_health_service = DatabaseHealthService()
 
         # UI state
         self.smart_completer = SmartCompleter()
@@ -254,6 +257,138 @@ Indicators (in the first column):
         self.show_error_panel = True
         self.app.layout.focus(self.error_control)
         self.status_bar.set_status("📜 Error log opened - Press ESC to close")
+
+    def handle_doctor_command(self, args: List[str]):
+        """Handle /doctor command for database diagnostics and cleanup."""
+        try:
+            action = args[0] if args else "diagnose"
+            
+            if action == "diagnose":
+                self.status_bar.set_status("🔍 Running diagnostic checks...")
+                report = self.db_health_service.run_full_diagnostic()
+                self._show_doctor_report(report)
+                
+            elif action == "clean":
+                self.status_bar.set_status("🧹 Cleaning orphaned records...")
+                cleaned = self.db_health_service.clean_orphaned_records()
+                
+                total_cleaned = sum(cleaned.values())
+                if total_cleaned > 0:
+                    message = f"✓ Cleaned {total_cleaned} orphaned records"
+                    details = "\n".join([
+                        f"• Paper-collection associations: {cleaned['paper_collections']}",
+                        f"• Paper-author associations: {cleaned['paper_authors']}"
+                    ])
+                    self.show_error_panel_with_message("PaperCLI Doctor - Cleanup Complete", message, details)
+                    self.status_bar.set_success(f"Database cleanup complete - {total_cleaned} records removed")
+                else:
+                    self.status_bar.set_success("No orphaned records found - database is clean")
+                    
+            elif action == "help":
+                help_text = """Database Doctor Commands:
+
+/doctor                 - Run full diagnostic check
+/doctor diagnose        - Run full diagnostic check  
+/doctor clean          - Clean orphaned database records
+/doctor help           - Show this help
+
+The doctor command helps maintain database health by:
+• Checking database integrity and structure
+• Detecting orphaned association records
+• Verifying system dependencies  
+• Checking terminal capabilities
+• Providing automated cleanup"""
+                
+                self.show_error_panel_with_message("PaperCLI Doctor - Help", "Available commands and options", help_text)
+                
+            else:
+                self.status_bar.set_error(f"Unknown doctor action: {action}. Use 'diagnose', 'clean', or 'help'")
+                
+        except Exception as e:
+            self.show_error_panel_with_message(
+                "PaperCLI Doctor - Error",
+                f"Failed to run doctor command: {str(e)}",
+                f"Action: {action if 'action' in locals() else 'unknown'}\nError details: {str(e)}"
+            )
+
+    def _show_doctor_report(self, report: dict):
+        """Display the doctor diagnostic report."""
+        # Create formatted report text
+        lines = [
+            f"Database Doctor Report - {report['timestamp'][:19]}",
+            "=" * 60,
+            "",
+            "📊 DATABASE HEALTH:",
+        ]
+        
+        db_checks = report['database_checks']
+        lines.extend([
+            f"  Database exists: {'✓' if db_checks['database_exists'] else '✗'}",
+            f"  Tables exist: {'✓' if db_checks['tables_exist'] else '✗'}",
+            f"  Database size: {db_checks.get('database_size', 0) // 1024} KB",
+            f"  Foreign key constraints: {'✓' if db_checks['foreign_key_constraints'] else '✗'}",
+        ])
+        
+        if db_checks.get('table_counts'):
+            lines.append("  Table counts:")
+            for table, count in db_checks['table_counts'].items():
+                lines.append(f"    {table}: {count}")
+        
+        lines.extend(["", "🔗 ORPHANED RECORDS:"])
+        orphaned = report['orphaned_records']['summary']
+        pc_count = orphaned.get('orphaned_paper_collections', 0)
+        pa_count = orphaned.get('orphaned_paper_authors', 0)
+        lines.extend([
+            f"  Paper-collection associations: {pc_count}",
+            f"  Paper-author associations: {pa_count}",
+        ])
+        
+        lines.extend(["", "💻 SYSTEM HEALTH:"])
+        sys_checks = report['system_checks']
+        lines.append(f"  Python version: {sys_checks['python_version']}")
+        lines.append("  Dependencies:")
+        for dep, status in sys_checks['dependencies'].items():
+            lines.append(f"    {dep}: {status}")
+        
+        if 'disk_space' in sys_checks and 'free_mb' in sys_checks['disk_space']:
+            lines.append(f"  Free disk space: {sys_checks['disk_space']['free_mb']} MB")
+        
+        lines.extend(["", "🖥️  TERMINAL SETUP:"])
+        term_checks = report['terminal_checks']
+        lines.extend([
+            f"  Terminal type: {term_checks['terminal_type']}",
+            f"  Unicode support: {'✓' if term_checks['unicode_support'] else '✗'}",
+            f"  Color support: {'✓' if term_checks['color_support'] else '✗'}",
+        ])
+        
+        if 'terminal_size' in term_checks and 'columns' in term_checks['terminal_size']:
+            size = term_checks['terminal_size']
+            lines.append(f"  Terminal size: {size['columns']}x{size['lines']}")
+        
+        # Issues and recommendations
+        if report['issues_found']:
+            lines.extend(["", "⚠ ISSUES FOUND:"])
+            for issue in report['issues_found']:
+                lines.append(f"  • {issue}")
+        
+        if report['recommendations']:
+            lines.extend(["", "💡 RECOMMENDATIONS:"])
+            for rec in report['recommendations']:
+                lines.append(f"  • {rec}")
+        
+        if pc_count > 0 or pa_count > 0:
+            lines.extend([
+                "",
+                "🧹 To clean orphaned records, run: /doctor clean"
+            ])
+        
+        report_text = "\n".join(lines)
+        
+        # Show in error panel (reusing for display)
+        issues_count = len(report['issues_found'])
+        status = "✓ System healthy" if issues_count == 0 else f"⚠ {issues_count} issues found"
+        
+        self.show_error_panel_with_message("PaperCLI Doctor Report", status, report_text)
 
     def load_papers(self):
         """Load papers from database."""
@@ -282,7 +417,7 @@ Indicators (in the first column):
 
             self.status_bar.set_status(f"📚 Loaded {len(self.current_papers)} papers")
         except Exception as e:
-            self.status_bar.set_status(f"❌ Error loading papers: {e}")
+            self.status_bar.set_error(f"Error loading papers: {e}")
             self.current_papers = []
             self.paper_list_control = PaperListControl(self.current_papers)
 
@@ -790,7 +925,11 @@ Indicators (in the first column):
                 ("paper", "#ffffff"),
                 ("empty", "#888888 italic"),
                 ("help", "#00aa00"),
-                ("status", "#ffffff bg:#444444"),  # Darker background for status bar
+                ("status", "#ffffff bg:#444444"),  # Default status bar
+                ("status-info", "#ffffff bg:#444444"),  # Info status (default)
+                ("status-success", "#ffffff bg:#00aa00"),  # Success status (green)
+                ("status-error", "#ffffff bg:#cc0000"),  # Error status (red)
+                ("status-warning", "#000000 bg:#ffaa00"),  # Warning status (orange)
                 ("progress", "#ffff00 bg:#444444"),
                 ("error", "#ff0000"),
                 ("success", "#00ff00"),
@@ -832,7 +971,7 @@ Indicators (in the first column):
         try:
             if not command.strip().startswith("/"):
                 self.status_bar.set_status(
-                    f"❌ Invalid input. All commands must start with '/'."
+                    f"✗ Invalid input. All commands must start with '/'."
                 )
                 return
 
@@ -854,6 +993,8 @@ Indicators (in the first column):
                     self.show_help_dialog()
                 elif cmd == "/log":
                     self.handle_log_command()
+                elif cmd == "/doctor":
+                    self.handle_doctor_command(parts[1:])
                 elif cmd == "/chat":
                     self.handle_chat_command()
                 elif cmd == "/edit":
@@ -873,7 +1014,7 @@ Indicators (in the first column):
                 elif cmd == "/sort":
                     self.handle_sort_command(parts[1:])
             else:
-                self.status_bar.set_status(f"❌ Unknown command: {cmd}")
+                self.status_bar.set_error(f"Unknown command: {cmd}")
 
         except Exception as e:
             # Show detailed error in error panel instead of just status bar
@@ -901,7 +1042,7 @@ Indicators (in the first column):
 
         count = len(self.paper_list_control.selected_paper_ids)
         self.paper_list_control.selected_paper_ids.clear()
-        self.status_bar.set_status(f"✓ Cleared {count} selected paper(s).")
+        self.status_bar.set_success(f"Cleared {count} selected paper(s).")
 
     def handle_add_command(self, args: List[str]):
         """Handle /add command."""
@@ -929,7 +1070,7 @@ Indicators (in the first column):
                 )
 
         except Exception as e:
-            self.status_bar.set_status(f"❌ Error adding paper: {e}")
+            self.status_bar.set_error(f"Error adding paper: {e}")
 
     def _quick_add_arxiv(self, arxiv_id: str):
         """Quickly add a paper from arXiv."""
@@ -1039,7 +1180,7 @@ Indicators (in the first column):
             # Refresh display
             self.load_papers()
 
-            self.status_bar.set_status(f"✓ Added: {paper.title[:50]}...")
+            self.status_bar.set_success(f"Added: {paper.title[:50]}...")
 
         except Exception as e:
             self.show_error_panel_with_message(
@@ -1115,7 +1256,7 @@ Indicators (in the first column):
             )
 
         except Exception as e:
-            self.status_bar.set_status(f"❌ Error searching papers: {e}")
+            self.status_bar.set_error(f"Error searching papers: {e}")
 
     def handle_filter_command(self, args: List[str]):
         """Handle /filter command."""
@@ -1165,7 +1306,7 @@ Indicators (in the first column):
             )
 
         except Exception as e:
-            self.status_bar.set_status(f"❌ Error filtering papers: {e}")
+            self.status_bar.set_error(f"Error filtering papers: {e}")
 
     def handle_select_command(self):
         """Handle /select command."""
@@ -1182,7 +1323,7 @@ Indicators (in the first column):
         if self.in_select_mode:
             papers_to_chat = self.paper_list_control.get_selected_papers()
             if not papers_to_chat:
-                self.status_bar.set_status(f"⚠️ No papers selected")
+                self.status_bar.set_warning("No papers selected")
                 return
         else:
             # Check if there are previously selected papers, otherwise use current paper under cursor
@@ -1192,7 +1333,7 @@ Indicators (in the first column):
             else:
                 current_paper = self.paper_list_control.get_current_paper()
                 if not current_paper:
-                    self.status_bar.set_status(f"⚠️ No paper under cursor")
+                    self.status_bar.set_warning("No paper under cursor")
                     return
                 papers_to_chat = [current_paper]
 
@@ -1212,11 +1353,11 @@ Indicators (in the first column):
                 else:
                     mode_info = "current"
                 self.status_bar.set_status(
-                    f"💬 ✓ Chat interface opened for {len(papers_to_chat)} {mode_info} paper(s)"
+                    f"✓ Chat interface opened for {len(papers_to_chat)} {mode_info} paper(s)"
                 )
 
         except Exception as e:
-            self.status_bar.set_status(f"❌ Error opening chat: {e}")
+            self.status_bar.set_error(f"Error opening chat: {e}")
 
     def handle_edit_command(self, args: List[str] = None):
         """Handle /edit command."""
@@ -1225,7 +1366,7 @@ Indicators (in the first column):
         if self.in_select_mode:
             papers_to_update = self.paper_list_control.get_selected_papers()
             if not papers_to_update:
-                self.status_bar.set_status(f"⚠️ No papers selected")
+                self.status_bar.set_warning("No papers selected")
                 return
         else:
             # Check if there are previously selected papers, otherwise use current paper under cursor
@@ -1235,7 +1376,7 @@ Indicators (in the first column):
             else:
                 current_paper = self.paper_list_control.get_current_paper()
                 if not current_paper:
-                    self.status_bar.set_status(f"⚠️ No paper under cursor")
+                    self.status_bar.set_warning("No paper under cursor")
                     return
                 papers_to_update = [current_paper]
 
@@ -1282,7 +1423,7 @@ Indicators (in the first column):
                 updates = dialog.show_update_dialog(papers_to_update)
 
                 if not updates:
-                    self.status_bar.set_status(f"❌ Update cancelled")
+                    self.status_bar.set_error("Update cancelled")
                     return
 
             self.status_bar.set_status(f"🔄 Updating papers...")
@@ -1308,7 +1449,7 @@ Indicators (in the first column):
             else:
                 mode_info = "current"
             self.status_bar.set_status(
-                f"🔄 ✓ Updated {field_name} for {updated_count} {mode_info} paper(s)"
+                f"✓ Updated {field_name} for {updated_count} {mode_info} paper(s)"
             )
 
         except Exception as e:
@@ -1324,7 +1465,7 @@ Indicators (in the first column):
         if self.in_select_mode:
             papers_to_export = self.paper_list_control.get_selected_papers()
             if not papers_to_export:
-                self.status_bar.set_status(f"⚠️ No papers selected")
+                self.status_bar.set_warning("No papers selected")
                 return
         else:
             # Check if there are previously selected papers, otherwise use current paper under cursor
@@ -1334,7 +1475,7 @@ Indicators (in the first column):
             else:
                 current_paper = self.paper_list_control.get_current_paper()
                 if not current_paper:
-                    self.status_bar.set_status(f"⚠️ No paper under cursor")
+                    self.status_bar.set_warning("No paper under cursor")
                     return
                 papers_to_export = [current_paper]
 
@@ -1374,7 +1515,7 @@ Indicators (in the first column):
                 export_params = dialog.show_export_dialog(len(papers_to_export))
 
                 if not export_params:
-                    self.status_bar.set_status(f"❌ Export cancelled")
+                    self.status_bar.set_error("Export cancelled")
                     return
 
             self.status_bar.set_status(f"📤 Exporting papers...")
@@ -1400,7 +1541,7 @@ Indicators (in the first column):
                 with open(filename, "w", encoding="utf-8") as f:
                     f.write(content)
                 self.status_bar.set_status(
-                    f"📤 ✓ Exported {len(papers_to_export)} papers to {filename}"
+                    f"✓ Exported {len(papers_to_export)} papers to {filename}"
                 )
 
             elif destination == "clipboard":
@@ -1412,7 +1553,7 @@ Indicators (in the first column):
                     self.status_bar.set_status("Error copying to clipboard")
 
         except Exception as e:
-            self.status_bar.set_status(f"❌ Error exporting papers: {e}")
+            self.status_bar.set_error(f"Error exporting papers: {e}")
 
     def handle_delete_command(self):
         """Handle /delete command."""
@@ -1421,7 +1562,7 @@ Indicators (in the first column):
         if self.in_select_mode:
             papers_to_delete = self.paper_list_control.get_selected_papers()
             if not papers_to_delete:
-                self.status_bar.set_status(f"⚠️ No papers selected")
+                self.status_bar.set_warning("No papers selected")
                 return
         else:
             # Check if there are previously selected papers, otherwise use current paper under cursor
@@ -1431,7 +1572,7 @@ Indicators (in the first column):
             else:
                 current_paper = self.paper_list_control.get_current_paper()
                 if not current_paper:
-                    self.status_bar.set_status(f"⚠️ No paper under cursor")
+                    self.status_bar.set_warning("No paper under cursor")
                     return
                 papers_to_delete = [current_paper]
 
@@ -1462,12 +1603,12 @@ Indicators (in the first column):
                 # Refresh paper list
                 self.load_papers()
 
-                self.status_bar.set_status(f"️ ✓ Deleted {deleted_count} papers")
+                self.status_bar.set_success(f"Deleted {deleted_count} papers")
             else:
-                self.status_bar.set_status(f"❌ Deletion cancelled")
+                self.status_bar.set_error("Deletion cancelled")
 
         except Exception as e:
-            self.status_bar.set_status(f"❌ Error deleting papers: {e}")
+            self.status_bar.set_error(f"Error deleting papers: {e}")
 
     def handle_open_command(self):
         """Handle /open command."""
@@ -1476,7 +1617,7 @@ Indicators (in the first column):
         if self.in_select_mode:
             papers_to_open = self.paper_list_control.get_selected_papers()
             if not papers_to_open:
-                self.status_bar.set_status(f"⚠️ No papers selected")
+                self.status_bar.set_warning("No papers selected")
                 return
         else:
             # Check if there are previously selected papers, otherwise use current paper under cursor
@@ -1486,7 +1627,7 @@ Indicators (in the first column):
             else:
                 current_paper = self.paper_list_control.get_current_paper()
                 if not current_paper:
-                    self.status_bar.set_status(f"⚠️ No paper under cursor")
+                    self.status_bar.set_warning("No paper under cursor")
                     return
                 papers_to_open = [current_paper]
 
@@ -1507,7 +1648,7 @@ Indicators (in the first column):
                         break  # Show only first error
                 else:
                     self.status_bar.set_status(
-                        f" ⚠️ No PDF available for: {paper.title}"
+                        f"⚠ No PDF available for: {paper.title}"
                     )
                     break
 
@@ -1519,13 +1660,13 @@ Indicators (in the first column):
                 else:
                     mode_info = "current"
                 self.status_bar.set_status(
-                    f" ✓ Opened {opened_count} {mode_info} PDF(s)"
+                    f"✓ Opened {opened_count} {mode_info} PDF(s)"
                 )
             else:
-                self.status_bar.set_status(f"❌ No PDFs found to open")
+                self.status_bar.set_error("No PDFs found to open")
 
         except Exception as e:
-            self.status_bar.set_status(f"❌ Error opening PDFs: {e}")
+            self.status_bar.set_error(f"Error opening PDFs: {e}")
 
     def handle_exit_command(self):
         """Handle /exit command - exit the application."""
@@ -1535,7 +1676,7 @@ Indicators (in the first column):
         """Handle /sort command - sort papers by field."""
         if not args:
             self.status_bar.set_status(
-                "⚠️ Usage: /sort <field> [asc|desc]. Fields: title, authors, venue, year"
+                "⚠ Usage: /sort <field> [asc|desc]. Fields: title, authors, venue, year"
             )
             return
 
@@ -1547,13 +1688,13 @@ Indicators (in the first column):
 
         if field not in valid_fields:
             self.status_bar.set_status(
-                f"⚠️ Invalid field '{field}'. Valid fields: {', '.join(valid_fields)}"
+                f"⚠ Invalid field '{field}'. Valid fields: {', '.join(valid_fields)}"
             )
             return
 
         if order not in valid_orders:
             self.status_bar.set_status(
-                f"⚠️ Invalid order '{order}'. Valid orders: asc, desc"
+                f"⚠ Invalid order '{order}'. Valid orders: asc, desc"
             )
             return
 
@@ -1584,10 +1725,10 @@ Indicators (in the first column):
             self.paper_list_control.in_select_mode = old_in_select_mode
 
             order_text = "descending" if reverse else "ascending"
-            self.status_bar.set_status(f"📊 ✓ Sorted by {field} ({order_text})")
+            self.status_bar.set_success(f"Sorted by {field} ({order_text})")
 
         except Exception as e:
-            self.status_bar.set_status(f"❌ Error sorting papers: {e}")
+            self.status_bar.set_error(f"Error sorting papers: {e}")
 
     def handle_detail_command(self):
         """Handle /detail command."""
@@ -1596,7 +1737,7 @@ Indicators (in the first column):
             if not papers_to_open:
                 current_paper = self.paper_list_control.get_current_paper()
                 if not current_paper:
-                    self.status_bar.set_status("⚠️ No paper selected.")
+                    self.status_bar.set_warning("No paper selected.")
                     return
                 papers_to_open = [current_paper]
 

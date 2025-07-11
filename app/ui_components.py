@@ -159,28 +159,58 @@ class PaperListControl:
 
 
 class StatusBar:
-    """Status bar component."""
+    """Status bar component with color-coded status types."""
 
     def __init__(self):
         self.status_text = "Ready"
         self.progress_text = ""
+        self.status_type = "info"  # info, success, error, warning
 
-    def set_status(self, text: str):
-        """Set status text."""
-        self.status_text = text
+    def set_status(self, text: str, status_type: str = "info"):
+        """Set status text with optional type for color coding."""
+        # Automatically add prefix based on status type
+        prefixes = {
+            "success": "✓ ",
+            "error": "✗ ",
+            "warning": "⚠ ",
+            "info": ""
+        }
+        
+        prefix = prefixes.get(status_type, "")
+        # Only add prefix if message doesn't already have a symbol
+        if prefix and not any(text.strip().startswith(sym) for sym in ["✓", "✗", "⚠", "📚", "🎯", "🔽", "💬", "🔄", "📤", "📊", "🧹", "🔍"]):
+            self.status_text = prefix + text
+        else:
+            self.status_text = text
+            
+        self.status_type = status_type
+
+    def set_success(self, text: str):
+        """Set success status (green background with ✓ prefix)."""
+        self.set_status(text, "success")
+
+    def set_error(self, text: str):
+        """Set error status (red background with ✗ prefix)."""
+        self.set_status(text, "error")
+
+    def set_warning(self, text: str):
+        """Set warning status (yellow background with ⚠ prefix)."""
+        self.set_status(text, "warning")
 
     def set_progress(self, text: str):
         """Set progress text."""
         self.progress_text = text
 
     def get_formatted_text(self) -> FormattedText:
-        """Get formatted text for status bar."""
+        """Get formatted text for status bar with color coding."""
         if self.progress_text:
             content = f" {self.status_text}  {self.progress_text} "
         else:
             content = f" {self.status_text} "
 
-        return FormattedText([("class:status", content)])
+        # Choose style class based on status type
+        style_class = f"class:status-{self.status_type}"
+        return FormattedText([(style_class, content)])
 
 
 class CommandValidator(Validator):
