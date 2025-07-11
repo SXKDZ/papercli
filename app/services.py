@@ -102,6 +102,12 @@ class PaperService:
                 return 0
             
             for paper in papers_to_delete:
+                if paper.pdf_path and os.path.exists(paper.pdf_path):
+                    try:
+                        os.remove(paper.pdf_path)
+                    except Exception:
+                        # Log this error, but don't prevent db deletion
+                        pass
                 session.delete(paper)
                 
             session.commit()
@@ -990,6 +996,7 @@ class DatabaseHealthService:
             "timestamp": datetime.utcnow().isoformat(),
             "database_checks": self._check_database_health(),
             "orphaned_records": self._check_orphaned_records(),
+            "orphaned_pdfs": self._check_orphaned_pdfs(),
             "system_checks": self._check_system_health(),
             "terminal_checks": self._check_terminal_setup(),
             "issues_found": self.issues_found,
@@ -1194,6 +1201,9 @@ class DatabaseHealthService:
         if report["orphaned_records"]["summary"].get("orphaned_paper_authors", 0) > 0:
             recommendations.append("Clean up orphaned paper-author associations")
         
+        if report.get("orphaned_pdfs", {}).get("summary", {}).get("orphaned_pdf_files", 0) > 0:
+            recommendations.append("Clean up orphaned PDF files")
+        
         # System recommendations
         missing_deps = [dep for dep, status in report["system_checks"]["dependencies"].items() 
                        if "Missing" in status]
@@ -1208,6 +1218,61 @@ class DatabaseHealthService:
             recommendations.append("Enable color support in terminal")
         
         return recommendations
+    
+    def _check_orphaned_pdfs(self) -> Dict[str, Any]:
+        """Check for orphaned PDF files in the PDF directory."""
+        orphaned = {
+            "files": [],
+            "summary": {}
+        }
+        
+        try:
+            with get_db_session() as session:
+                from .database import get_db_manager
+                db_manager = get_db_manager()
+                pdf_dir = os.path.join(os.path.dirname(db_manager.db_path), "pdfs")
+                
+                if not os.path.exists(pdf_dir):
+                    return orphaned
+                    
+                all_pdfs_in_db = {p.pdf_path for p in session.query(Paper).filter(Paper.pdf_path.isnot(None)).all()}
+                
+                disk_pdfs = {os.path.join(pdf_dir, f) for f in os.listdir(pdf_dir) if f.endswith('.pdf')}
+                
+                orphaned_files = list(disk_pdfs - all_pdfs_in_db)
+                
+                orphaned["files"] = orphaned_files
+                orphaned["summary"]["orphaned_pdf_files"] = len(orphaned_files)
+                
+                if orphaned_files:
+                    self.issues_found.append(f"Found {len(orphaned_files)} orphaned PDF files")
+        except Exception as e:
+            self.issues_found.append(f"Could not check for orphaned PDFs: {e}")
+            
+        return orphaned
+
+    def clean_orphaned_pdfs(self) -> Dict[str, int]:
+        """Clean up orphaned PDF files."""
+        cleaned = {"pdf_files": 0}
+        
+        try:
+            report = self._check_orphaned_pdfs()
+            orphaned_files = report.get("files", [])
+            
+            for f in orphaned_files:
+                try:
+                    os.remove(f)
+                    cleaned["pdf_files"] += 1
+                except Exception:
+                    pass # ignore errors on individual file deletions
+            
+            if cleaned["pdf_files"] > 0:
+                self.fixes_applied.append(f"Cleaned {cleaned['pdf_files']} orphaned PDF files")
+                
+        except Exception as e:
+            raise Exception(f"Failed to clean orphaned PDFs: {e}")
+        
+        return cleaned
     
     def clean_orphaned_records(self) -> Dict[str, int]:
         """Clean up orphaned records in the database."""

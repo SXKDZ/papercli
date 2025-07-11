@@ -279,32 +279,37 @@ Indicators (in the first column):
                 self._show_doctor_report(report)
                 
             elif action == "clean":
-                self.status_bar.set_status("🧹 Cleaning orphaned records...")
-                cleaned = self.db_health_service.clean_orphaned_records()
+                self.status_bar.set_status("🧹 Cleaning orphaned records and files...")
+                cleaned_records = self.db_health_service.clean_orphaned_records()
+                cleaned_pdfs = self.db_health_service.clean_orphaned_pdfs()
                 
-                total_cleaned = sum(cleaned.values())
-                if total_cleaned > 0:
-                    message = f"✓ Cleaned {total_cleaned} orphaned records"
-                    details = "\n".join([
-                        f"• Paper-collection associations: {cleaned['paper_collections']}",
-                        f"• Paper-author associations: {cleaned['paper_authors']}"
-                    ])
-                    self.show_error_panel_with_message("PaperCLI Doctor - Cleanup Complete", message, details)
-                    self.status_bar.set_success(f"Database cleanup complete - {total_cleaned} records removed")
+                total_cleaned_records = sum(cleaned_records.values())
+                total_cleaned_pdfs = sum(cleaned_pdfs.values())
+                
+                if total_cleaned_records > 0 or total_cleaned_pdfs > 0:
+                    details = []
+                    if total_cleaned_records > 0:
+                        details.append(f"• Records: {total_cleaned_records}")
+                    if total_cleaned_pdfs > 0:
+                        details.append(f"• PDF files: {total_cleaned_pdfs}")
+                    
+                    message = f"✓ Cleaned orphaned items"
+                    self.show_error_panel_with_message("PaperCLI Doctor - Cleanup Complete", message, "\n".join(details))
+                    self.status_bar.set_success(f"Database cleanup complete")
                 else:
-                    self.status_bar.set_success("No orphaned records found - database is clean")
+                    self.status_bar.set_success("No orphaned items found - database is clean")
                     
             elif action == "help":
                 help_text = """Database Doctor Commands:
 
 /doctor                 - Run full diagnostic check
 /doctor diagnose        - Run full diagnostic check  
-/doctor clean          - Clean orphaned database records
-/doctor help           - Show this help
+/doctor clean           - Clean orphaned database records and PDF files
+/doctor help            - Show this help
 
 The doctor command helps maintain database health by:
 • Checking database integrity and structure
-• Detecting orphaned association records
+• Detecting orphaned association records and PDF files
 • Verifying system dependencies  
 • Checking terminal capabilities
 • Providing automated cleanup"""
@@ -345,13 +350,18 @@ The doctor command helps maintain database health by:
                 lines.append(f"    {table}: {count}")
         
         lines.extend(["", "🔗 ORPHANED RECORDS:"])
-        orphaned = report['orphaned_records']['summary']
-        pc_count = orphaned.get('orphaned_paper_collections', 0)
-        pa_count = orphaned.get('orphaned_paper_authors', 0)
+        orphaned_records = report['orphaned_records']['summary']
+        pc_count = orphaned_records.get('orphaned_paper_collections', 0)
+        pa_count = orphaned_records.get('orphaned_paper_authors', 0)
         lines.extend([
             f"  Paper-collection associations: {pc_count}",
             f"  Paper-author associations: {pa_count}",
         ])
+
+        orphaned_pdfs = report.get('orphaned_pdfs', {}).get('summary', {})
+        pdf_count = orphaned_pdfs.get('orphaned_pdf_files', 0)
+        if pdf_count > 0:
+            lines.append(f"  Orphaned PDF files: {pdf_count}")
         
         lines.extend(["", "💻 SYSTEM HEALTH:"])
         sys_checks = report['system_checks']
