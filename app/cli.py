@@ -1038,6 +1038,7 @@ The doctor command helps maintain database health by:
                 ("progress", "#f8f8f2 bg:#44475a"),
                 # Dialogs & Panels
                 ("textarea", "bg:#222222 #f8f8f2"),
+                ("textarea.readonly", "bg:#333333 #888888"),
                 ("error_header", "bold #f8f8f2 bg:#ff5555"),
                 ("error_title", "bold #ff5555"),
                 ("error_message", "#ffb8b8"),
@@ -1570,12 +1571,11 @@ The doctor command helps maintain database health by:
             )
 
     def _show_edit_dialog(self, papers):
-        # Handle both single paper and multiple papers
         if not isinstance(papers, list):
             papers = [papers]
 
         def callback(result):
-            # Cleanup is the same whether saved or cancelled
+            # This callback is executed when the dialog is closed.
             if self.edit_float in self.app.layout.container.floats:
                 self.app.layout.container.floats.remove(self.edit_float)
             self.edit_dialog = None
@@ -1586,132 +1586,50 @@ The doctor command helps maintain database health by:
                 try:
                     updated_count = 0
                     for paper in papers:
-                        details = []
-                        
-                        # Handle collections separately
-                        collections_to_update = result.pop("collections", [])
-                        
-                        # Update paper fields
-                        for field, value in result.items():
-                            if field == "authors" and isinstance(value, list):
-                                # Handle author updates
-                                old_authors = [author.full_name for author in paper.authors]
-                                details.append(f"'authors' from '{', '.join(old_authors)}' to '{', '.join(value)}'")
-                            else:
-                                old_value = (
-                                    getattr(paper, field)
-                                    if hasattr(paper, field)
-                                    else "N/A"
-                                )
-                                details.append(f"'{field}' from '{old_value}' to '{value}'")
-
+                        # The result from EditDialog now contains proper model objects for relationships
+                        # and can be passed directly to the update service.
                         self.paper_service.update_paper(paper.id, result)
-                        
-                        # Handle collections
-                        if collections_to_update:
-                            from .services import CollectionService
-                            collection_service = CollectionService()
-                            
-                            # Remove paper from all current collections
-                            for collection in paper.collections:
-                                collection_service.remove_paper_from_collection(paper.id, collection.name)
-                            
-                            # Add paper to new collections
-                            for collection_name in collections_to_update:
-                                if collection_name.strip():
-                                    # Create collection if it doesn't exist
-                                    collection_service.create_collection(collection_name.strip())
-                                    # Add paper to collection
-                                    collection_service.add_paper_to_collection(paper.id, collection_name.strip())
-                            
-                            old_collections = [c.name for c in paper.collections]
-                            details.append(f"'collections' from '{', '.join(old_collections)}' to '{', '.join(collections_to_update)}'")
-                        
-                        self._add_log(
-                            "edit_dialog",
-                            f"Updated paper '{paper.title}': " + ", ".join(details),
-                        )
+                        self._add_log("edit_dialog", f"Updated paper '{paper.title}' (ID: {paper.id}).")
                         updated_count += 1
 
                     self.load_papers()
-                    if len(papers) == 1:
-                        self.status_bar.set_success(
-                            f"✓ Updated paper: {papers[0].title[:50]}..."
-                        )
-                    else:
-                        self.status_bar.set_success(
-                            f"✓ Updated {updated_count} paper(s)"
-                        )
+                    self.status_bar.set_success(f"✓ Updated {updated_count} paper(s).")
                 except Exception as e:
-                    self.show_error_panel_with_message(
-                        "Update Error", "Failed to update paper(s)", str(e)
-                    )
+                    self.show_error_panel_with_message("Update Error", "Failed to update paper(s)", str(e))
             else:
-                self.status_bar.set_error("Update cancelled")
+                self.status_bar.set_status("Update cancelled.")
 
             self.app.invalidate()
 
-        # For multiple papers, show common values or placeholders
+        read_only_fields = []
         if len(papers) == 1:
             paper = papers[0]
-            initial_data = {
-                "title": paper.title,
-                "authors": [author.full_name for author in paper.authors],
-                "collections": [collection for collection in paper.collections],
-                "year": paper.year,
-                "venue_full": paper.venue_full or "",
-                "venue_acronym": paper.venue_acronym or "",
-                "volume": paper.volume or "",
-                "issue": paper.issue or "",
-                "pages": paper.pages or "",
-                "doi": paper.doi or "",
-                "arxiv_id": paper.arxiv_id or "",
-                "dblp_url": paper.dblp_url or "",
-                "google_scholar_url": paper.google_scholar_url or "",
-                "pdf_path": paper.pdf_path or "",
-                "paper_type": paper.paper_type or "conference",
-                "abstract": paper.abstract or "",
-                "notes": paper.notes or "",
-            }
+            initial_data = {field.name: getattr(paper, field.name) for field in paper.__table__.columns}
+            initial_data['authors'] = paper.authors
+            initial_data['collections'] = paper.collections
         else:
             # For multiple papers, show common values or indicate multiple values
             def get_common_value(field):
-                values = [getattr(p, field) for p in papers if getattr(p, field)]
-                if not values:
-                    return ""
-                if all(v == values[0] for v in values):
-                    return values[0]
-                return f"<Multiple Values - {len(set(values))} different>"
+                values = {getattr(p, field) for p in papers}
+                return values.pop() if len(values) == 1 else ""
 
             initial_data = {
-                "title": f"<Editing {len(papers)} papers>",
-                "authors": [],  # Too complex for bulk edit
-                "collections": [],  # Too complex for bulk edit
-                "year": get_common_value("year"),
-                "venue_full": get_common_value("venue_full"),
-                "venue_acronym": get_common_value("venue_acronym"),
-                "volume": get_common_value("volume"),
-                "issue": get_common_value("issue"),
-                "pages": get_common_value("pages"),
-                "doi": get_common_value("doi"),
-                "arxiv_id": get_common_value("arxiv_id"),
-                "dblp_url": get_common_value("dblp_url"),
-                "google_scholar_url": get_common_value("google_scholar_url"),
-                "pdf_path": get_common_value("pdf_path"),
-                "paper_type": get_common_value("paper_type") or "conference",
-                "abstract": f"<Editing {len(papers)} papers>",
+                "title": f"<Editing {len(papers)} papers>", "abstract": f"<Editing {len(papers)} papers>",
+                "year": get_common_value("year"), "venue_full": get_common_value("venue_full"),
+                "venue_acronym": get_common_value("venue_acronym"), "volume": get_common_value("volume"),
+                "issue": get_common_value("issue"), "pages": get_common_value("pages"),
+                "doi": get_common_value("doi"), "arxiv_id": get_common_value("arxiv_id"),
+                "dblp_url": get_common_value("dblp_url"), "google_scholar_url": get_common_value("google_scholar_url"),
+                "pdf_path": get_common_value("pdf_path"), "paper_type": get_common_value("paper_type") or "conference",
                 "notes": get_common_value("notes"),
+                "authors": [], "collections": [],
             }
+            read_only_fields = ["title", "abstract", "author_names", "collections"]
 
-        self.edit_dialog = EditDialog(initial_data, callback)
+        self.edit_dialog = EditDialog(initial_data, callback, read_only_fields=read_only_fields)
         self.edit_float = Float(self.edit_dialog)
         self.app.layout.container.floats.append(self.edit_float)
-        self.app.layout.focus(self.edit_dialog)
-        
-        # Focus the first text area for immediate input
-        if hasattr(self.edit_dialog, 'text_areas') and 'title' in self.edit_dialog.text_areas:
-            self.app.layout.focus(self.edit_dialog.text_areas['title'])
-        
+        self.app.layout.focus(self.edit_dialog.get_initial_focus() or self.edit_dialog)
         self.app.invalidate()
 
     def handle_export_command(self, args: List[str]):
