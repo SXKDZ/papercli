@@ -76,11 +76,27 @@ class PaperService:
         with get_db_session() as session:
             paper = session.query(Paper).filter(Paper.id == paper_id).first()
             if paper:
+                # Handle relationships by merging the detached objects from the dialog
+                # into the current session. This avoids primary key conflicts.
+                if 'authors' in paper_data:
+                    authors = paper_data.pop('authors')
+                    paper.authors = [session.merge(author) for author in authors]
+
+                if 'collections' in paper_data:
+                    collections = paper_data.pop('collections')
+                    paper.collections = [session.merge(collection) for collection in collections]
+
+                # Update remaining attributes
                 for key, value in paper_data.items():
-                    setattr(paper, key, value)
+                    if hasattr(paper, key):
+                        setattr(paper, key, value)
+                
                 paper.modified_date = datetime.utcnow()
                 session.commit()
                 session.refresh(paper)
+                
+                # Expunge to follow the detached object pattern used elsewhere in the app
+                session.expunge(paper)
             return paper
     
     def delete_paper(self, paper_id: int) -> bool:
