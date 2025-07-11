@@ -4,10 +4,7 @@ UI components for PaperCLI using prompt-toolkit.
 
 from typing import List, Optional
 from prompt_toolkit.formatted_text import FormattedText, ANSI
-from prompt_toolkit.layout.controls import FormattedTextControl
-from prompt_toolkit.validation import Validator, ValidationError
 from prompt_toolkit.application import get_app
-from prompt_toolkit.key_binding import KeyBindings
 
 from rich.table import Table
 from rich.console import Console
@@ -194,21 +191,6 @@ class StatusBar:
         return FormattedText([(style_class, content)])
 
 
-class CommandValidator(Validator):
-    """Validator for command input."""
-
-    def __init__(self, valid_commands: List[str]):
-        self.valid_commands = valid_commands
-
-    def validate(self, document):
-        """Validate command input."""
-        text = document.text.strip()
-        if text.startswith("/"):
-            command = text.split()[0]
-            if command not in self.valid_commands:
-                raise ValidationError(message=f"Unknown command: {command}")
-
-
 class ErrorPanel:
     """Error panel component for displaying detailed error messages."""
 
@@ -277,70 +259,3 @@ class ErrorPanel:
                 text.append(f"  Details: {error['details']}")
             text.append("-" * 20)
         return "\n".join(text)
-
-
-class ScrollableList:
-    """A scrollable list component with selection."""
-
-    def __init__(self, items: List[str], on_select=None):
-        self.items = items
-        self.selected_index = 0
-        self.on_select = on_select
-        self.control = FormattedTextControl(
-            text=self._get_formatted_text,
-            key_bindings=self._get_key_bindings(),
-            focusable=True,
-        )
-
-    def set_items(self, items: List[str]):
-        self.items = items
-        self.selected_index = 0
-        if self.on_select:
-            self.on_select(self.get_current_item())
-
-    def add_item(self, item: str):
-        self.items.append(item)
-
-    def remove_item(self, item: str):
-        if item in self.items:
-            self.items.remove(item)
-            if self.selected_index >= len(self.items):
-                self.selected_index = len(self.items) - 1
-
-    def get_current_item(self) -> Optional[str]:
-        if 0 <= self.selected_index < len(self.items):
-            return self.items[self.selected_index]
-        return None
-
-    def _get_formatted_text(self):
-        result = []
-        for i, item in enumerate(self.items):
-            if i == self.selected_index:
-                result.append(("[SetCursorPosition]", ""))
-                result.append(("[reverse]", item))
-            else:
-                result.append(("", item))
-            result.append(("", "\n"))
-        return result
-
-    def _get_key_bindings(self):
-        kb = KeyBindings()
-
-        @kb.add("up")
-        def _(event):
-            if self.selected_index > 0:
-                self.selected_index -= 1
-                if self.on_select:
-                    self.on_select(self.get_current_item())
-
-        @kb.add("down")
-        def _(event):
-            if self.selected_index < len(self.items) - 1:
-                self.selected_index += 1
-                if self.on_select:
-                    self.on_select(self.get_current_item())
-
-        return kb
-
-    def __pt_container__(self):
-        return self.control
