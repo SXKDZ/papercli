@@ -196,8 +196,16 @@ class CollectionService:
         """Add paper to collection."""
         with get_db_session() as session:
             paper = session.query(Paper).filter(Paper.id == paper_id).first()
-            collection = self.get_or_create_collection(collection_name)
-            if paper and collection not in paper.collections:
+            if not paper:
+                return False
+            
+            # Get or create collection within the same session
+            collection = session.query(Collection).filter(Collection.name == collection_name).first()
+            if not collection:
+                collection = Collection(name=collection_name)
+                session.add(collection)
+            
+            if collection not in paper.collections:
                 paper.collections.append(collection)
                 session.commit()
                 return True

@@ -659,11 +659,15 @@ Indicators (in the first column):
 
         @kb.add("up")
         def _(event):
-            scroll.scroll_one_line_up(event)
+            if hasattr(event.app.layout, 'current_control') and hasattr(event.app.layout.current_control, 'buffer'):
+                buffer = event.app.layout.current_control.buffer
+                buffer.cursor_up()
 
         @kb.add("down")
         def _(event):
-            scroll.scroll_one_line_down(event)
+            if hasattr(event.app.layout, 'current_control') and hasattr(event.app.layout.current_control, 'buffer'):
+                buffer = event.app.layout.current_control.buffer
+                buffer.cursor_down()
 
         @kb.add("pageup")
         def _(event):
@@ -1665,6 +1669,7 @@ Indicators (in the first column):
         doc = Document(self.error_panel.get_formatted_text_for_buffer(), 0)
         self.error_buffer.set_document(doc, bypass_readonly=True)
         self.show_error_panel = True
+        self.app.layout.focus(self.error_control)
         self.status_bar.set_status(f"❌ {title} - Press ESC to close details")
 
     def show_help_dialog(self):

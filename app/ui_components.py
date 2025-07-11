@@ -50,9 +50,9 @@ class PaperListControl:
         table.add_column(" ", width=3)  # For selector
         table.add_column("ID", width=4)
         table.add_column("Title", no_wrap=True, style="dim", ratio=2)
-        table.add_column("Authors", no_wrap=True, ratio=2)
+        table.add_column("Authors", no_wrap=True, ratio=3)
         table.add_column("Year", width=6, justify="right")
-        table.add_column("Venue", no_wrap=True, width=20)
+        table.add_column("Venue", no_wrap=True, width=15)
         table.add_column("Collections", no_wrap=True, width=25)
 
         for i, paper in enumerate(self.papers):
