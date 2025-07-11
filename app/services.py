@@ -246,6 +246,60 @@ class CollectionService:
                 return True
             return False
 
+    def add_papers_to_collection(self, paper_ids: List[int], collection_name: str) -> int:
+        """Add multiple papers to a collection.
+        
+        Returns the number of papers successfully added.
+        """
+        with get_db_session() as session:
+            # Get or create the collection
+            collection = session.query(Collection).filter(Collection.name == collection_name).first()
+            if not collection:
+                collection = Collection(name=collection_name)
+                session.add(collection)
+                session.flush()  # Ensure collection has an ID before proceeding
+
+            # Get papers to be added
+            papers = session.query(Paper).filter(Paper.id.in_(paper_ids)).all()
+            
+            added_count = 0
+            for paper in papers:
+                if collection not in paper.collections:
+                    paper.collections.append(collection)
+                    added_count += 1
+            
+            if added_count > 0:
+                session.commit()
+            
+            return added_count
+
+    def remove_papers_from_collection(self, paper_ids: List[int], collection_name: str) -> tuple[int, list[str]]:
+        """Remove multiple papers from a collection.
+        
+        Returns a tuple of (removed_count, errors).
+        """
+        with get_db_session() as session:
+            collection = session.query(Collection).filter(Collection.name == collection_name).first()
+            if not collection:
+                return 0, [f"Collection '{collection_name}' not found."]
+
+            papers = session.query(Paper).filter(Paper.id.in_(paper_ids)).all()
+            
+            removed_count = 0
+            errors = []
+            
+            for paper in papers:
+                if collection in paper.collections:
+                    paper.collections.remove(collection)
+                    removed_count += 1
+                else:
+                    errors.append(f"Paper '{paper.title[:30]}...' does not belong to the collection: {collection_name}")
+            
+            if removed_count > 0:
+                session.commit()
+            
+            return removed_count, errors
+
 
 class SearchService:
     """Service for searching and filtering papers."""

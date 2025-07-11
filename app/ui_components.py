@@ -54,12 +54,11 @@ class PaperListControl:
         )
 
         table.add_column(" ", width=3)  # For selector
-        table.add_column("ID", width=4)
         table.add_column("Title", no_wrap=True, style="dim", ratio=7)
         table.add_column("Authors", no_wrap=True, ratio=7)
         table.add_column("Year", width=6, justify="right")
-        table.add_column("Venue", no_wrap=True, ratio=2)
-        table.add_column("Collections", no_wrap=True, ratio=2)
+        table.add_column("Venue", no_wrap=True, ratio=1)
+        table.add_column("Collections", no_wrap=True, ratio=3)
 
         for i, paper in enumerate(self.papers):
             is_current = i == self.selected_index
@@ -108,7 +107,6 @@ class PaperListControl:
             
             table.add_row(
                 Text(prefix),
-                Text(str(i + 1)),
                 Text(title),
                 Text(authors),
                 Text(year),

@@ -3,7 +3,7 @@ Main CLI application for PaperCLI.
 """
 
 import os
-from typing import List
+from typing import List, Optional
 
 from prompt_toolkit.application import Application
 from prompt_toolkit.buffer import Buffer
@@ -91,14 +91,19 @@ class SmartCompleter(Completer):
                 "subcommands": {},
             },
             "/edit": {
-                "description": "Edit metadata of the selected paper(s)",
+                "description": "Open edit dialog, or quick-edit a field (e.g., /edit title ...)",
                 "subcommands": {
                     "title": "Edit the title",
-                    "authors": "Edit the authors (comma-separated)",
-                    "venue": "Edit the venue",
-                    "year": "Edit the publication year",
                     "abstract": "Edit the abstract",
                     "notes": "Edit your personal notes",
+                    "venue_full": "Edit the full venue name",
+                    "venue_acronym": "Edit the venue acronym",
+                    "year": "Edit the publication year",
+                    "paper_type": "Edit the paper type (e.g., journal, conference)",
+                    "doi": "Edit the DOI",
+                    "pages": "Edit the page numbers",
+                    "arxiv_id": "Edit the arXiv ID",
+                    "dblp_url": "Edit the DBLP URL",
                 },
             },
             "/export": {
@@ -131,6 +136,14 @@ class SmartCompleter(Completer):
                     "clean": "Clean orphaned database records", 
                     "help": "Show doctor command help"
                 }
+            },
+            "/add-to": {
+                "description": "Add selected paper(s) to a collection",
+                "subcommands": {},
+            },
+            "/remove-from": {
+                "description": "Remove selected paper(s) from a collection",
+                "subcommands": {},
             },
             "/exit": {"description": "Exit the application", "subcommands": {}},
         }
@@ -197,7 +210,7 @@ Core Commands:
 Paper Operations (work on the paper under the cursor ► or selected papers ✓):
 -----------------------------------------------------------------------------
 /chat     Chat with an LLM about the paper(s)
-/edit     Edit metadata of the paper(s)
+/edit     Open edit dialog or quick-edit a field
 /open     Open the PDF for the paper(s)
 /detail   Show detailed metadata for the paper(s)
 /export   Export paper(s) to a file or clipboard (BibTeX, Markdown, etc.)
@@ -501,8 +514,11 @@ The doctor command helps maintain database health by:
         # Command input
         @self.kb.add("enter")
         def handle_enter(event):
-            # If completion menu is open, accept current completion
-            if self.input_buffer.complete_state:
+            # If completion menu is open and a completion is selected, accept it
+            if (
+                self.input_buffer.complete_state
+                and self.input_buffer.complete_state.current_completion
+            ):
                 self.input_buffer.apply_completion(
                     self.input_buffer.complete_state.current_completion
                 )
@@ -891,19 +907,19 @@ The doctor command helps maintain database health by:
             left_parts.append(("class:mode_list", f" {mode} "))
 
         left_parts.append(("class:header_content", " Total: "))
-        left_parts.append(("class:total", str(len(self.current_papers))))
+        left_parts.append(("class:header_content", str(len(self.current_papers))))
 
         left_parts.append(("class:header_content", "  Current: "))
         left_parts.append(
-            ("class:current", str(self.paper_list_control.selected_index + 1))
+            ("class:header_content", str(self.paper_list_control.selected_index + 1))
         )
 
         left_parts.append(("class:header_content", "  Selected: "))
-        left_parts.append(("class:selected_count", str(selected_count)))
+        left_parts.append(("class:header_content", str(selected_count)))
 
         # Right side of the header
         help_text = "Space: Select  ESC: Exit  ↑↓: Nav  F1: Help "
-        right_parts = [("class:header_content", help_text)]
+        right_parts = [("class:header_help_text", help_text)]
 
         # Calculate lengths
         left_len = sum(len(p[1]) for p in left_parts)
@@ -930,53 +946,43 @@ The doctor command helps maintain database health by:
 
     def setup_application(self):
         """Setup the main application."""
-        # Define styles
+        # Define a modern, cohesive style
         style = Style(
             [
-                # Header styles - clean and bold with color coding
-                ("header_border", "#888888"),
-                ("header_content", "bold #ffffff bg:#2d2d2d"),
-                ("mode_select", "bold #ff0000 bg:#2d2d2d"),  # Red for SELECT
-                ("mode_list", "bold #0066ff bg:#2d2d2d"),  # Blue for ALL
-                ("mode_filtered", "bold #ffff00 bg:#2d2d2d"), # Yellow for FILTERED
-                ("total", "bold #00aa00 bg:#2d2d2d"),  # Green for Total
-                ("current", "bold #ffaa00 bg:#2d2d2d"),  # Orange for Current
-                ("selected_count", "bold #ff00aa bg:#2d2d2d"),  # Pink for Selected
-                # Table styles
-                ("table_border", "#888888"),
-                ("table_header", "bold #ffffff"),
-                # Input styles
-                ("prompt", "bold #00aa00"),  # Green prompt symbol
-                ("input", "#ffffff bg:#1a1a1a"),  # Input text with dark background
-                ("selected", "bold #ffffff bg:#007acc"),  # Current paper
-                ("highlighted", "bold #ffffff bg:#00aa00"),  # Selected papers (green)
-                (
-                    "selected_highlighted",
-                    "bold #ffffff bg:#ff8800",
-                ),  # Both current and selected (orange)
-                ("paper", "#ffffff"),
-                ("empty", "#888888 italic"),
-                ("help", "#00aa00"),
-                ("status", "#ffffff bg:#444444"),  # Default status bar
-                ("status-info", "#ffffff bg:#444444"),  # Info status (default)
-                ("status-success", "#ffffff bg:#00aa00"),  # Success status (green)
-                ("status-error", "#ffffff bg:#cc0000"),  # Error status (red)
-                ("status-warning", "#000000 bg:#ffaa00"),  # Warning status (orange)
-                ("progress", "#ffff00 bg:#444444"),
-                ("error", "#ff0000"),
-                ("success", "#00ff00"),
-                # Text Area for Edit Dialog
-                ("textarea", "bg:#222222 #ffffff"),
-                # Error panel styles
-                ("error_header", "bold #ffffff bg:#cc0000"),
-                ("error_title", "bold #ff6666"),
-                ("error_message", "#ffcccc"),
-                ("error_details", "#ffaaaa italic"),
-                ("error_time", "#888888"),
-                ("error_help", "#00aa00"),
-                # Help panel styles
-                ("help_header", "bold #ffffff bg:#4a90e2"),
-                ("help_footer", "bold #ffff00"),
+                # UI Components
+                ("header_content", "#f8f8f2 bg:#282a36"),
+                ("header_help_text", "italic #f8f8f2 bg:#282a36"),
+                ("mode_select", "bold #ff5555 bg:#282a36"),
+                ("mode_list", "bold #8be9fd bg:#282a36"),
+                ("mode_filtered", "bold #f1fa8c bg:#282a36"),
+                
+                # Paper list
+                ("selected", "bold #f8f8f2 bg:#44475a"),              # Current paper row
+                ("highlighted", "bold #50fa7b"),                   # Selected paper checkmark
+                ("selected_highlighted", "bold #ffb86c bg:#44475a"), # Current and selected
+                ("paper", "#f8f8f2"),
+                ("empty", "#6272a4 italic"),
+
+                # Input & Prompt
+                ("prompt", "bold #50fa7b"),
+                ("input", "#f8f8f2 bg:#1e1f29"),
+
+                # Status bar
+                ("status", "#f8f8f2 bg:#282a36"),
+                ("status-info", "#f8f8f2 bg:#282a36"),
+                ("status-success", "bold #50fa7b bg:#282a36"),
+                ("status-error", "bold #ff5555 bg:#282a36"),
+                ("status-warning", "bold #f1fa8c bg:#282a36"),
+                ("progress", "#f8f8f2 bg:#44475a"),
+
+                # Dialogs & Panels
+                ("textarea", "bg:#222222 #f8f8f2"),
+                ("error_header", "bold #f8f8f2 bg:#ff5555"),
+                ("error_title", "bold #ff5555"),
+                ("error_message", "#ffb8b8"),
+                ("error_details", "#6272a4 italic"),
+                ("help_header", "bold #f8f8f2 bg:#8be9fd"),
+                ("help_footer", "bold #f1fa8c"),
             ]
         )
 
@@ -1000,12 +1006,29 @@ The doctor command helps maintain database health by:
         # Set initial focus to input buffer
         self.app.layout.focus(self.input_buffer)
 
+    def _get_target_papers(self) -> Optional[List[Paper]]:
+        """
+        Get the papers to act on, based on selection or cursor position.
+        Shows a warning and returns None if no papers are targeted.
+        """
+        target_papers = self.paper_list_control.get_selected_papers()
+        if not target_papers:
+            current_paper = self.paper_list_control.get_current_paper()
+            if current_paper:
+                target_papers = [current_paper]
+        
+        if not target_papers:
+            self.status_bar.set_warning("No papers selected or under cursor.")
+            return None
+            
+        return target_papers
+
     def handle_command(self, command: str):
         """Handle user commands."""
         try:
             if not command.strip().startswith("/"):
-                self.status_bar.set_status(
-                    f"✗ Invalid input. All commands must start with '/'."
+                self.status_bar.set_error(
+                    f"Invalid input. All commands must start with '/'."
                 )
                 return
 
@@ -1047,6 +1070,10 @@ The doctor command helps maintain database health by:
                     self.handle_exit_command()
                 elif cmd == "/sort":
                     self.handle_sort_command(parts[1:])
+                elif cmd == "/add-to":
+                    self.handle_add_to_command(parts[1:])
+                elif cmd == "/remove-from":
+                    self.handle_remove_from_command(parts[1:])
             else:
                 self.status_bar.set_error(f"Unknown command: {cmd}")
 
@@ -1352,24 +1379,9 @@ The doctor command helps maintain database health by:
 
     def handle_chat_command(self):
         """Handle /chat command."""
-        papers_to_chat = []
-
-        if self.in_select_mode:
-            papers_to_chat = self.paper_list_control.get_selected_papers()
-            if not papers_to_chat:
-                self.status_bar.set_warning("No papers selected")
-                return
-        else:
-            # Check if there are previously selected papers, otherwise use current paper under cursor
-            selected_papers = self.paper_list_control.get_selected_papers()
-            if selected_papers:
-                papers_to_chat = selected_papers
-            else:
-                current_paper = self.paper_list_control.get_current_paper()
-                if not current_paper:
-                    self.status_bar.set_warning("No paper under cursor")
-                    return
-                papers_to_chat = [current_paper]
+        papers_to_chat = self._get_target_papers()
+        if not papers_to_chat:
+            return
 
         try:
             self.status_bar.set_status(f"💬 Opening chat interface...")
@@ -1378,16 +1390,10 @@ The doctor command helps maintain database health by:
             result = self.chat_service.open_chat_interface(papers_to_chat)
 
             if isinstance(result, str) and result.startswith("Error"):
-                self.status_bar.set_status(result)
+                self.status_bar.set_error(result)
             else:
-                if self.in_select_mode:
-                    mode_info = "selected"
-                elif len(papers_to_chat) > 1:
-                    mode_info = "previously selected"
-                else:
-                    mode_info = "current"
-                self.status_bar.set_status(
-                    f"✓ Chat interface opened for {len(papers_to_chat)} {mode_info} paper(s)"
+                self.status_bar.set_success(
+                    f"Chat interface opened for {len(papers_to_chat)} paper(s)"
                 )
 
         except Exception as e:
@@ -1395,24 +1401,9 @@ The doctor command helps maintain database health by:
 
     def handle_edit_command(self, args: List[str] = None):
         """Handle /edit command."""
-        papers_to_update = []
-
-        if self.in_select_mode:
-            papers_to_update = self.paper_list_control.get_selected_papers()
-            if not papers_to_update:
-                self.status_bar.set_warning("No papers selected")
-                return
-        else:
-            # Check if there are previously selected papers, otherwise use current paper under cursor
-            selected_papers = self.paper_list_control.get_selected_papers()
-            if selected_papers:
-                papers_to_update = selected_papers
-            else:
-                current_paper = self.paper_list_control.get_current_paper()
-                if not current_paper:
-                    self.status_bar.set_warning("No paper under cursor")
-                    return
-                papers_to_update = [current_paper]
+        papers_to_update = self._get_target_papers()
+        if not papers_to_update:
+            return
 
         try:
 
@@ -1437,8 +1428,8 @@ The doctor command helps maintain database health by:
                     "dblp_url",
                 ]
                 if field not in valid_fields:
-                    self.status_bar.set_status(
-                        f"📖 Usage: /edit [title|abstract|notes|venue_full|venue_acronym|year|paper_type|doi|pages] <value>"
+                    self.status_bar.set_error(
+                        f"Usage: /edit [field] <value>. Valid fields: title, abstract, etc."
                     )
                     return
 
@@ -1447,11 +1438,11 @@ The doctor command helps maintain database health by:
                     try:
                         value = int(value)
                     except ValueError:
-                        self.status_bar.set_status("Year must be a number")
+                        self.status_bar.set_error("Year must be a number")
                         return
 
                 updates = {field: value}
-                self.status_bar.set_status(f"🔄 Updating papers...")
+                self.status_bar.set_status(f"🔄 Updating {len(papers_to_update)} paper(s)...")
 
                 # Update papers
                 updated_count = 0
@@ -1460,22 +1451,15 @@ The doctor command helps maintain database health by:
                         self.paper_service.update_paper(paper.id, updates)
                         updated_count += 1
                     except Exception as e:
-                        self.status_bar.set_status(f"Error updating paper {paper.id}: {e}")
+                        self.status_bar.set_error(f"Error updating paper {paper.id}: {e}")
                         break  # Show only first error
 
-                # Refresh paper list
-                self.load_papers()
+                if updated_count > 0:
+                    self.load_papers()
+                    self.status_bar.set_success(
+                        f"Updated '{field}' for {updated_count} paper(s)"
+                    )
 
-                field_name = list(updates.keys())[0] if updates else "field"
-                if self.in_select_mode:
-                    mode_info = "selected"
-                elif len(papers_to_update) > 1:
-                    mode_info = "previously selected"
-                else:
-                    mode_info = "current"
-                self.status_bar.set_status(
-                    f"✓ Updated {field_name} for {updated_count} {mode_info} paper(s)"
-                )
             else:
                 # Use simple dialog for update
                 if len(papers_to_update) > 1:
@@ -1486,7 +1470,7 @@ The doctor command helps maintain database health by:
                         self.status_bar.set_error("Update cancelled")
                         return
                     
-                    self.status_bar.set_status(f"🔄 Updating papers...")
+                    self.status_bar.set_status(f"Updating {len(papers_to_update)} papers...")
 
                     # Update papers
                     updated_count = 0
@@ -1495,20 +1479,20 @@ The doctor command helps maintain database health by:
                             self.paper_service.update_paper(paper.id, updates)
                             updated_count += 1
                         except Exception as e:
-                            self.status_bar.set_status(f"Error updating paper {paper.id}: {e}")
+                            self.status_bar.set_error(f"Error updating paper {paper.id}: {e}")
                             break
-                    # Refresh paper list
-                    self.load_papers()
-                    self.status_bar.set_status(
-                        f"✓ Updated {len(updates)} fields for {updated_count} paper(s)"
-                    )
+                    
+                    if updated_count > 0:
+                        self.load_papers()
+                        self.status_bar.set_success(
+                            f"Updated {len(updates)} fields for {updated_count} paper(s)"
+                        )
 
                 else:
                     self._show_edit_dialog(papers_to_update[0])
 
 
         except Exception as e:
-            # Show detailed error in error panel instead of just status bar
             self.show_error_panel_with_message(
                 "Update Error", f"Failed to update papers", str(e)
             )
@@ -1718,24 +1702,9 @@ The doctor command helps maintain database health by:
 
     def handle_open_command(self):
         """Handle /open command."""
-        papers_to_open = []
-
-        if self.in_select_mode:
-            papers_to_open = self.paper_list_control.get_selected_papers()
-            if not papers_to_open:
-                self.status_bar.set_warning("No papers selected")
-                return
-        else:
-            # Check if there are previously selected papers, otherwise use current paper under cursor
-            selected_papers = self.paper_list_control.get_selected_papers()
-            if selected_papers:
-                papers_to_open = selected_papers
-            else:
-                current_paper = self.paper_list_control.get_current_paper()
-                if not current_paper:
-                    self.status_bar.set_warning("No paper under cursor")
-                    return
-                papers_to_open = [current_paper]
+        papers_to_open = self._get_target_papers()
+        if not papers_to_open:
+            return
 
         try:
             opened_count = 0
@@ -1753,23 +1722,20 @@ The doctor command helps maintain database health by:
                         )
                         break  # Show only first error
                 else:
-                    self.status_bar.set_status(
-                        f"⚠ No PDF available for: {paper.title}"
+                    self.status_bar.set_warning(
+                        f"No PDF available for: {paper.title}"
                     )
                     break
 
             if opened_count > 0:
-                if self.in_select_mode:
-                    mode_info = "selected"
-                elif len(papers_to_open) > 1:
-                    mode_info = "previously selected"
-                else:
-                    mode_info = "current"
-                self.status_bar.set_status(
-                    f"✓ Opened {opened_count} {mode_info} PDF(s)"
+                self.status_bar.set_success(
+                    f"Opened {opened_count} PDF(s)"
                 )
+            elif opened_count == 0 and len(papers_to_open) == 1 and not papers_to_open[0].pdf_path:
+                # This case is already handled above, so this is for clarity
+                pass
             else:
-                self.status_bar.set_error("No PDFs found to open")
+                self.status_bar.set_error("No PDFs found to open for the selected paper(s)")
 
         except Exception as e:
             self.status_bar.set_error(f"Error opening PDFs: {e}")
@@ -1838,16 +1804,12 @@ The doctor command helps maintain database health by:
 
     def handle_detail_command(self):
         """Handle /detail command."""
-        try:
-            papers_to_open = self.paper_list_control.get_selected_papers()
-            if not papers_to_open:
-                current_paper = self.paper_list_control.get_current_paper()
-                if not current_paper:
-                    self.status_bar.set_warning("No paper selected.")
-                    return
-                papers_to_open = [current_paper]
+        papers_to_show = self._get_target_papers()
+        if not papers_to_show:
+            return
 
-            details_text = self._format_paper_details(papers_to_open)
+        try:
+            details_text = self._format_paper_details(papers_to_show)
 
             # Update buffer content correctly by bypassing the read-only flag
             doc = Document(details_text, 0)
@@ -1855,7 +1817,7 @@ The doctor command helps maintain database health by:
 
             self.show_details_panel = True
             self.app.layout.focus(self.details_control)
-            self.status_bar.set_status("📄 Details panel opened - Press ESC to close")
+            self.status_bar.set_status("Details panel opened - Press ESC to close")
         except Exception as e:
             import traceback
 
@@ -1944,3 +1906,54 @@ The doctor command helps maintain database health by:
     def run(self):
         """Run the application."""
         self.app.run()
+
+
+    def handle_add_to_command(self, args: List[str]):
+        """Handle /add-to command."""
+        if not args:
+            self.status_bar.set_error("Usage: /add-to <collection_name>")
+            return
+
+        collection_name = " ".join(args)
+        papers_to_add = self._get_target_papers()
+
+        if not papers_to_add:
+            return
+
+        paper_ids = [p.id for p in papers_to_add]
+        added_count = self.collection_service.add_papers_to_collection(paper_ids, collection_name)
+
+        if added_count > 0:
+            self.status_bar.set_success(f"Added {added_count} paper(s) to collection '{collection_name}'.")
+            self.load_papers()
+        else:
+            self.status_bar.set_status("No papers were added to the collection (they may have already been in it).")
+
+    def handle_remove_from_command(self, args: List[str]):
+        """Handle /remove-from command."""
+        if not args:
+            self.status_bar.set_error("Usage: /remove-from <collection_name>")
+            return
+
+        collection_name = " ".join(args)
+        papers_to_remove = self._get_target_papers()
+
+        if not papers_to_remove:
+            return
+
+        paper_ids = [p.id for p in papers_to_remove]
+        removed_count, errors = self.collection_service.remove_papers_from_collection(paper_ids, collection_name)
+
+        if errors:
+            # Show only the first error in the status bar for clarity
+            self.show_error_panel_with_message(
+                "Remove from Collection Error",
+                f"Encountered {len(errors)} error(s).",
+                "\n".join(errors)
+            )
+
+        if removed_count > 0:
+            self.status_bar.set_success(f"Removed {removed_count} paper(s) from collection '{collection_name}'.")
+            self.load_papers()
+        elif not errors:
+            self.status_bar.set_status("No papers were removed from the collection.")
