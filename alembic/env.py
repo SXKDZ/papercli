@@ -1,5 +1,3 @@
-import sys
-import os
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config
@@ -18,14 +16,7 @@ if config.config_file_name is not None:
 
 # add your model's MetaData object here
 # for 'autogenerate' support
-# from myapp import mymodel
-# target_metadata = mymodel.Base.metadata
-
-# Add the project root to the path
-sys.path.append(os.getcwd())
-
-# Import your Base from database.py
-from database import Base
+from app.models import Base
 target_metadata = Base.metadata
 
 # other values from the config, defined by the needs of env.py,
