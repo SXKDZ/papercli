@@ -5,6 +5,7 @@ UI components for PaperCLI using prompt-toolkit.
 from typing import List, Optional
 from prompt_toolkit.formatted_text import FormattedText, ANSI
 from prompt_toolkit.validation import Validator, ValidationError
+from prompt_toolkit.application import get_app
 
 from rich.table import Table
 from rich.console import Console
@@ -36,8 +37,13 @@ class PaperListControl:
                 ]
             )
 
+        try:
+            width = get_app().output.get_size().columns
+        except Exception:
+            width = 120  # Fallback
+
         console = Console(
-            file=StringIO(), force_terminal=True, width=120
+            file=StringIO(), force_terminal=True, width=width
         )  # Use a fixed width for consistent layout
         table = Table(
             show_header=True,
@@ -49,11 +55,11 @@ class PaperListControl:
 
         table.add_column(" ", width=3)  # For selector
         table.add_column("ID", width=4)
-        table.add_column("Title", no_wrap=True, style="dim", ratio=5)
-        table.add_column("Authors", no_wrap=True, ratio=5)
+        table.add_column("Title", no_wrap=True, style="dim", ratio=7)
+        table.add_column("Authors", no_wrap=True, ratio=7)
         table.add_column("Year", width=6, justify="right")
-        table.add_column("Venue", no_wrap=True, width=6)
-        table.add_column("Collections", no_wrap=True, width=20)
+        table.add_column("Venue", no_wrap=True, ratio=2)
+        table.add_column("Collections", no_wrap=True, ratio=2)
 
         for i, paper in enumerate(self.papers):
             is_current = i == self.selected_index
@@ -87,34 +93,22 @@ class PaperListControl:
                 else:
                     prefix = "   "
 
-            # Truncate text manually for display
-            authors = (
-                (paper.author_names[:35] + "...")
-                if len(paper.author_names) > 35
-                else paper.author_names
-            )
-            title = (paper.title[:45] + "...") if len(paper.title) > 45 else paper.title
+            # Let rich handle truncation
+            authors = paper.author_names
+            title = paper.title
             year = str(paper.year) if paper.year else "----"
             venue = paper.venue_acronym or paper.venue_full or ""
-            venue = (
-                (venue[:18] + "...")
-                if len(venue) > 18
-                else venue
-            )
-
+            
             collections = ""
             if hasattr(paper, "collections") and paper.collections:
                 collection_names = [
                     c.name if hasattr(c, "name") else str(c) for c in paper.collections
                 ]
                 collections = ", ".join(collection_names)
-            collections = (
-                (collections[:23] + "...") if len(collections) > 23 else collections
-            )
-
+            
             table.add_row(
                 Text(prefix),
-                Text(str(paper.id)),
+                Text(str(i + 1)),
                 Text(title),
                 Text(authors),
                 Text(year),
