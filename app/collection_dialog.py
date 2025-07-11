@@ -68,8 +68,8 @@ class EditableList:
             if i == self.selected_index:
                 if self.editing_mode:
                     # Show edit cursor with special edit styling and cursor indicator at the correct position
-                    text_before_cursor = self.edit_text[:self.cursor_position]
-                    text_after_cursor = self.edit_text[self.cursor_position:]
+                    text_before_cursor = self.edit_text[: self.cursor_position]
+                    text_after_cursor = self.edit_text[self.cursor_position :]
                     display_text = f"✎ {text_before_cursor}|{text_after_cursor}"
                     # Pad the text to highlight the full row width
                     padding = " " * max(0, 40 - len(display_text))
@@ -165,13 +165,19 @@ class EditableList:
         @kb.add("backspace")
         def handle_backspace(event):
             if self.editing_mode and self.cursor_position > 0:
-                self.edit_text = self.edit_text[:self.cursor_position-1] + self.edit_text[self.cursor_position:]
+                self.edit_text = (
+                    self.edit_text[: self.cursor_position - 1]
+                    + self.edit_text[self.cursor_position :]
+                )
                 self.cursor_position -= 1
 
         @kb.add("delete")
         def handle_delete(event):
             if self.editing_mode and self.cursor_position < len(self.edit_text):
-                self.edit_text = self.edit_text[:self.cursor_position] + self.edit_text[self.cursor_position+1:]
+                self.edit_text = (
+                    self.edit_text[: self.cursor_position]
+                    + self.edit_text[self.cursor_position + 1 :]
+                )
 
         @kb.add("c-c")  # Ctrl+C to cancel edit
         def cancel_edit(event):
@@ -187,28 +193,40 @@ class EditableList:
                 char = event.data
                 if char.isprintable():
                     # Insert character at cursor position
-                    self.edit_text = self.edit_text[:self.cursor_position] + char + self.edit_text[self.cursor_position:]
+                    self.edit_text = (
+                        self.edit_text[: self.cursor_position]
+                        + char
+                        + self.edit_text[self.cursor_position :]
+                    )
                     self.cursor_position += 1
 
         # Add tab navigation for the dialog (only when not editing)
         @kb.add("tab")
         def handle_tab_navigation(event):
-            if not self.editing_mode and hasattr(self, 'parent_dialog'):
+            if not self.editing_mode and hasattr(self, "parent_dialog"):
                 try:
                     dialog = self.parent_dialog
-                    dialog.current_focus_index = (dialog.current_focus_index + 1) % len(dialog.focusable_components)
-                    event.app.layout.focus(dialog.focusable_components[dialog.current_focus_index])
+                    dialog.current_focus_index = (dialog.current_focus_index + 1) % len(
+                        dialog.focusable_components
+                    )
+                    event.app.layout.focus(
+                        dialog.focusable_components[dialog.current_focus_index]
+                    )
                 except Exception:
                     # Fallback to normal tab behavior
                     pass
 
         @kb.add("s-tab")  # Shift+Tab
         def handle_shift_tab_navigation(event):
-            if not self.editing_mode and hasattr(self, 'parent_dialog'):
+            if not self.editing_mode and hasattr(self, "parent_dialog"):
                 try:
                     dialog = self.parent_dialog
-                    dialog.current_focus_index = (dialog.current_focus_index - 1) % len(dialog.focusable_components)
-                    event.app.layout.focus(dialog.focusable_components[dialog.current_focus_index])
+                    dialog.current_focus_index = (dialog.current_focus_index - 1) % len(
+                        dialog.focusable_components
+                    )
+                    event.app.layout.focus(
+                        dialog.focusable_components[dialog.current_focus_index]
+                    )
                 except Exception:
                     # Fallback to normal shift+tab behavior
                     pass
@@ -352,7 +370,7 @@ class CollectionDialog:
             width=Dimension(min=140, preferred=160),
             with_background=False,
         )
-        
+
         # Add dialog key bindings directly to the dialog
         self.dialog.container.key_bindings = self._create_dialog_key_bindings()
 
@@ -489,7 +507,7 @@ class CollectionDialog:
             venue = paper.venue_display or "Unknown Venue"
             year = paper.year or "N/A"
             paper_type = paper.paper_type or "Unknown"
-            
+
             # Format as: Authors, "Title," Venue, Type. Date.
             # Truncate long fields to fit in one line
             if len(authors) > 60:
@@ -498,17 +516,17 @@ class CollectionDialog:
                 title = title[:77] + "..."
             if len(venue) > 40:
                 venue = venue[:37] + "..."
-            
+
             # Create citation-style format
             citation = f'{authors}, "{title}," {venue}'
-            
+
             # Add type and date if available
             if paper_type != "Unknown":
                 citation += f", vol. {paper_type}"
             if year != "N/A":
                 citation += f". {year}"
             citation += "."
-            
+
             self.paper_details.text = citation
         else:
             self.paper_details.text = "Paper details not found"
@@ -648,7 +666,7 @@ class CollectionDialog:
         self.collection_changes.clear()
         self.paper_moves.clear()
         self.new_collections.clear()
-        
+
         if self.status_bar:
             self.status_bar.set_status("Changes discarded")
 

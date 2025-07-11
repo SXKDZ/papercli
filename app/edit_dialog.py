@@ -3,28 +3,20 @@ Custom dialog for editing paper metadata in a full-window form with paper type b
 """
 
 from typing import Callable, Dict, Any, List, Optional
-import re
 
 from prompt_toolkit.layout.containers import HSplit, VSplit, Window
 from prompt_toolkit.layout import ScrollablePane
 from prompt_toolkit.layout.controls import FormattedTextControl
-from prompt_toolkit.widgets import Button, Dialog, Frame
+from prompt_toolkit.widgets import Button, Dialog
 from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
 from prompt_toolkit.application import get_app
 from prompt_toolkit.formatted_text import FormattedText
+from prompt_toolkit.validation import Validator, ValidationError
 from titlecase import titlecase
 
-from .models import Paper
 from .services import CollectionService, AuthorService
-
-
-def smart_title_case(text: str) -> str:
-    """Convert text to title case using the titlecase package."""
-    if not text:
-        return text
-    
-    return titlecase(text)
+from .validators import FilePathValidator, ArxivValidator, URLValidator, YearValidator
 
 
 class CustomInputField:
@@ -326,13 +318,19 @@ class CustomInputField:
                     self.control.text = self._get_formatted_text
                     get_app().invalidate()
         
-        # Handle any character input (lower priority than navigation)
+        # Handle spacebar specifically
+        @kb.add(" ")
+        def handle_space(event):
+            self.text = self.text[:self.cursor_position] + " " + self.text[self.cursor_position:]
+            self.cursor_position += 1
+            get_app().invalidate()
+
+        # Handle any other character input (lower priority than specific keys)
         @kb.add("<any>")
         def handle_character(event):
             if event.data and len(event.data) == 1:
                 char = event.data
-                # Include space as printable - fix space input issue
-                if char.isprintable() or char == ' ':
+                if char.isprintable(): # Space is handled by its own binding now
                     # Insert character at cursor position
                     self.text = self.text[:self.cursor_position] + char + self.text[self.cursor_position:]
                     self.cursor_position += 1
@@ -384,18 +382,16 @@ class CustomInputField:
     def unfocus(self):
         """Remove focus from this field."""
         self.focused = False
-        # Auto-format title field when losing focus
-        if self.field_name == "title" and self.text.strip():
-            self.text = smart_title_case(self.text)
         get_app().invalidate()
 
 
 class EditDialog:
     """A full-window dialog for editing paper metadata with paper type buttons."""
 
-    def __init__(self, paper_data: Dict[str, Any], callback: Callable, read_only_fields: List[str] = None):
+    def __init__(self, paper_data: Dict[str, Any], callback: Callable, log_callback: Callable, read_only_fields: List[str] = None):
         self.paper_data = paper_data
         self.callback = callback
+        self.log_callback = log_callback
         self.result = None
         self.collection_service = CollectionService()
         self.author_service = AuthorService()
@@ -561,21 +557,59 @@ class EditDialog:
     def _handle_save(self):
         """Handles the save button press."""
         result = {"paper_type": self.current_paper_type}
+        changes_made = []
+        
         for field_name, input_field in self.input_fields.items():
             if field_name in self.read_only_fields:
                 continue
             
-            value = input_field.text.strip()
+            new_value = input_field.text.strip()
+            
+            # Get the original value. For authors and collections, we need to format them as a string.
             if field_name == "author_names":
-                names = [name.strip() for name in value.split(",") if name.strip()]
+                authors = self.paper_data.get("authors", [])
+                if isinstance(authors, list):
+                    old_value = ", ".join([getattr(a, 'full_name', str(a)) for a in authors])
+                else:
+                    old_value = str(authors) if authors else ""
+            elif field_name == "collections":
+                collections = self.paper_data.get("collections", [])
+                if isinstance(collections, list):
+                    old_value = ", ".join([getattr(c, 'name', str(c)) for c in collections])
+                else:
+                    old_value = str(collections) if collections else ""
+            else:
+                old_value = self.paper_data.get(field_name, "")
+                # Ensure old_value is a string, treating None as empty string
+                old_value = str(old_value) if old_value is not None else ""
+
+            # Normalize old_value and new_value for comparison (treat None and "" as equivalent)
+            normalized_old_value = old_value
+            normalized_new_value = new_value if new_value is not None else ""
+
+            # Special handling for title to apply smart title case
+            if field_name == "title":
+                new_value = titlecase(new_value)
+                normalized_new_value = new_value # Update normalized value after titlecase
+
+            if normalized_old_value != normalized_new_value:
+                changes_made.append(f"{field_name} from '{old_value}' to '{new_value}'")
+
+            if field_name == "author_names":
+                names = [name.strip() for name in new_value.split(",") if name.strip()]
                 result["authors"] = [self.author_service.get_or_create_author(name) for name in names]
             elif field_name == "collections":
-                names = [name.strip() for name in value.split(",") if name.strip()]
+                names = [name.strip() for name in new_value.split(",") if name.strip()]
                 result["collections"] = [self.collection_service.get_or_create_collection(name) for name in names]
             elif field_name == "year":
-                result["year"] = int(value) if value.isdigit() else None
+                result["year"] = int(new_value) if new_value.isdigit() else None
             else:
-                result[field_name] = value if value else None
+                result[field_name] = new_value if new_value else None
+        
+        if changes_made:
+            paper_id = self.paper_data.get('id', 'New Paper')
+            log_message = f"Paper '{self.paper_data.get('title')}' (ID: {paper_id}) updated: \n{'  \n'.join(changes_made)}"
+            self.log_callback("edit", log_message)
         
         self.result = result
         self.callback(self.result)
@@ -610,9 +644,6 @@ class EditDialog:
                 if field_name in self.input_fields and not self.input_fields[field_name].read_only:
                     if self.input_fields[field_name].window == self.initial_focus:
                         self.input_fields[field_name].focused = True
-                        with open("tab_debug.log", "a") as f:
-                            f.write(f"=== Initial Focus ===\n")
-                            f.write(f"Set initial focus to: {field_name}\n")
                         break
 
     def get_initial_focus(self):
@@ -623,25 +654,11 @@ class EditDialog:
         visible_fields = self.fields_by_type.get(self.current_paper_type, self.fields_by_type["other"])
         focusable_windows = []
         field_names = []
-        with open("tab_debug.log", "a") as f:
-            f.write(f"=== Getting focusable fields ===\n")
-            f.write(f"Current paper type: {self.current_paper_type}\n")
-            f.write(f"Visible fields: {visible_fields}\n")
-            f.write(f"Available input_fields: {list(self.input_fields.keys())}\n")
-            f.write(f"Read-only fields: {self.read_only_fields}\n")
         
         for field_name in visible_fields:
             if field_name in self.input_fields and not self.input_fields[field_name].read_only:
                 focusable_windows.append(self.input_fields[field_name].window)
                 field_names.append(field_name)
-                with open("tab_debug.log", "a") as f:
-                    f.write(f"  Added {field_name} to focusable list\n")
-            else:
-                with open("tab_debug.log", "a") as f:
-                    if field_name not in self.input_fields:
-                        f.write(f"  Skipped {field_name}: not in input_fields\n")
-                    elif self.input_fields[field_name].read_only:
-                        f.write(f"  Skipped {field_name}: read_only\n")
         
         self.focusable_field_names = field_names  # Store for debugging
         return focusable_windows
@@ -650,15 +667,9 @@ class EditDialog:
         """Focus the next input field."""
         focusable_windows = self._get_focusable_fields()
         if not focusable_windows:
-            with open("tab_debug.log", "a") as f:
-                f.write("No focusable windows\n")
             return
             
         current_window = get_app().layout.current_window
-        with open("tab_debug.log", "a") as f:
-            f.write(f"=== TAB Navigation ===\n")
-            f.write(f"Current window: {current_window}\n")
-            f.write(f"Available fields: {self.focusable_field_names}\n")
         
         try:
             current_index = focusable_windows.index(current_window)
@@ -666,22 +677,14 @@ class EditDialog:
             next_window = focusable_windows[next_index]
             current_field = self.focusable_field_names[current_index] if current_index < len(self.focusable_field_names) else "unknown"
             next_field = self.focusable_field_names[next_index] if next_index < len(self.focusable_field_names) else "unknown"
-            with open("tab_debug.log", "a") as f:
-                f.write(f"Moving from {current_field} (index {current_index}) to {next_field} (index {next_index})\n")
         except ValueError:
             # Current window not in list, focus first
             next_window = focusable_windows[0]
             next_field = self.focusable_field_names[0] if self.focusable_field_names else "unknown"
-            with open("tab_debug.log", "a") as f:
-                f.write(f"Current window not in list, focusing first field: {next_field}\n")
         
         # Update focused state - manually force focus
         for field_name, field in self.input_fields.items():
-            old_focused = field.focused
             field.focused = (field.window == next_window)
-            if old_focused != field.focused:
-                with open("tab_debug.log", "a") as f:
-                    f.write(f"{field_name}: {old_focused} -> {field.focused}\n")
         
         get_app().layout.focus(next_window)
         get_app().invalidate()

@@ -15,19 +15,23 @@ from .models import Base
 
 class DatabaseManager:
     """Manages database connections and sessions."""
-    
+
     def __init__(self, db_path: str):
         self.db_path = db_path
         self.engine = create_engine(f"sqlite:///{db_path}")
-        self.SessionLocal = sessionmaker(autocommit=False, autoflush=True, bind=self.engine)
-    
+        self.SessionLocal = sessionmaker(
+            autocommit=False, autoflush=True, bind=self.engine
+        )
+
     def create_tables(self):
         """Create all database tables using Alembic or fallback to SQLAlchemy."""
         try:
             # Try using Alembic first
             if os.path.exists("alembic.ini"):
                 alembic_cfg = Config("alembic.ini")
-                alembic_cfg.set_main_option("sqlalchemy.url", f"sqlite:///{self.db_path}")
+                alembic_cfg.set_main_option(
+                    "sqlalchemy.url", f"sqlite:///{self.db_path}"
+                )
                 command.upgrade(alembic_cfg, "head")
             else:
                 raise Exception("Alembic config not found")
@@ -35,7 +39,7 @@ class DatabaseManager:
             # Fallback to direct SQLAlchemy table creation
             print("Using direct SQLAlchemy table creation...")
             Base.metadata.create_all(bind=self.engine)
-    
+
     @contextmanager
     def get_session(self) -> Generator[Session, None, None]:
         """Get a database session with automatic cleanup."""
