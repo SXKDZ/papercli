@@ -39,8 +39,9 @@ from .services import (
     SystemService,
 )
 from .ui_components import ErrorPanel, PaperListControl, StatusBar
-from .update_dialog import SimpleUpdateDialog
 from .edit_dialog import EditDialog
+from .collection_dialog import CollectionDialog
+from .status_messages import StatusMessages
 
 
 class SmartCompleter(Completer):
@@ -69,6 +70,7 @@ class SmartCompleter(Completer):
                     "author": "Filter by author name (e.g., 'Turing')",
                     "venue": "Filter by venue name (e.g., 'NeurIPS')",
                     "type": "Filter by paper type (e.g., 'journal')",
+                    "collection": "Filter by collection name (e.g., 'My Papers')",
                 },
             },
             "/sort": {
@@ -133,9 +135,9 @@ class SmartCompleter(Completer):
                 "description": "Diagnose and fix database/system issues",
                 "subcommands": {
                     "diagnose": "Run full diagnostic check",
-                    "clean": "Clean orphaned database records", 
-                    "help": "Show doctor command help"
-                }
+                    "clean": "Clean orphaned database records",
+                    "help": "Show doctor command help",
+                },
             },
             "/add-to": {
                 "description": "Add selected paper(s) to a collection",
@@ -143,6 +145,10 @@ class SmartCompleter(Completer):
             },
             "/remove-from": {
                 "description": "Remove selected paper(s) from a collection",
+                "subcommands": {},
+            },
+            "/collect": {
+                "description": "Manage collections",
                 "subcommands": {},
             },
             "/exit": {"description": "Exit the application", "subcommands": {}},
@@ -266,6 +272,7 @@ Indicators (in the first column):
         self.is_filtered_view = False
         self.edit_dialog = None
         self.edit_float = None
+        self.logs = []
 
         # Load initial papers
         self.load_papers()
@@ -275,43 +282,66 @@ Indicators (in the first column):
         self.setup_key_bindings()
         self.setup_application()
 
+    def _add_log(self, action: str, details: str):
+        """Add a log entry."""
+        from datetime import datetime
+
+        self.logs.append(
+            {"timestamp": datetime.now(), "action": action, "details": details}
+        )
+
     def handle_log_command(self):
         """Handle /log command."""
-        self.show_error_panel = True
-        self.app.layout.focus(self.error_control)
-        self.status_bar.set_status("📜 Error log opened - Press ESC to close")
+        if not self.logs:
+            log_content = "No activities logged in this session."
+        else:
+            log_entries = []
+            for log in reversed(self.logs):
+                log_entries.append(
+                    f"[{log['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}] {log['action']}: {log['details']}"
+                )
+            log_content = "\n".join(log_entries)
+
+        self.show_help_dialog(log_content, "Activity Log")
+        self.status_bar.set_status("📜 Activity log opened - Press ESC to close")
 
     def handle_doctor_command(self, args: List[str]):
         """Handle /doctor command for database diagnostics and cleanup."""
         try:
             action = args[0] if args else "diagnose"
-            
+
             if action == "diagnose":
                 self.status_bar.set_status("🔍 Running diagnostic checks...")
                 report = self.db_health_service.run_full_diagnostic()
                 self._show_doctor_report(report)
-                
+
             elif action == "clean":
                 self.status_bar.set_status("🧹 Cleaning orphaned records and files...")
                 cleaned_records = self.db_health_service.clean_orphaned_records()
                 cleaned_pdfs = self.db_health_service.clean_orphaned_pdfs()
-                
+
                 total_cleaned_records = sum(cleaned_records.values())
                 total_cleaned_pdfs = sum(cleaned_pdfs.values())
-                
+
                 if total_cleaned_records > 0 or total_cleaned_pdfs > 0:
                     details = []
                     if total_cleaned_records > 0:
                         details.append(f"• Records: {total_cleaned_records}")
                     if total_cleaned_pdfs > 0:
                         details.append(f"• PDF files: {total_cleaned_pdfs}")
-                    
+
                     message = f"✓ Cleaned orphaned items"
-                    self.show_error_panel_with_message("PaperCLI Doctor - Cleanup Complete", message, "\n".join(details))
+                    self.show_error_panel_with_message(
+                        "PaperCLI Doctor - Cleanup Complete",
+                        message,
+                        "\n".join(details),
+                    )
                     self.status_bar.set_success(f"Database cleanup complete")
                 else:
-                    self.status_bar.set_success("No orphaned items found - database is clean")
-                    
+                    self.status_bar.set_success(
+                        "No orphaned items found - database is clean"
+                    )
+
             elif action == "help":
                 help_text = """Database Doctor Commands:
 
@@ -326,17 +356,19 @@ The doctor command helps maintain database health by:
 • Verifying system dependencies  
 • Checking terminal capabilities
 • Providing automated cleanup"""
-                
-                self.show_help_dialog(help_text)
-                
+
+                self.show_help_dialog(help_text, "Database Doctor Help")
+
             else:
-                self.status_bar.set_error(f"Unknown doctor action: {action}. Use 'diagnose', 'clean', or 'help'")
-                
+                self.status_bar.set_error(
+                    f"Unknown doctor action: {action}. Use 'diagnose', 'clean', or 'help'"
+                )
+
         except Exception as e:
             self.show_error_panel_with_message(
                 "PaperCLI Doctor - Error",
                 f"Failed to run doctor command: {str(e)}",
-                f"Action: {action if 'action' in locals() else 'unknown'}\nError details: {str(e)}"
+                f"Action: {action if 'action' in locals() else 'unknown'}\nError details: {str(e)}",
             )
 
     def _show_doctor_report(self, report: dict):
@@ -348,80 +380,87 @@ The doctor command helps maintain database health by:
             "",
             "📊 DATABASE HEALTH:",
         ]
-        
-        db_checks = report['database_checks']
-        lines.extend([
-            f"  Database exists: {'✓' if db_checks['database_exists'] else '✗'}",
-            f"  Tables exist: {'✓' if db_checks['tables_exist'] else '✗'}",
-            f"  Database size: {db_checks.get('database_size', 0) // 1024} KB",
-            f"  Foreign key constraints: {'✓' if db_checks['foreign_key_constraints'] else '✗'}",
-        ])
-        
-        if db_checks.get('table_counts'):
-            lines.append("  Table counts:")
-            for table, count in db_checks['table_counts'].items():
-                lines.append(f"    {table}: {count}")
-        
-        lines.extend(["", "🔗 ORPHANED RECORDS:"])
-        orphaned_records = report['orphaned_records']['summary']
-        pc_count = orphaned_records.get('orphaned_paper_collections', 0)
-        pa_count = orphaned_records.get('orphaned_paper_authors', 0)
-        lines.extend([
-            f"  Paper-collection associations: {pc_count}",
-            f"  Paper-author associations: {pa_count}",
-        ])
 
-        orphaned_pdfs = report.get('orphaned_pdfs', {}).get('summary', {})
-        pdf_count = orphaned_pdfs.get('orphaned_pdf_files', 0)
+        db_checks = report["database_checks"]
+        lines.extend(
+            [
+                f"  Database exists: {'✓' if db_checks['database_exists'] else '✗'}",
+                f"  Tables exist: {'✓' if db_checks['tables_exist'] else '✗'}",
+                f"  Database size: {db_checks.get('database_size', 0) // 1024} KB",
+                f"  Foreign key constraints: {'✓' if db_checks['foreign_key_constraints'] else '✗'}",
+            ]
+        )
+
+        if db_checks.get("table_counts"):
+            lines.append("  Table counts:")
+            for table, count in db_checks["table_counts"].items():
+                lines.append(f"    {table}: {count}")
+
+        lines.extend(["", "🔗 ORPHANED RECORDS:"])
+        orphaned_records = report["orphaned_records"]["summary"]
+        pc_count = orphaned_records.get("orphaned_paper_collections", 0)
+        pa_count = orphaned_records.get("orphaned_paper_authors", 0)
+        lines.extend(
+            [
+                f"  Paper-collection associations: {pc_count}",
+                f"  Paper-author associations: {pa_count}",
+            ]
+        )
+
+        orphaned_pdfs = report.get("orphaned_pdfs", {}).get("summary", {})
+        pdf_count = orphaned_pdfs.get("orphaned_pdf_files", 0)
         if pdf_count > 0:
             lines.append(f"  Orphaned PDF files: {pdf_count}")
-        
+
         lines.extend(["", "💻 SYSTEM HEALTH:"])
-        sys_checks = report['system_checks']
+        sys_checks = report["system_checks"]
         lines.append(f"  Python version: {sys_checks['python_version']}")
         lines.append("  Dependencies:")
-        for dep, status in sys_checks['dependencies'].items():
+        for dep, status in sys_checks["dependencies"].items():
             lines.append(f"    {dep}: {status}")
-        
-        if 'disk_space' in sys_checks and 'free_mb' in sys_checks['disk_space']:
+
+        if "disk_space" in sys_checks and "free_mb" in sys_checks["disk_space"]:
             lines.append(f"  Free disk space: {sys_checks['disk_space']['free_mb']} MB")
-        
+
         lines.extend(["", "🖥️  TERMINAL SETUP:"])
-        term_checks = report['terminal_checks']
-        lines.extend([
-            f"  Terminal type: {term_checks['terminal_type']}",
-            f"  Unicode support: {'✓' if term_checks['unicode_support'] else '✗'}",
-            f"  Color support: {'✓' if term_checks['color_support'] else '✗'}",
-        ])
-        
-        if 'terminal_size' in term_checks and 'columns' in term_checks['terminal_size']:
-            size = term_checks['terminal_size']
+        term_checks = report["terminal_checks"]
+        lines.extend(
+            [
+                f"  Terminal type: {term_checks['terminal_type']}",
+                f"  Unicode support: {'✓' if term_checks['unicode_support'] else '✗'}",
+                f"  Color support: {'✓' if term_checks['color_support'] else '✗'}",
+            ]
+        )
+
+        if "terminal_size" in term_checks and "columns" in term_checks["terminal_size"]:
+            size = term_checks["terminal_size"]
             lines.append(f"  Terminal size: {size['columns']}x{size['lines']}")
-        
+
         # Issues and recommendations
-        if report['issues_found']:
+        if report["issues_found"]:
             lines.extend(["", "⚠ ISSUES FOUND:"])
-            for issue in report['issues_found']:
+            for issue in report["issues_found"]:
                 lines.append(f"  • {issue}")
-        
-        if report['recommendations']:
+
+        if report["recommendations"]:
             lines.extend(["", "💡 RECOMMENDATIONS:"])
-            for rec in report['recommendations']:
+            for rec in report["recommendations"]:
                 lines.append(f"  • {rec}")
-        
+
         if pc_count > 0 or pa_count > 0:
-            lines.extend([
-                "",
-                "🧹 To clean orphaned records, run: /doctor clean"
-            ])
-        
+            lines.extend(["", "🧹 To clean orphaned records, run: /doctor clean"])
+
         report_text = "\n".join(lines)
-        
+
         # Show in error panel (reusing for display)
-        issues_count = len(report['issues_found'])
-        status = "✓ System healthy" if issues_count == 0 else f"⚠ {issues_count} issues found"
-        
-        self.show_help_dialog(report_text)
+        issues_count = len(report["issues_found"])
+        status = (
+            "✓ System healthy"
+            if issues_count == 0
+            else f"⚠ {issues_count} issues found"
+        )
+
+        self.show_help_dialog(report_text, "Database Doctor Report")
 
     def load_papers(self):
         """Load papers from database."""
@@ -448,7 +487,9 @@ The doctor command helps maintain database health by:
             self.paper_list_control.in_select_mode = old_in_select_mode
             self.is_filtered_view = False
 
-            self.status_bar.set_status(f"📚 Loaded {len(self.current_papers)} papers")
+            self.status_bar.set_status(
+                StatusMessages.papers_loaded(len(self.current_papers))
+            )
         except Exception as e:
             self.status_bar.set_error(f"Error loading papers: {e}")
             self.current_papers = []
@@ -634,10 +675,12 @@ The doctor command helps maintain database health by:
                     # Cancel existing completion and restart
                     if self.input_buffer.complete_state:
                         self.input_buffer.cancel_completion()
+
                     # Small delay to allow text to update, then restart completion
                     def restart_completion():
                         if self.input_buffer.text.startswith("/"):
                             self.input_buffer.start_completion(select_first=False)
+
                     event.app.loop.call_soon(restart_completion)
 
         # Handle delete key
@@ -855,13 +898,17 @@ The doctor command helps maintain database health by:
 
         @kb.add("up")
         def _(event):
-            if hasattr(event.app.layout, 'current_control') and hasattr(event.app.layout.current_control, 'buffer'):
+            if hasattr(event.app.layout, "current_control") and hasattr(
+                event.app.layout.current_control, "buffer"
+            ):
                 buffer = event.app.layout.current_control.buffer
                 buffer.cursor_up()
 
         @kb.add("down")
         def _(event):
-            if hasattr(event.app.layout, 'current_control') and hasattr(event.app.layout.current_control, 'buffer'):
+            if hasattr(event.app.layout, "current_control") and hasattr(
+                event.app.layout.current_control, "buffer"
+            ):
                 buffer = event.app.layout.current_control.buffer
                 buffer.cursor_down()
 
@@ -955,18 +1002,18 @@ The doctor command helps maintain database health by:
                 ("mode_select", "bold #ff5555 bg:#282a36"),
                 ("mode_list", "bold #8be9fd bg:#282a36"),
                 ("mode_filtered", "bold #f1fa8c bg:#282a36"),
-                
                 # Paper list
-                ("selected", "bold #f8f8f2 bg:#44475a"),              # Current paper row
-                ("highlighted", "bold #50fa7b"),                   # Selected paper checkmark
-                ("selected_highlighted", "bold #ffb86c bg:#44475a"), # Current and selected
+                ("selected", "bold #f8f8f2 bg:#44475a"),  # Current paper row
+                ("highlighted", "bold #50fa7b"),  # Selected paper checkmark
+                (
+                    "selected_highlighted",
+                    "bold #ffb86c bg:#44475a",
+                ),  # Current and selected
                 ("paper", "#f8f8f2"),
                 ("empty", "#6272a4 italic"),
-
                 # Input & Prompt
                 ("prompt", "bold #50fa7b"),
                 ("input", "#f8f8f2 bg:#1e1f29"),
-
                 # Status bar
                 ("status", "#f8f8f2 bg:#282a36"),
                 ("status-info", "#f8f8f2 bg:#282a36"),
@@ -974,7 +1021,6 @@ The doctor command helps maintain database health by:
                 ("status-error", "bold #ff5555 bg:#282a36"),
                 ("status-warning", "bold #f1fa8c bg:#282a36"),
                 ("progress", "#f8f8f2 bg:#44475a"),
-
                 # Dialogs & Panels
                 ("textarea", "bg:#222222 #f8f8f2"),
                 ("error_header", "bold #f8f8f2 bg:#ff5555"),
@@ -1016,11 +1062,11 @@ The doctor command helps maintain database health by:
             current_paper = self.paper_list_control.get_current_paper()
             if current_paper:
                 target_papers = [current_paper]
-        
+
         if not target_papers:
-            self.status_bar.set_warning("No papers selected or under cursor.")
+            self.status_bar.set_warning(StatusMessages.no_papers_selected())
             return None
-            
+
         return target_papers
 
     def handle_command(self, command: str):
@@ -1074,6 +1120,8 @@ The doctor command helps maintain database health by:
                     self.handle_add_to_command(parts[1:])
                 elif cmd == "/remove-from":
                     self.handle_remove_from_command(parts[1:])
+                elif cmd == "/collect":
+                    self.handle_collect_command()
             else:
                 self.status_bar.set_error(f"Unknown command: {cmd}")
 
@@ -1093,7 +1141,9 @@ The doctor command helps maintain database health by:
             # Return to full list from search/filter results
             self.load_papers()
             self.is_filtered_view = False
-            self.status_bar.set_status(f"📚 Showing all {len(self.current_papers)} papers.")
+            self.status_bar.set_status(
+                f"📚 Showing all {len(self.current_papers)} papers."
+            )
 
     def handle_clear_command(self):
         """Handle /clear command - deselect all papers."""
@@ -1168,8 +1218,8 @@ The doctor command helps maintain database health by:
 
             # Refresh display
             self.load_papers()
-
-            self.status_bar.set_status(f"📄 Added: {paper.title[:50]}...")
+            self._add_log("add_arxiv", f"Added arXiv paper '{paper.title}'")
+            self.status_bar.set_status(StatusMessages.paper_added(paper.title))
 
         except Exception as e:
             self.show_error_panel_with_message(
@@ -1200,8 +1250,8 @@ The doctor command helps maintain database health by:
 
             # Refresh display
             self.load_papers()
-
-            self.status_bar.set_status(f"📄 Added sample paper: {paper.title}")
+            self._add_log("add_sample", f"Added sample paper '{paper.title}'")
+            self.status_bar.set_status(StatusMessages.paper_added(paper.title))
 
         except Exception as e:
             self.show_error_panel_with_message(
@@ -1240,7 +1290,7 @@ The doctor command helps maintain database health by:
 
             # Refresh display
             self.load_papers()
-
+            self._add_log("add_dblp", f"Added DBLP paper '{paper.title}'")
             self.status_bar.set_success(f"Added: {paper.title[:50]}...")
 
         except Exception as e:
@@ -1278,7 +1328,7 @@ The doctor command helps maintain database health by:
 
             # Refresh display
             self.load_papers()
-
+            self._add_log("add_manual", f"Added manual paper '{paper.title}'")
             self.status_bar.set_status(
                 f"📝 Added manual paper: {paper.title} (use /update to edit metadata)"
             )
@@ -1296,7 +1346,7 @@ The doctor command helps maintain database health by:
                 return
 
             query = " ".join(args)
-            self.status_bar.set_status(f"🔍 Searching for '{query}'...")
+            self.status_bar.set_status(StatusMessages.search_started(query))
 
             # Perform search
             results = self.search_service.search_papers(
@@ -1322,35 +1372,50 @@ The doctor command helps maintain database health by:
     def handle_filter_command(self, args: List[str]):
         """Handle /filter command."""
         try:
-            if not args:
+            if len(args) < 2:
                 self.status_bar.set_status(
-                    f"📖 Usage: /filter year <year> | type <type> | author <name>"
+                    "Usage: /filter <field> <value>. Fields: year, author, venue, type, collection"
                 )
                 return
-
-            # Simple filter parsing
-            filters = {}
-            i = 0
-            while i < len(args):
-                if args[i] == "year" and i + 1 < len(args):
-                    try:
-                        filters["year"] = int(args[i + 1])
-                        i += 2
-                    except ValueError:
-                        i += 1
-                elif args[i] == "type" and i + 1 < len(args):
-                    filters["paper_type"] = args[i + 1]
-                    i += 2
-                elif args[i] == "author" and i + 1 < len(args):
-                    filters["author"] = args[i + 1]
-                    i += 2
-                else:
-                    i += 1
-
-            if not filters:
-                self.status_bar.set_status("No valid filters specified")
+            
+            # Parse command-line filter: /filter <field> <value>
+            field = args[0].lower()
+            value = " ".join(args[1:])
+            
+            # Validate field
+            valid_fields = ["year", "author", "venue", "type", "collection"]
+            if field not in valid_fields:
+                self.status_bar.set_error(
+                    f"Invalid filter field '{field}'. Valid fields: {', '.join(valid_fields)}"
+                )
                 return
-
+            
+            filters = {}
+            
+            # Convert and validate value based on field
+            if field == "year":
+                try:
+                    filters["year"] = int(value)
+                except ValueError:
+                    self.status_bar.set_error(f"Invalid year value: {value}")
+                    return
+            elif field == "author":
+                filters["author"] = value
+            elif field == "venue":
+                filters["venue"] = value
+            elif field == "type":
+                # Validate paper type
+                valid_types = ["journal", "conference", "preprint", "website", "book", "thesis"]
+                if value.lower() not in valid_types:
+                    self.status_bar.set_error(
+                        f"Invalid paper type '{value}'. Valid types: {', '.join(valid_types)}"
+                    )
+                    return
+                filters["paper_type"] = value.lower()
+            elif field == "collection":
+                filters["collection"] = value
+                
+            self._add_log("filter_command", f"Command-line filter: {field}={value}")
             self.status_bar.set_status(f"🔽 Applying filters...")
 
             # Apply filters
@@ -1367,15 +1432,15 @@ The doctor command helps maintain database health by:
             )
 
         except Exception as e:
+            import traceback
+            self._add_log("filter_error", f"Error filtering papers: {e}\nTraceback: {traceback.format_exc()}")
             self.status_bar.set_error(f"Error filtering papers: {e}")
 
     def handle_select_command(self):
         """Handle /select command."""
         self.in_select_mode = True
         self.paper_list_control.in_select_mode = True
-        self.status_bar.set_status(
-            "🎯 Entered multi-selection mode. Use Space to select multiple papers, ESC to exit."
-        )
+        self.status_bar.set_status(StatusMessages.selection_mode_entered())
 
     def handle_chat_command(self):
         """Handle /chat command."""
@@ -1406,7 +1471,6 @@ The doctor command helps maintain database health by:
             return
 
         try:
-
             # Parse command line arguments for quick update
             if args and len(args) >= 2:
                 # Quick update: /edit field value
@@ -1442,16 +1506,26 @@ The doctor command helps maintain database health by:
                         return
 
                 updates = {field: value}
-                self.status_bar.set_status(f"🔄 Updating {len(papers_to_update)} paper(s)...")
+                self.status_bar.set_status(
+                    f"🔄 Updating {len(papers_to_update)} paper(s)..."
+                )
 
                 # Update papers
                 updated_count = 0
                 for paper in papers_to_update:
                     try:
+                        # Log before and after
+                        old_value = getattr(paper, field)
                         self.paper_service.update_paper(paper.id, updates)
+                        self._add_log(
+                            "edit",
+                            f"Updated '{field}' for paper '{paper.title}'. From '{old_value}' to '{value}'",
+                        )
                         updated_count += 1
                     except Exception as e:
-                        self.status_bar.set_error(f"Error updating paper {paper.id}: {e}")
+                        self.status_bar.set_error(
+                            f"Error updating paper {paper.id}: {e}"
+                        )
                         break  # Show only first error
 
                 if updated_count > 0:
@@ -1461,43 +1535,19 @@ The doctor command helps maintain database health by:
                     )
 
             else:
-                # Use simple dialog for update
-                if len(papers_to_update) > 1:
-                    dialog = SimpleUpdateDialog()
-                    updates = dialog.show_update_dialog(papers_to_update)
-
-                    if not updates:
-                        self.status_bar.set_error("Update cancelled")
-                        return
-                    
-                    self.status_bar.set_status(f"Updating {len(papers_to_update)} papers...")
-
-                    # Update papers
-                    updated_count = 0
-                    for paper in papers_to_update:
-                        try:
-                            self.paper_service.update_paper(paper.id, updates)
-                            updated_count += 1
-                        except Exception as e:
-                            self.status_bar.set_error(f"Error updating paper {paper.id}: {e}")
-                            break
-                    
-                    if updated_count > 0:
-                        self.load_papers()
-                        self.status_bar.set_success(
-                            f"Updated {len(updates)} fields for {updated_count} paper(s)"
-                        )
-
-                else:
-                    self._show_edit_dialog(papers_to_update[0])
-
+                # Use enhanced edit dialog for all cases
+                self._show_edit_dialog(papers_to_update)
 
         except Exception as e:
             self.show_error_panel_with_message(
                 "Update Error", f"Failed to update papers", str(e)
             )
 
-    def _show_edit_dialog(self, paper):
+    def _show_edit_dialog(self, papers):
+        # Handle both single paper and multiple papers
+        if not isinstance(papers, list):
+            papers = [papers]
+        
         def callback(result):
             # Cleanup is the same whether saved or cancelled
             if self.edit_float in self.app.layout.container.floats:
@@ -1508,29 +1558,75 @@ The doctor command helps maintain database health by:
 
             if result:
                 try:
-                    self.paper_service.update_paper(paper.id, result)
+                    updated_count = 0
+                    for paper in papers:
+                        details = []
+                        for field, value in result.items():
+                            old_value = (
+                                getattr(paper, field) if hasattr(paper, field) else "N/A"
+                            )
+                            details.append(f"'{field}' from '{old_value}' to '{value}'")
+
+                        self.paper_service.update_paper(paper.id, result)
+                        self._add_log(
+                            "edit_dialog",
+                            f"Updated paper '{paper.title}': " + ", ".join(details),
+                        )
+                        updated_count += 1
+                    
                     self.load_papers()
-                    self.status_bar.set_success(f"✓ Updated paper: {paper.title[:50]}...")
+                    if len(papers) == 1:
+                        self.status_bar.set_success(
+                            f"✓ Updated paper: {papers[0].title[:50]}..."
+                        )
+                    else:
+                        self.status_bar.set_success(
+                            f"✓ Updated {updated_count} paper(s)"
+                        )
                 except Exception as e:
-                    self.show_error_panel_with_message("Update Error", "Failed to update paper", str(e))
+                    self.show_error_panel_with_message(
+                        "Update Error", "Failed to update paper(s)", str(e)
+                    )
             else:
                 self.status_bar.set_error("Update cancelled")
-            
+
             self.app.invalidate()
 
-        self.edit_dialog = EditDialog(
-            {
-                'title': paper.title,
-                'authors': [author.full_name for author in paper.authors],
-                'year': paper.year,
-                'venue_full': paper.venue_full or '',
-                'venue_acronym': paper.venue_acronym or '',
-                'paper_type': paper.paper_type or 'journal',
-                'abstract': paper.abstract or '',
-                'notes': paper.notes or ''
-            },
-            callback
-        )
+        # For multiple papers, show common values or placeholders
+        if len(papers) == 1:
+            paper = papers[0]
+            initial_data = {
+                "title": paper.title,
+                "authors": [author.full_name for author in paper.authors],
+                "year": paper.year,
+                "venue_full": paper.venue_full or "",
+                "venue_acronym": paper.venue_acronym or "",
+                "paper_type": paper.paper_type or "journal",
+                "abstract": paper.abstract or "",
+                "notes": paper.notes or "",
+            }
+        else:
+            # For multiple papers, show common values or indicate multiple values
+            def get_common_value(field):
+                values = [getattr(p, field) for p in papers if getattr(p, field)]
+                if not values:
+                    return ""
+                if all(v == values[0] for v in values):
+                    return values[0]
+                return f"<Multiple Values - {len(set(values))} different>"
+            
+            initial_data = {
+                "title": f"<Editing {len(papers)} papers>",
+                "authors": [],  # Too complex for bulk edit
+                "year": get_common_value("year"),
+                "venue_full": get_common_value("venue_full"),
+                "venue_acronym": get_common_value("venue_acronym"),
+                "paper_type": get_common_value("paper_type"),
+                "abstract": f"<Editing {len(papers)} papers>",
+                "notes": get_common_value("notes"),
+            }
+
+        self.edit_dialog = EditDialog(initial_data, callback)
         self.edit_float = Float(self.edit_dialog)
         self.app.layout.container.floats.append(self.edit_float)
         self.app.layout.focus(self.edit_dialog)
@@ -1538,24 +1634,9 @@ The doctor command helps maintain database health by:
 
     def handle_export_command(self, args: List[str]):
         """Handle /export command."""
-        papers_to_export = []
-
-        if self.in_select_mode:
-            papers_to_export = self.paper_list_control.get_selected_papers()
-            if not papers_to_export:
-                self.status_bar.set_warning("No papers selected")
-                return
-        else:
-            # Check if there are previously selected papers, otherwise use current paper under cursor
-            selected_papers = self.paper_list_control.get_selected_papers()
-            if selected_papers:
-                papers_to_export = selected_papers
-            else:
-                current_paper = self.paper_list_control.get_current_paper()
-                if not current_paper:
-                    self.status_bar.set_warning("No paper under cursor")
-                    return
-                papers_to_export = [current_paper]
+        papers_to_export = self._get_target_papers()
+        if not papers_to_export:
+            return
 
         try:
 
@@ -1566,37 +1647,31 @@ The doctor command helps maintain database health by:
 
                 if export_format not in ["bibtex", "markdown", "html", "json"]:
                     self.status_bar.set_status(
-                        f"📖 Usage: /export [bibtex|markdown|html|json] [filename]"
+                        f"ℹ Usage: /export <format> [filename]. Formats: bibtex, markdown, html, json"
                     )
                     return
 
-                # Determine filename
+                # Determine destination and filename
                 if len(args) >= 2:
-                    filename = " ".join(args[1:])  # Support filenames with spaces
+                    destination = "file"
+                    filename = " ".join(args[1:])
                 else:
-                    extensions = {
-                        "bibtex": ".bib",
-                        "markdown": ".md",
-                        "html": ".html",
-                        "json": ".json",
-                    }
-                    filename = f"papers{extensions[export_format]}"
+                    destination = "clipboard"
+                    filename = None
 
                 export_params = {
                     "format": export_format,
-                    "destination": "file",
+                    "destination": destination,
                     "filename": filename,
                 }
             else:
-                # Interactive dialog
-                dialog = SimpleExportDialog()
-                export_params = dialog.show_export_dialog(len(papers_to_export))
+                # Show usage instead of interactive dialog
+                self.status_bar.set_status(
+                    f"ℹ Usage: /export <format> [filename]. Formats: bibtex, markdown, html, json"
+                )
+                return
 
-                if not export_params:
-                    self.status_bar.set_error("Export cancelled")
-                    return
-
-            self.status_bar.set_status(f"📤 Exporting papers...")
+            self.status_bar.set_status(StatusMessages.export_started())
 
             # Export papers
             export_format = export_params["format"]
@@ -1635,38 +1710,28 @@ The doctor command helps maintain database health by:
 
     def handle_delete_command(self):
         """Handle /delete command."""
-        papers_to_delete = []
-
-        if self.in_select_mode:
-            papers_to_delete = self.paper_list_control.get_selected_papers()
-        else:
-            selected_papers = self.paper_list_control.get_selected_papers()
-            if selected_papers:
-                papers_to_delete = selected_papers
-            else:
-                current_paper = self.paper_list_control.get_current_paper()
-                if current_paper:
-                    papers_to_delete = [current_paper]
-
+        papers_to_delete = self._get_target_papers()
         if not papers_to_delete:
-            self.status_bar.set_warning("No papers selected")
             return
 
         future = self.app.loop.create_future()
-        future.add_done_callback(
-            lambda future: self.app.layout.container.floats.pop()
-        )
+        future.add_done_callback(lambda future: self.app.layout.container.floats.pop())
 
         def perform_delete():
             future.set_result(None)
             try:
                 paper_ids = [paper.id for paper in papers_to_delete]
+                paper_titles = [paper.title for paper in papers_to_delete]
                 deleted_count = self.paper_service.delete_papers(paper_ids)
                 self.load_papers()
+                self._add_log(
+                    "delete",
+                    f"Deleted {deleted_count} paper(s): {', '.join(paper_titles)}",
+                )
                 self.status_bar.set_success(f"Deleted {deleted_count} papers")
             except Exception as e:
                 self.status_bar.set_error(f"Error during deletion: {e}")
-            
+
             self.app.invalidate()
 
         def cancel_delete():
@@ -1681,19 +1746,42 @@ The doctor command helps maintain database health by:
         dialog_text = (
             f"Are you sure you want to delete {len(papers_to_delete)} papers?\n\n"
             + "\n".join(f"• {title}" for title in paper_titles[:5])
-            + (f"\n... and {len(paper_titles) - 5} more" if len(paper_titles) > 5 else "")
+            + (
+                f"\n... and {len(paper_titles) - 5} more"
+                if len(paper_titles) > 5
+                else ""
+            )
         )
+
+        # Create handlers that clean up properly
+        def cleanup_delete():
+            if hasattr(self, '_delete_dialog_active'):
+                self._delete_dialog_active = False
+            perform_delete()
+
+        def cleanup_cancel():
+            if hasattr(self, '_delete_dialog_active'):
+                self._delete_dialog_active = False
+            cancel_delete()
 
         confirmation_dialog = Dialog(
             title="Confirm Deletion",
             body=Label(text=dialog_text, dont_extend_height=True),
             buttons=[
-                Button(text="Yes", handler=perform_delete),
-                Button(text="No", handler=cancel_delete),
+                Button(text="Yes", handler=cleanup_delete),
+                Button(text="No", handler=cleanup_cancel),
             ],
             with_background=False,
-            modal=True,
         )
+
+        # Create a flag to track if dialog is active
+        self._delete_dialog_active = True
+
+        # Add key binding for ESC to default to "No"
+        @self.kb.add("escape", filter=Condition(lambda: getattr(self, '_delete_dialog_active', False)))
+        def _(event):
+            self._delete_dialog_active = False
+            cancel_delete()
 
         dialog_float = Float(content=confirmation_dialog)
         self.app.layout.container.floats.append(dialog_float)
@@ -1722,20 +1810,22 @@ The doctor command helps maintain database health by:
                         )
                         break  # Show only first error
                 else:
-                    self.status_bar.set_warning(
-                        f"No PDF available for: {paper.title}"
-                    )
+                    self.status_bar.set_warning(f"No PDF available for: {paper.title}")
                     break
 
             if opened_count > 0:
-                self.status_bar.set_success(
-                    f"Opened {opened_count} PDF(s)"
-                )
-            elif opened_count == 0 and len(papers_to_open) == 1 and not papers_to_open[0].pdf_path:
+                self.status_bar.set_success(f"Opened {opened_count} PDF(s)")
+            elif (
+                opened_count == 0
+                and len(papers_to_open) == 1
+                and not papers_to_open[0].pdf_path
+            ):
                 # This case is already handled above, so this is for clarity
                 pass
             else:
-                self.status_bar.set_error("No PDFs found to open for the selected paper(s)")
+                self.status_bar.set_error(
+                    "No PDFs found to open for the selected paper(s)"
+                )
 
         except Exception as e:
             self.status_bar.set_error(f"Error opening PDFs: {e}")
@@ -1887,18 +1977,23 @@ The doctor command helps maintain database health by:
         self, title: str, message: str, details: str = ""
     ):
         """Show error panel with a specific error message."""
+        self._add_log(f"error: {title}", f"{message} - {details}")
         self.error_panel.add_error(title, message, details)
         doc = Document(self.error_panel.get_formatted_text_for_buffer(), 0)
         self.error_buffer.set_document(doc, bypass_readonly=True)
         self.show_error_panel = True
         self.app.layout.focus(self.error_control)
-        self.status_bar.set_status(f"❌ {title} - Press ESC to close details")
+        self.status_bar.set_status(f"{title} - Press ESC to close details")
 
-    def show_help_dialog(self, content: str = None):
-        """Show help dialog with optional custom content."""
+    def show_help_dialog(self, content: str = None, title: str = "PaperCLI Help"):
+        """Show help dialog with optional custom content and title."""
         if content is not None:
             doc = Document(content, 0)
             self.help_buffer.set_document(doc, bypass_readonly=True)
+        
+        # Update dialog title
+        self.help_dialog.title = title
+        
         self.show_help = True
         self.app.layout.focus(self.help_control)
         self.status_bar.set_status("📖 Help panel opened - Press ESC to close")
@@ -1906,7 +2001,6 @@ The doctor command helps maintain database health by:
     def run(self):
         """Run the application."""
         self.app.run()
-
 
     def handle_add_to_command(self, args: List[str]):
         """Handle /add-to command."""
@@ -1921,13 +2015,24 @@ The doctor command helps maintain database health by:
             return
 
         paper_ids = [p.id for p in papers_to_add]
-        added_count = self.collection_service.add_papers_to_collection(paper_ids, collection_name)
+        paper_titles = [p.title for p in papers_to_add]
+        added_count = self.collection_service.add_papers_to_collection(
+            paper_ids, collection_name
+        )
 
         if added_count > 0:
-            self.status_bar.set_success(f"Added {added_count} paper(s) to collection '{collection_name}'.")
+            self._add_log(
+                "add_to_collection",
+                f"Added {added_count} paper(s) to '{collection_name}': {', '.join(paper_titles)}",
+            )
+            self.status_bar.set_success(
+                f"Added {added_count} paper(s) to collection '{collection_name}'."
+            )
             self.load_papers()
         else:
-            self.status_bar.set_status("No papers were added to the collection (they may have already been in it).")
+            self.status_bar.set_status(
+                "No papers were added to the collection (they may have already been in it)."
+            )
 
     def handle_remove_from_command(self, args: List[str]):
         """Handle /remove-from command."""
@@ -1942,18 +2047,53 @@ The doctor command helps maintain database health by:
             return
 
         paper_ids = [p.id for p in papers_to_remove]
-        removed_count, errors = self.collection_service.remove_papers_from_collection(paper_ids, collection_name)
+        paper_titles = [p.title for p in papers_to_remove]
+        removed_count, errors = self.collection_service.remove_papers_from_collection(
+            paper_ids, collection_name
+        )
 
         if errors:
             # Show only the first error in the status bar for clarity
             self.show_error_panel_with_message(
                 "Remove from Collection Error",
                 f"Encountered {len(errors)} error(s).",
-                "\n".join(errors)
+                "\n".join(errors),
             )
 
         if removed_count > 0:
-            self.status_bar.set_success(f"Removed {removed_count} paper(s) from collection '{collection_name}'.")
+            self._add_log(
+                "remove_from_collection",
+                f"Removed {removed_count} paper(s) from '{collection_name}': {', '.join(paper_titles)}",
+            )
+            self.status_bar.set_success(
+                f"Removed {removed_count} paper(s) from collection '{collection_name}'."
+            )
             self.load_papers()
         elif not errors:
             self.status_bar.set_status("No papers were removed from the collection.")
+
+    def handle_collect_command(self):
+        """Handle /collect command."""
+
+        def callback(result):
+            if self.edit_float in self.app.layout.container.floats:
+                self.app.layout.container.floats.remove(self.edit_float)
+            self.edit_dialog = None
+            self.edit_float = None
+            self.app.layout.focus(self.input_buffer)
+
+            if result and result.get("action") == "save":
+                # Collections have been saved by the dialog
+                # Refresh the paper list to reflect any collection changes
+                self.load_papers()
+
+            self.app.invalidate()
+
+        collections = self.collection_service.get_all_collections()
+        papers = self.paper_service.get_all_papers()
+
+        self.edit_dialog = CollectionDialog(collections, papers, callback, self.status_bar)
+        self.edit_float = Float(self.edit_dialog)
+        self.app.layout.container.floats.append(self.edit_float)
+        self.app.layout.focus(self.edit_dialog)
+        self.app.invalidate()
