@@ -1,3 +1,4 @@
+
 """
 Main CLI application for PaperCLI.
 """
@@ -20,11 +21,12 @@ from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.shortcuts import message_dialog, input_dialog, button_dialog
 from prompt_toolkit.filters import Condition, has_focus
 from prompt_toolkit.styles import Style
+from prompt_toolkit.key_binding.bindings import scroll
 from prompt_toolkit.completion import WordCompleter, Completer, Completion
 
 from .database import get_db_session
 from .models import Paper, Author, Collection
-from .ui_components import PaperListControl, StatusBar, CommandValidator, HelpDialog, ErrorPanel
+from .ui_components import PaperListControl, StatusBar, CommandValidator, ErrorPanel
 from .services import (PaperService, SearchService, AuthorService, CollectionService, 
                       MetadataExtractor, ExportService, ChatService, SystemService)
 from .simple_dialogs import SimplePaperDialog, SimpleSearchDialog, SimpleFilterDialog
@@ -48,6 +50,7 @@ class SmartCompleter(Completer):
             '/export': ('Export selected paper(s) to a file or clipboard', ['bibtex', 'markdown', 'html', 'json']),
             '/delete': ('Delete the selected paper(s)', []),
             '/show': ('Open the PDF for the selected paper(s)', []),
+            '/detail': ('Show detailed metadata for the selected paper(s)', []),
             '/help': ('Show the help panel', []),
             '/exit': ('Exit the application', []),
         }
@@ -98,6 +101,48 @@ class SmartCompleter(Completer):
 class PaperCLI:
     """Main CLI application class."""
     
+    HELP_TEXT = """
+PaperCLI Help
+=============
+
+Core Commands:
+--------------
+/add      Add a new paper (from PDF, arXiv, DBLP, etc.)
+/search   Search papers by keyword (or just type to search)
+/filter   Filter papers by specific criteria (e.g., year, author)
+/sort     Sort the paper list by a field (e.g., title, year)
+/select   Enter multi-selection mode to act on multiple papers
+/clear    Clear all selected papers
+/help     Show this help panel (or press F1)
+/exit     Exit the application (or press Ctrl+C)
+
+Paper Operations (work on the paper under the cursor ► or selected papers ✓):
+-----------------------------------------------------------------------------
+/chat     Chat with an LLM about the paper(s)
+/edit     Edit metadata of the paper(s)
+/show     Open the PDF for the paper(s)
+/detail   Show detailed metadata for the paper(s)
+/export   Export paper(s) to a file or clipboard (BibTeX, Markdown, etc.)
+/delete   Delete the paper(s) from the library
+
+Navigation & Interaction:
+-------------------------
+↑/↓       Navigate the paper list or scroll panels
+PageUp/↓  Scroll panels by a full page
+Space     Toggle selection for a paper (only in /select mode)
+Enter     Execute a command from the input bar
+ESC       Close panels (Help, Error), exit selection mode, or clear input
+Tab       Trigger and cycle through auto-completions
+
+Indicators (in the first column):
+---------------------------------
+►         Indicates the current line (cursor).
+  ✓       Indicates a selected paper.
+  □       Indicates an unselected paper (in /select mode).
+► ✓       Indicates that the current line is also selected.
+► □       Indicates the current line is not selected (in /select mode).
+"""
+    
     def __init__(self, db_path: str):
         self.db_path = db_path
         
@@ -123,6 +168,7 @@ class PaperCLI:
         self.in_select_mode = False
         self.show_help = False
         self.show_error_panel = False
+        self.show_details_panel = False
         
         
         # Load initial papers
@@ -162,7 +208,7 @@ class PaperCLI:
         self.kb = KeyBindings()
         
         # Navigation
-        @self.kb.add('up', filter=~has_focus(self.help_control))
+        @self.kb.add('up', filter=~has_focus(self.help_control) & ~has_focus(self.details_control))
         def move_up(event):
             # If completion menu is open, navigate it
             if self.input_buffer.complete_state:
@@ -172,7 +218,7 @@ class PaperCLI:
                 self.paper_list_control.move_up()
                 event.app.invalidate()
 
-        @self.kb.add('down', filter=~has_focus(self.help_control))
+        @self.kb.add('down', filter=~has_focus(self.help_control) & ~has_focus(self.details_control))
         def move_down(event):
             # If completion menu is open, navigate it
             if self.input_buffer.complete_state:
@@ -237,36 +283,40 @@ class PaperCLI:
         # Exit selection mode
         @self.kb.add('escape')
         def handle_escape(event):
-            # Priority order: completion menu, error panel, help panel, selection mode, clear input
+            # Priority order: completion menu, error panel, help panel, details panel, selection mode, clear input
             if self.input_buffer.complete_state:
                 self.input_buffer.cancel_completion()
                 event.app.invalidate()
-                return  # Important: prevent further processing
+                return
             elif self.show_error_panel:
                 self.show_error_panel = False
                 self.app.layout.focus(self.input_buffer)
                 self.status_bar.set_status("← Closed error panel")
                 event.app.invalidate()
-                return  # Important: prevent further processing
+                return
             elif self.show_help:
                 self.show_help = False
                 self.app.layout.focus(self.input_buffer)
                 self.status_bar.set_status("← Closed help panel")
                 event.app.invalidate()
-                return  # Important: prevent further processing
+                return
+            elif self.show_details_panel:
+                self.show_details_panel = False
+                self.app.layout.focus(self.input_buffer)
+                self.status_bar.set_status("← Closed details panel")
+                event.app.invalidate()
+                return
             elif self.in_select_mode:
                 self.in_select_mode = False
                 self.paper_list_control.in_select_mode = False
-                # Don't clear selected papers - preserve selection for future operations
                 selected_count = len(self.paper_list_control.selected_paper_ids)
                 if selected_count > 0:
                     self.status_bar.set_status(f"← Exited selection mode ({selected_count} papers remain selected)")
                 else:
                     self.status_bar.set_status("← Exited selection mode")
                 event.app.invalidate()
-                return  # Important: prevent further processing
+                return
             else:
-                # If not in any special mode, clear input buffer
                 self.input_buffer.text = ""
                 self.status_bar.set_status("🧹 Input cleared")
         
@@ -371,13 +421,14 @@ class PaperCLI:
         
         # Help Dialog (as a float)
         self.help_buffer = Buffer(
-            document=Document(HelpDialog.HELP_TEXT, 0),
+            document=Document(self.HELP_TEXT, 0),
             read_only=True,
             multiline=True,
         )
         self.help_control = BufferControl(
             buffer=self.help_buffer,
             focusable=True,
+            key_bindings=self._get_help_key_bindings(),
         )
         self.help_dialog = Dialog(
             title="PaperCLI Help",
@@ -385,7 +436,26 @@ class PaperCLI:
                 content=self.help_control,
                 wrap_lines=True,
                 dont_extend_height=False,
-                cursorline=True,
+                always_hide_cursor=True,
+            ),
+            with_background=False,
+            modal=True,
+        )
+
+        # Details Dialog (as a float)
+        self.details_buffer = Buffer(read_only=True, multiline=True)
+        self.details_control = BufferControl(
+            buffer=self.details_buffer,
+            focusable=True,
+            key_bindings=self._get_help_key_bindings(), # Reuse the same scroll bindings
+        )
+        self.details_dialog = Dialog(
+            title="Paper Details",
+            body=Window(
+                content=self.details_control,
+                wrap_lines=True,
+                dont_extend_height=False,
+                always_hide_cursor=True,
             ),
             with_background=False,
             modal=True,
@@ -439,7 +509,7 @@ class PaperCLI:
                         left=2,
                         transparent=True
                     ),
-                    # Add the help dialog as a float, controlled by the 'show_help' flag
+                    # Help Dialog Float
                     Float(
                         content=ConditionalContainer(
                             content=self.help_dialog,
@@ -450,9 +520,47 @@ class PaperCLI:
                         left=10,
                         right=10,
                     ),
+                    # Details Dialog Float
+                    Float(
+                        content=ConditionalContainer(
+                            content=self.details_dialog,
+                            filter=Condition(lambda: self.show_details_panel),
+                        ),
+                        top=2,
+                        bottom=2,
+                        left=5,
+                        right=5,
+                    ),
                 ]
             )
         )
+
+    def _get_help_key_bindings(self):
+        """Key bindings for the help dialog for intuitive scrolling."""
+        kb = KeyBindings()
+
+        @kb.add('up')
+        def _(event):
+            scroll.scroll_one_line_up(event)
+
+        @kb.add('down')
+        def _(event):
+            scroll.scroll_one_line_down(event)
+
+        @kb.add('pageup')
+        def _(event):
+            scroll.scroll_page_up(event)
+
+        @kb.add('pagedown')
+        def _(event):
+            scroll.scroll_page_down(event)
+
+        @kb.add('<any>')
+        def _(event):
+            # Swallow any other key presses to prevent them from reaching the input buffer.
+            pass
+            
+        return kb
     
     def get_header_text(self) -> FormattedText:
         """Get header text."""
@@ -595,6 +703,8 @@ class PaperCLI:
                 self.handle_delete_command()
             elif cmd == '/show':
                 self.handle_show_command()
+            elif cmd == '/detail':
+                self.handle_detail_command()
             elif cmd == '/clear':
                 self.handle_clear_command()
             elif cmd == '/exit':
@@ -1065,6 +1175,109 @@ class PaperCLI:
             self.status_bar.set_status(f"❌ Error exporting papers: {e}")
     
     def handle_delete_command(self):
+        """Handle /delete command."""
+        papers_to_delete = []
+        
+        if self.in_select_mode:
+            papers_to_delete = self.paper_list_control.get_selected_papers()
+            if not papers_to_delete:
+                self.status_bar.set_status(f"⚠️ No papers selected")
+                return
+        else:
+            # Check if there are previously selected papers, otherwise use current paper under cursor
+            selected_papers = self.paper_list_control.get_selected_papers()
+            if selected_papers:
+                papers_to_delete = selected_papers
+            else:
+                current_paper = self.paper_list_control.get_current_paper()
+                if not current_paper:
+                    self.status_bar.set_status(f"⚠️ No paper under cursor")
+                    return
+                papers_to_delete = [current_paper]
+        
+        try:
+            # Confirm deletion
+            from prompt_toolkit.shortcuts import yes_no_dialog
+            
+            paper_titles = [paper.title[:50] + "..." if len(paper.title) > 50 else paper.title 
+                          for paper in papers_to_delete]
+            
+            confirmation = yes_no_dialog(
+                title="Confirm Deletion",
+                text=f"Are you sure you want to delete {len(papers_to_delete)} papers?\n\n" + 
+                     "\n".join(f"• {title}" for title in paper_titles[:5]) +
+                     (f"\n... and {len(paper_titles) - 5} more" if len(paper_titles) > 5 else "")
+            )
+            
+            if confirmation:
+                paper_ids = [paper.id for paper in papers_to_delete]
+                deleted_count = self.paper_service.delete_papers(paper_ids)
+                
+                # Refresh paper list
+                self.load_papers()
+                
+                self.status_bar.set_status(f"️ ✓ Deleted {deleted_count} papers")
+            else:
+                self.status_bar.set_status(f"❌ Deletion cancelled")
+            
+        except Exception as e:
+            self.status_bar.set_status(f"❌ Error deleting papers: {e}")
+    
+    def handle_show_command(self):
+        """Handle /show command."""
+        papers_to_show = []
+        
+        if self.in_select_mode:
+            papers_to_show = self.paper_list_control.get_selected_papers()
+            if not papers_to_show:
+                self.status_bar.set_status(f"⚠️ No papers selected")
+                return
+        else:
+            # Check if there are previously selected papers, otherwise use current paper under cursor
+            selected_papers = self.paper_list_control.get_selected_papers()
+            if selected_papers:
+                papers_to_show = selected_papers
+            else:
+                current_paper = self.paper_list_control.get_current_paper()
+                if not current_paper:
+                    self.status_bar.set_status(f"⚠️ No paper under cursor")
+                    return
+                papers_to_show = [current_paper]
+        
+        try:
+            opened_count = 0
+            for paper in papers_to_show:
+                if paper.pdf_path:
+                    success, error_msg = self.system_service.open_pdf(paper.pdf_path)
+                    if success:
+                        opened_count += 1
+                    else:
+                        # Show detailed error in error panel instead of just status bar
+                        self.show_error_panel_with_message(
+                            "PDF Viewer Error",
+                            f"Failed to open PDF for: {paper.title}",
+                            error_msg
+                        )
+                        break  # Show only first error
+                else:
+                    self.status_bar.set_status(f" ⚠️ No PDF available for: {paper.title}")
+                    break
+            
+            if opened_count > 0:
+                if self.in_select_mode:
+                    mode_info = "selected"
+                elif len(papers_to_show) > 1:
+                    mode_info = "previously selected"
+                else:
+                    mode_info = "current"
+                self.status_bar.set_status(f" ✓ Opened {opened_count} {mode_info} PDF(s)")
+            else:
+                self.status_bar.set_status(f" No PDFs found to open")
+            
+        except Exception as e:
+            self.status_bar.set_status(f"❌ Error opening PDFs: {e}")
+
+    def handle_exit_command(self):
         """Handle /exit command - exit the application."""
         self.app.exit()
     
@@ -1115,6 +1328,82 @@ class PaperCLI:
             
         except Exception as e:
             self.status_bar.set_status(f"❌ Error sorting papers: {e}")
+
+    def handle_detail_command(self):
+        """Handle /detail command."""
+        try:
+            papers_to_show = self.paper_list_control.get_selected_papers()
+            if not papers_to_show:
+                current_paper = self.paper_list_control.get_current_paper()
+                if not current_paper:
+                    self.status_bar.set_status("⚠️ No paper selected.")
+                    return
+                papers_to_show = [current_paper]
+
+            details_text = self._format_paper_details(papers_to_show)
+            
+            # Update buffer content correctly by bypassing the read-only flag
+            doc = Document(details_text, 0)
+            self.details_buffer.set_document(doc, bypass_readonly=True)
+
+            self.show_details_panel = True
+            self.app.layout.focus(self.details_control)
+            self.status_bar.set_status("📄 Details panel opened - Press ESC to close")
+        except Exception as e:
+            import traceback
+            self.show_error_panel_with_message(
+                "Detail View Error",
+                "Could not display paper details.",
+                traceback.format_exc()
+            )
+
+    def _format_paper_details(self, papers: List[Paper]) -> str:
+        """Format metadata for one or more papers into a string."""
+        if not papers:
+            return "No papers to display."
+
+        if len(papers) == 1:
+            paper = papers[0]
+            authors = ", ".join([a.full_name for a in paper.authors])
+            collections = ", ".join([c.name for c in paper.collections])
+            return (
+                f"Title:       {paper.title}\n"
+                f"Authors:     {authors}\n"
+                f"Year:        {paper.year or 'N/A'}\n"
+                f"Venue:       {paper.venue_display}\n"
+                f"Type:        {paper.paper_type or 'N/A'}\n"
+                f"Collections: {collections or 'N/A'}\n"
+                f"DOI:         {paper.doi or 'N/A'}\n"
+                f"ArXiv ID:    {paper.arxiv_id or 'N/A'}\n"
+                f"DBLP URL:    {paper.dblp_url or 'N/A'}\n"
+                f"PDF Path:    {paper.pdf_path or 'N/A'}\n\n"
+                f"Abstract:\n"
+                f"---------\n"
+                f"{paper.abstract or 'No abstract available.'}\n\n"
+                f"Notes:\n"
+                f"------\n"
+                f"{paper.notes or 'No notes available.'}"
+            )
+
+        # Multiple papers
+        output = [f"Displaying common metadata for {len(papers)} selected papers.\n"]
+        
+        fields_to_compare = ['year', 'paper_type', 'venue_full']
+        first_paper = papers[0]
+
+        for field in fields_to_compare:
+            value = getattr(first_paper, field)
+            is_common = all(getattr(p, field) == value for p in papers[1:])
+            display_value = value if is_common else "<Multiple Values>"
+            output.append(f"{field.replace('_', ' ').title() + ':':<12} {display_value or 'N/A'}")
+
+        # Special handling for collections (many-to-many)
+        first_collections = set(c.name for c in first_paper.collections)
+        is_common_collections = all(set(c.name for c in p.collections) == first_collections for p in papers[1:])
+        collections_display = ", ".join(sorted(list(first_collections))) if is_common_collections else "<Multiple Values>"
+        output.append(f"{'Collections:':<12} {collections_display or 'N/A'}")
+
+        return "\n".join(output)
     
     def show_error_panel_with_message(self, title: str, message: str, details: str = ""):
         """Show error panel with a specific error message."""

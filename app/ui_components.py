@@ -66,16 +66,20 @@ class PaperListControl:
                 row_style = ""
 
             # Determine prefix based on state
-            if is_current and is_selected:
-                prefix = "► ✓"
-            elif is_current:
-                prefix = "►  "
-            elif is_selected:
-                prefix = "  ✓"
-            elif self.in_select_mode:
-                prefix = "□  "
-            else:
-                prefix = "   "
+            if is_current:
+                if is_selected:
+                    prefix = "► ✓"
+                elif self.in_select_mode:
+                    prefix = "► □"
+                else:
+                    prefix = "►  "
+            else:  # not current
+                if is_selected:
+                    prefix = "  ✓"
+                elif self.in_select_mode:
+                    prefix = "  □"
+                else:
+                    prefix = "   "
             
             # Truncate text manually for display
             authors = (paper.author_names[:35] + "...") if len(paper.author_names) > 35 else paper.author_names
@@ -226,134 +230,3 @@ class ErrorPanel:
         text.append(("class:error_help", "Press ESC to close this panel"))
         
         return FormattedText(text)
-
-
-class HelpDialog:
-    """Help dialog component."""
-    
-    HELP_TEXT = """
-PaperCLI Help
-=============
-
-Core Commands:
---------------
-/add      Add a new paper (from PDF, arXiv, DBLP, etc.)
-/search   Search papers by keyword (or just type to search)
-/filter   Filter papers by specific criteria (e.g., year, author)
-/sort     Sort the paper list by a field (e.g., title, year)
-/select   Enter multi-selection mode to act on multiple papers
-/clear    Clear all selected papers
-/help     Show this help panel (or press F1)
-/exit     Exit the application (or press Ctrl+C)
-
-Paper Operations (work on the paper under the cursor ► or selected papers ✓):
------------------------------------------------------------------------------
-/chat     Chat with an LLM about the paper(s)
-/edit     Edit metadata of the paper(s)
-/show     Open the PDF for the paper(s)
-/export   Export paper(s) to a file or clipboard (BibTeX, Markdown, etc.)
-/delete   Delete the paper(s) from the library
-
-Navigation & Interaction:
--------------------------
-↑/↓       Navigate the paper list
-Space     Toggle selection for a paper (only in /select mode)
-Enter     Execute a command from the input bar
-ESC       Close panels (Help, Error), exit selection mode, or clear the input bar
-Tab       Trigger and cycle through auto-completions
-
-Indicators:
------------
-►         Current cursor position
-✓         Selected paper
-► ✓       Current cursor is on a selected paper
-□         An unselected paper (only shown in /select mode)
-"""
-    
-    @staticmethod
-    def create_dialog():
-        """Create help dialog."""
-        help_text = [
-            ("class:help_header", "PaperCLI Help\n"),
-            ("class:help_header", "=" * 50 + "\n\n"),
-            ("class:help", "Commands:\n"),
-            ("class:help", "---------\n"),
-            ("class:help", "/add      Add a new paper (PDF, arXiv, DBLP, manual, sample)\n"),
-            ("class:help", "/search   Search papers by title, author, venue, etc.\n"),
-            ("class:help", "/filter   Filter papers by year, author, venue, type\n"),
-            ("class:help", "/select   Enter multi-selection mode\n"),
-            ("class:help", "/sort     Sort papers by field (title, authors, venue, year)\n"),
-            ("class:help", "/all      Show all papers (exit filter/search)\n"),
-            ("class:help", "/exit     Exit the application\n\n"),
-            
-            ("class:help", "Paper Operations (work on cursor or selection):\n"),
-            ("class:help", "-----------------------------------------------\n"),
-            ("class:help", "/chat     Chat with LLM about paper(s)\n"),
-            ("class:help", "/update   Update any field of paper(s)\n"),
-            ("class:help", "/show     Show PDF(s) in system viewer\n\n"),
-            
-            ("class:help", "Multi-Selection Commands:\n"),
-            ("class:help", "-------------------------\n"),
-            ("class:help", "/export   Export papers to various formats\n"),
-            ("class:help", "/delete   Delete selected papers\n\n"),
-            
-            ("class:help", "Navigation:\n"),
-            ("class:help", "-----------\n"),
-            ("class:help", "↑/↓       Navigate paper list\n"),
-            ("class:help", "Space     Toggle selection (in multi-select mode)\n"),
-            ("class:help", "ESC       Exit panels / Clear input\n"),
-            ("class:help", "Enter     Execute command\n"),
-            ("class:help", "F1        Show this help\n"),
-            ("class:help", "Ctrl+C    Exit application\n\n"),
-            
-            ("class:help", "Auto-completion:\n"),
-            ("class:help", "----------------\n"),
-            ("class:help", "Type / and use Tab to see available commands\n"),
-            ("class:help", "Most commands support subcommand completion\n\n"),
-            
-            ("class:help_footer", "Press ESC to close this help panel")
-        ]
-        
-        help_text_str = """PaperCLI Help
-=============
-
-Commands:
----------
-/add      Add a new paper (PDF, arXiv, DBLP, manual, sample)
-/search   Search papers by title, author, venue, etc.
-/filter   Filter papers by year, author, venue, type
-/select   Enter multi-selection mode
-/sort     Sort papers by field (title, authors, venue, year)
-/all      Show all papers (exit filter/search)
-/exit     Exit the application
-
-Paper Operations (work on cursor or selection):
------------------------------------------------
-/chat     Chat with LLM about paper(s)
-/update   Update any field of paper(s)
-/show     Show PDF(s) in system viewer
-
-Multi-Selection Commands:
--------------------------
-/export   Export papers to various formats
-/delete   Delete selected papers
-
-Navigation:
------------
-↑/↓       Navigate paper list
-Space     Toggle selection (in multi-select mode)
-ESC       Exit panels / Clear input
-Enter     Execute command
-F1        Show this help
-Ctrl+C    Exit application
-
-Auto-completion:
-----------------
-Type / and use Tab to see available commands
-Most commands support subcommand completion
-
-Press ESC to close this help panel."""
-
-        # This method is now only used for the HELP_TEXT constant
-        # The actual dialog is created using message_dialog in cli.py
-        return None
