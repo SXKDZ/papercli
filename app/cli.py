@@ -588,7 +588,7 @@ The doctor command helps maintain database health by:
         # Help
         @self.kb.add("f1")
         def show_help(event):
-            self.show_help_dialog()
+            self.show_help_dialog(self.HELP_TEXT, "PaperCLI Help")
 
         # Exit selection mode
         @self.kb.add("escape")
@@ -1018,7 +1018,10 @@ The doctor command helps maintain database health by:
                 ("mode_filtered", "bold #f1fa8c bg:#282a36"),
                 # Paper list
                 ("selected", "bold #f8f8f2 bg:#44475a"),  # Current paper row
-                ("editing", "bold #ffffff bg:#50fa7b"),  # Edit mode with white text on green background
+                (
+                    "editing",
+                    "bold #ffffff bg:#50fa7b",
+                ),  # Edit mode with white text on green background
                 ("highlighted", "bold #50fa7b"),  # Selected paper checkmark
                 (
                     "selected_highlighted",
@@ -1109,7 +1112,7 @@ The doctor command helps maintain database health by:
                 elif cmd == "/all":
                     self.handle_all_command()
                 elif cmd == "/help":
-                    self.show_help_dialog()
+                    self.show_help_dialog(self.HELP_TEXT, "PaperCLI Help")
                 elif cmd == "/log":
                     self.handle_log_command()
                 elif cmd == "/doctor":
@@ -1589,13 +1592,14 @@ The doctor command helps maintain database health by:
                         # The result from EditDialog now contains proper model objects for relationships
                         # and can be passed directly to the update service.
                         self.paper_service.update_paper(paper.id, result)
-                        self._add_log("edit_dialog", f"Updated paper '{paper.title}' (ID: {paper.id}).")
                         updated_count += 1
 
                     self.load_papers()
                     self.status_bar.set_success(f"✓ Updated {updated_count} paper(s).")
                 except Exception as e:
-                    self.show_error_panel_with_message("Update Error", "Failed to update paper(s)", str(e))
+                    self.show_error_panel_with_message(
+                        "Update Error", "Failed to update paper(s)", str(e)
+                    )
             else:
                 self.status_bar.set_status("Update cancelled.")
 
@@ -1604,9 +1608,12 @@ The doctor command helps maintain database health by:
         read_only_fields = []
         if len(papers) == 1:
             paper = papers[0]
-            initial_data = {field.name: getattr(paper, field.name) for field in paper.__table__.columns}
-            initial_data['authors'] = paper.authors
-            initial_data['collections'] = paper.collections
+            initial_data = {
+                field.name: getattr(paper, field.name)
+                for field in paper.__table__.columns
+            }
+            initial_data["authors"] = paper.authors
+            initial_data["collections"] = paper.collections
         else:
             # For multiple papers, show common values or indicate multiple values
             def get_common_value(field):
@@ -1614,19 +1621,29 @@ The doctor command helps maintain database health by:
                 return values.pop() if len(values) == 1 else ""
 
             initial_data = {
-                "title": f"<Editing {len(papers)} papers>", "abstract": f"<Editing {len(papers)} papers>",
-                "year": get_common_value("year"), "venue_full": get_common_value("venue_full"),
-                "venue_acronym": get_common_value("venue_acronym"), "volume": get_common_value("volume"),
-                "issue": get_common_value("issue"), "pages": get_common_value("pages"),
-                "doi": get_common_value("doi"), "arxiv_id": get_common_value("arxiv_id"),
-                "dblp_url": get_common_value("dblp_url"), "google_scholar_url": get_common_value("google_scholar_url"),
-                "pdf_path": get_common_value("pdf_path"), "paper_type": get_common_value("paper_type") or "conference",
+                "title": f"<Editing {len(papers)} papers>",
+                "abstract": f"<Editing {len(papers)} papers>",
+                "year": get_common_value("year"),
+                "venue_full": get_common_value("venue_full"),
+                "venue_acronym": get_common_value("venue_acronym"),
+                "volume": get_common_value("volume"),
+                "issue": get_common_value("issue"),
+                "pages": get_common_value("pages"),
+                "doi": get_common_value("doi"),
+                "arxiv_id": get_common_value("arxiv_id"),
+                "dblp_url": get_common_value("dblp_url"),
+                "google_scholar_url": get_common_value("google_scholar_url"),
+                "pdf_path": get_common_value("pdf_path"),
+                "paper_type": get_common_value("paper_type") or "conference",
                 "notes": get_common_value("notes"),
-                "authors": [], "collections": [],
+                "authors": [],
+                "collections": [],
             }
             read_only_fields = ["title", "abstract", "author_names", "collections"]
 
-        self.edit_dialog = EditDialog(initial_data, callback, read_only_fields=read_only_fields)
+        self.edit_dialog = EditDialog(
+            initial_data, callback, self._add_log, read_only_fields=read_only_fields
+        )
         self.edit_float = Float(self.edit_dialog)
         self.app.layout.container.floats.append(self.edit_float)
         self.app.layout.focus(self.edit_dialog.get_initial_focus() or self.edit_dialog)
