@@ -130,7 +130,7 @@ class SmartCompleter(Completer):
         words = text.split()
 
         # Completion for main commands
-        if not words or (len(words) == 1 and not text.endswith(" ")):
+        if len(words) <= 1 and not text.endswith(" "):
             partial_cmd = words[0] if words else ""
             for cmd, data in self.commands.items():
                 if cmd.startswith(partial_cmd):
@@ -445,6 +445,17 @@ Indicators (in the first column):
         def handle_backspace(event):
             if event.app.current_buffer == self.input_buffer:
                 self.input_buffer.delete_before_cursor()
+                # Force completion refresh after deletion
+                if self.input_buffer.text.startswith("/"):
+                    event.app.invalidate()
+                    # Cancel existing completion and restart
+                    if self.input_buffer.complete_state:
+                        self.input_buffer.cancel_completion()
+                    # Small delay to allow text to update, then restart completion
+                    def restart_completion():
+                        if self.input_buffer.text.startswith("/"):
+                            self.input_buffer.start_completion(select_first=False)
+                    event.app.loop.call_soon(restart_completion)
 
         # Handle delete key
         @self.kb.add("delete")
@@ -478,6 +489,8 @@ Indicators (in the first column):
             complete_while_typing=True,
             accept_handler=None,  # We handle enter key explicitly
             enable_history_search=True,
+            validate_while_typing=False,  # Ensure completion isn't blocked by validation
+            multiline=False,
         )
 
         # Paper list window

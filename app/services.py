@@ -107,6 +107,18 @@ class PaperService:
         with get_db_session() as session:
             from sqlalchemy.orm import joinedload
             
+            # Check for existing paper by arXiv ID, DOI, or title
+            existing_paper = None
+            if paper_data.get('arxiv_id'):
+                existing_paper = session.query(Paper).filter(Paper.arxiv_id == paper_data['arxiv_id']).first()
+            elif paper_data.get('doi'):
+                existing_paper = session.query(Paper).filter(Paper.doi == paper_data['doi']).first()
+            elif paper_data.get('title'):
+                existing_paper = session.query(Paper).filter(Paper.title == paper_data['title']).first()
+            
+            if existing_paper:
+                raise Exception(f"Paper already exists in database (ID: {existing_paper.id})")
+            
             # Create paper
             paper = Paper()
             for key, value in paper_data.items():
@@ -114,6 +126,7 @@ class PaperService:
                     setattr(paper, key, value)
             
             session.add(paper)
+            session.flush()  # Get the paper ID without committing
             
             # Add authors
             for author_name in authors:
@@ -130,7 +143,17 @@ class PaperService:
                     if not collection:
                         collection = Collection(name=collection_name)
                         session.add(collection)
-                    paper.collections.append(collection)
+                        session.flush()  # Ensure collection has an ID
+                    
+                    # Double-check for existing association in the database
+                    from sqlalchemy import text
+                    existing_association = session.execute(
+                        text("SELECT 1 FROM paper_collections WHERE paper_id = :paper_id AND collection_id = :collection_id"),
+                        {"paper_id": paper.id, "collection_id": collection.id}
+                    ).first()
+                    
+                    if not existing_association and collection not in paper.collections:
+                        paper.collections.append(collection)
             
             session.commit()
             session.refresh(paper)
