@@ -46,35 +46,83 @@ class SmartCompleter(Completer):
 
     def __init__(self):
         self.commands = {
-            "/add": (
-                "Add a new paper (from PDF, arXiv, DBLP, etc.)",
-                ["pdf", "arxiv", "dblp", "manual", "sample"],
-            ),
-            "/search": ("Search papers by keyword (title, author, etc.)", []),
-            "/filter": (
-                "Filter papers by specific criteria",
-                ["year", "author", "venue", "type"],
-            ),
-            "/sort": (
-                "Sort the paper list by a field",
-                ["title", "authors", "venue", "year"],
-            ),
-            "/select": ("Enter multi-selection mode", []),
-            "/clear": ("Clear all selected papers", []),
-            "/chat": ("Chat with an LLM about the selected paper(s)", []),
-            "/edit": (
-                "Edit metadata of the selected paper(s)",
-                ["title", "authors", "venue", "year", "abstract", "notes"],
-            ),
-            "/export": (
-                "Export selected paper(s) to a file or clipboard",
-                ["bibtex", "markdown", "html", "json"],
-            ),
-            "/delete": ("Delete the selected paper(s)", []),
-            "/show": ("Open the PDF for the selected paper(s)", []),
-            "/detail": ("Show detailed metadata for the selected paper(s)", []),
-            "/help": ("Show the help panel", []),
-            "/exit": ("Exit the application", []),
+            "/add": {
+                "description": "Add a new paper",
+                "subcommands": {
+                    "pdf": "Add from a local PDF file",
+                    "arxiv": "Add from an arXiv ID (e.g., 2106.09685)",
+                    "dblp": "Add from a DBLP URL",
+                    "manual": "Add a paper with manual entry",
+                    "sample": "Add a sample paper for demonstration",
+                },
+            },
+            "/search": {
+                "description": "Search papers by keyword (title, author, etc.)",
+                "subcommands": {},
+            },
+            "/filter": {
+                "description": "Filter papers by specific criteria",
+                "subcommands": {
+                    "year": "Filter by publication year (e.g., 2023)",
+                    "author": "Filter by author name (e.g., 'Turing')",
+                    "venue": "Filter by venue name (e.g., 'NeurIPS')",
+                    "type": "Filter by paper type (e.g., 'journal')",
+                },
+            },
+            "/sort": {
+                "description": "Sort the paper list by a field",
+                "subcommands": {
+                    "title": "Sort by title",
+                    "authors": "Sort by author names",
+                    "venue": "Sort by venue",
+                    "year": "Sort by publication year",
+                },
+            },
+            "/select": {"description": "Enter multi-selection mode", "subcommands": {}},
+            "/all": {
+                "description": "Show all papers in the database",
+                "subcommands": {},
+            },
+            "/clear": {"description": "Clear all selected papers", "subcommands": {}},
+            "/chat": {
+                "description": "Chat with an LLM about the selected paper(s)",
+                "subcommands": {},
+            },
+            "/edit": {
+                "description": "Edit metadata of the selected paper(s)",
+                "subcommands": {
+                    "title": "Edit the title",
+                    "authors": "Edit the authors (comma-separated)",
+                    "venue": "Edit the venue",
+                    "year": "Edit the publication year",
+                    "abstract": "Edit the abstract",
+                    "notes": "Edit your personal notes",
+                },
+            },
+            "/export": {
+                "description": "Export selected paper(s) to a file or clipboard",
+                "subcommands": {
+                    "bibtex": "Export to BibTeX format",
+                    "markdown": "Export to Markdown format",
+                    "html": "Export to HTML format",
+                    "json": "Export to JSON format",
+                },
+            },
+            "/delete": {
+                "description": "Delete the selected paper(s)",
+                "subcommands": {},
+            },
+            "/open": {
+                "description": "Open the PDF for the selected paper(s)",
+                "subcommands": {},
+            },
+            "/detail": {
+                "description": "Show detailed metadata for the selected paper(s)",
+                "subcommands": {},
+            },
+            "/help": {"description": "Show the help panel", "subcommands": {}},
+            "/log": {"description": "Show the error log panel", "subcommands": {}},
+            "/exit": {"description": "Exit the application", "subcommands": {}},
         }
 
     def get_completions(self, document, complete_event):
@@ -84,35 +132,37 @@ class SmartCompleter(Completer):
         # Completion for main commands
         if not words or (len(words) == 1 and not text.endswith(" ")):
             partial_cmd = words[0] if words else ""
-            for cmd, (description, _) in self.commands.items():
+            for cmd, data in self.commands.items():
                 if cmd.startswith(partial_cmd):
                     yield Completion(
-                        cmd, start_position=-len(partial_cmd), display_meta=description
+                        cmd,
+                        start_position=-len(partial_cmd),
+                        display_meta=data["description"],
                     )
 
         # Completion for subcommands
-        elif len(words) >= 1 and text.endswith(" "):
+        elif len(words) == 1 and text.endswith(" "):
             cmd = words[0]
             if cmd in self.commands:
-                _, subcommands = self.commands[cmd]
+                subcommands = self.commands[cmd].get("subcommands", {})
                 if subcommands:
-                    for subcmd in subcommands:
+                    for subcmd, description in subcommands.items():
                         yield Completion(
-                            subcmd, start_position=0, display_meta=f"Option for {cmd}"
+                            subcmd, start_position=0, display_meta=description
                         )
 
         # Completion for partial subcommands
         elif len(words) == 2 and not text.endswith(" "):
             cmd = words[0]
             if cmd in self.commands:
-                _, subcommands = self.commands[cmd]
+                subcommands = self.commands[cmd].get("subcommands", {})
                 partial_subcmd = words[1]
-                for subcmd in subcommands:
+                for subcmd, description in subcommands.items():
                     if subcmd.startswith(partial_subcmd):
                         yield Completion(
                             subcmd,
                             start_position=-len(partial_subcmd),
-                            display_meta=f"Option for {cmd}",
+                            display_meta=description,
                         )
 
 
@@ -138,7 +188,7 @@ Paper Operations (work on the paper under the cursor ► or selected papers ✓)
 -----------------------------------------------------------------------------
 /chat     Chat with an LLM about the paper(s)
 /edit     Edit metadata of the paper(s)
-/show     Open the PDF for the paper(s)
+/open     Open the PDF for the paper(s)
 /detail   Show detailed metadata for the paper(s)
 /export   Export paper(s) to a file or clipboard (BibTeX, Markdown, etc.)
 /delete   Delete the paper(s) from the library
@@ -180,6 +230,7 @@ Indicators (in the first column):
         self.system_service = SystemService()
 
         # UI state
+        self.smart_completer = SmartCompleter()
         self.current_papers: List[Paper] = []
         self.paper_list_control = PaperListControl([])
         self.status_bar = StatusBar()
@@ -188,6 +239,7 @@ Indicators (in the first column):
         self.show_help = False
         self.show_error_panel = False
         self.show_details_panel = False
+        self.is_filtered_view = False
 
         # Load initial papers
         self.load_papers()
@@ -196,6 +248,12 @@ Indicators (in the first column):
         self.setup_layout()
         self.setup_key_bindings()
         self.setup_application()
+
+    def handle_log_command(self):
+        """Handle /log command."""
+        self.show_error_panel = True
+        self.app.layout.focus(self.error_control)
+        self.status_bar.set_status("📜 Error log opened - Press ESC to close")
 
     def load_papers(self):
         """Load papers from database."""
@@ -220,6 +278,7 @@ Indicators (in the first column):
             )
             self.paper_list_control.selected_paper_ids = old_selected_paper_ids
             self.paper_list_control.in_select_mode = old_in_select_mode
+            self.is_filtered_view = False
 
             self.status_bar.set_status(f"📚 Loaded {len(self.current_papers)} papers")
         except Exception as e:
@@ -413,14 +472,11 @@ Indicators (in the first column):
 
     def setup_layout(self):
         """Setup application layout."""
-        # Smart command completer with subcommand support
-        smart_completer = SmartCompleter()
-
         # Input buffer with completion enabled
         self.input_buffer = Buffer(
-            completer=smart_completer,
+            completer=self.smart_completer,
             complete_while_typing=True,
-            accept_handler=lambda buffer: None,
+            accept_handler=None,  # We handle enter key explicitly
             enable_history_search=True,
         )
 
@@ -497,12 +553,16 @@ Indicators (in the first column):
         )
 
         # Error panel
+        self.error_buffer = Buffer(read_only=True, multiline=True)
+        self.error_control = BufferControl(
+            buffer=self.error_buffer,
+            focusable=True,
+            key_bindings=self._get_error_key_bindings(),
+        )
         error_panel = ConditionalContainer(
             content=Frame(
                 Window(
-                    content=FormattedTextControl(
-                        text=lambda: self.error_panel.get_formatted_text()
-                    ),
+                    content=self.error_control,
                     wrap_lines=True,
                 ),
                 title="Error Details",
@@ -593,6 +653,33 @@ Indicators (in the first column):
 
         return kb
 
+    def _get_error_key_bindings(self):
+        """Key bindings for the error dialog for intuitive scrolling."""
+        kb = KeyBindings()
+
+        @kb.add("up")
+        def _(event):
+            scroll.scroll_one_line_up(event)
+
+        @kb.add("down")
+        def _(event):
+            scroll.scroll_one_line_down(event)
+
+        @kb.add("pageup")
+        def _(event):
+            scroll.scroll_page_up(event)
+
+        @kb.add("pagedown")
+        def _(event):
+            scroll.scroll_page_down(event)
+
+        @kb.add("<any>")
+        def _(event):
+            # Swallow any other key presses to prevent them from reaching the input buffer.
+            pass
+
+        return kb
+
     def get_header_text(self) -> FormattedText:
         """Get header text."""
         from prompt_toolkit.application import get_app
@@ -602,13 +689,20 @@ Indicators (in the first column):
         except Exception:
             width = 120  # Fallback
 
-        mode = "SELECT" if self.in_select_mode else "LIST"
+        if self.in_select_mode:
+            mode = "SELECT"
+        elif self.is_filtered_view:
+            mode = "FILTERED"
+        else:
+            mode = "ALL"
         selected_count = len(self.paper_list_control.selected_paper_ids)
 
         # Left side of the header
         left_parts = []
         if self.in_select_mode:
             left_parts.append(("class:mode_select", f" {mode} "))
+        elif self.is_filtered_view:
+            left_parts.append(("class:mode_filtered", f" {mode} "))
         else:
             left_parts.append(("class:mode_list", f" {mode} "))
 
@@ -659,7 +753,8 @@ Indicators (in the first column):
                 ("header_border", "#888888"),
                 ("header_content", "bold #ffffff bg:#2d2d2d"),
                 ("mode_select", "bold #ff0000 bg:#2d2d2d"),  # Red for SELECT
-                ("mode_list", "bold #0066ff bg:#2d2d2d"),  # Blue for LIST
+                ("mode_list", "bold #0066ff bg:#2d2d2d"),  # Blue for ALL
+                ("mode_filtered", "bold #ffff00 bg:#2d2d2d"), # Yellow for FILTERED
                 ("total", "bold #00aa00 bg:#2d2d2d"),  # Green for Total
                 ("current", "bold #ffaa00 bg:#2d2d2d"),  # Orange for Current
                 ("selected_count", "bold #ff00aa bg:#2d2d2d"),  # Pink for Selected
@@ -718,46 +813,68 @@ Indicators (in the first column):
     def handle_command(self, command: str):
         """Handle user commands."""
         try:
+            if not command.strip().startswith("/"):
+                self.status_bar.set_status(
+                    f"❌ Invalid input. All commands must start with '/'."
+                )
+                return
+
             parts = command.split()
             cmd = parts[0].lower()
 
-            if cmd == "/add":
-                self.handle_add_command(parts[1:])
-            elif cmd == "/search":
-                self.handle_search_command(parts[1:])
-            elif cmd == "/filter":
-                self.handle_filter_command(parts[1:])
-            elif cmd == "/select":
-                self.handle_select_command()
-            elif cmd == "/help":
-                self.show_help_dialog()
-            elif cmd == "/chat":
-                self.handle_chat_command()
-            elif cmd == "/edit":
-                self.handle_edit_command(parts[1:])
-            elif cmd == "/export":
-                self.handle_export_command(parts[1:])
-            elif cmd == "/delete":
-                self.handle_delete_command()
-            elif cmd == "/show":
-                self.handle_show_command()
-            elif cmd == "/detail":
-                self.handle_detail_command()
-            elif cmd == "/clear":
-                self.handle_clear_command()
-            elif cmd == "/exit":
-                self.handle_exit_command()
-            elif cmd == "/sort":
-                self.handle_sort_command(parts[1:])
+            if cmd in self.smart_completer.commands:
+                if cmd == "/add":
+                    self.handle_add_command(parts[1:])
+                elif cmd == "/search":
+                    self.handle_search_command(parts[1:])
+                elif cmd == "/filter":
+                    self.handle_filter_command(parts[1:])
+                elif cmd == "/select":
+                    self.handle_select_command()
+                elif cmd == "/all":
+                    self.handle_all_command()
+                elif cmd == "/help":
+                    self.show_help_dialog()
+                elif cmd == "/log":
+                    self.handle_log_command()
+                elif cmd == "/chat":
+                    self.handle_chat_command()
+                elif cmd == "/edit":
+                    self.handle_edit_command(parts[1:])
+                elif cmd == "/export":
+                    self.handle_export_command(parts[1:])
+                elif cmd == "/delete":
+                    self.handle_delete_command()
+                elif cmd == "/open":
+                    self.handle_open_command()
+                elif cmd == "/detail":
+                    self.handle_detail_command()
+                elif cmd == "/clear":
+                    self.handle_clear_command()
+                elif cmd == "/exit":
+                    self.handle_exit_command()
+                elif cmd == "/sort":
+                    self.handle_sort_command(parts[1:])
             else:
-                # If not a known command, assume it's a search query
-                self.handle_search_command(parts)
+                self.status_bar.set_status(f"❌ Unknown command: {cmd}")
 
         except Exception as e:
             # Show detailed error in error panel instead of just status bar
             self.show_error_panel_with_message(
                 "Command Error", f"Failed to execute command: {command}", str(e)
             )
+
+    def handle_all_command(self):
+        """Handle /all command - return to full paper list."""
+        if self.in_select_mode:
+            # Don't exit selection mode, just show all papers while maintaining selection
+            self.load_papers()
+            self.status_bar.set_status(f"📚 Showing all papers (selection mode active)")
+        else:
+            # Return to full list from search/filter results
+            self.load_papers()
+            self.is_filtered_view = False
+            self.status_bar.set_status(f"📚 Showing all {len(self.current_papers)} papers.")
 
     def handle_clear_command(self):
         """Handle /clear command - deselect all papers."""
@@ -833,10 +950,14 @@ Indicators (in the first column):
             # Refresh display
             self.load_papers()
 
-            self.status_bar.set_status(f"📄 ✓ Added: {paper.title[:50]}...")
+            self.status_bar.set_status(f"📄 Added: {paper.title[:50]}...")
 
         except Exception as e:
-            self.status_bar.set_status(f"❌ Error adding arXiv paper: {e}")
+            self.show_error_panel_with_message(
+                "Add arXiv Paper Error",
+                f"Failed to add arXiv paper: {arxiv_id}",
+                str(e),
+            )
 
     def _add_sample_paper(self):
         """Add a sample paper for demonstration."""
@@ -861,10 +982,12 @@ Indicators (in the first column):
             # Refresh display
             self.load_papers()
 
-            self.status_bar.set_status(f"📄 ✓ Added sample paper: {paper.title}")
+            self.status_bar.set_status(f"📄 Added sample paper: {paper.title}")
 
         except Exception as e:
-            self.status_bar.set_status(f"❌ Error adding sample paper: {e}")
+            self.show_error_panel_with_message(
+                "Add Sample Paper Error", "Failed to add sample paper", str(e)
+            )
 
     def _quick_add_dblp(self, dblp_url: str):
         """Quickly add a paper from DBLP URL."""
@@ -902,7 +1025,11 @@ Indicators (in the first column):
             self.status_bar.set_status(f"✓ Added: {paper.title[:50]}...")
 
         except Exception as e:
-            self.status_bar.set_status(f"❌ Error adding DBLP paper: {e}")
+            self.show_error_panel_with_message(
+                "Add DBLP Paper Error",
+                f"Failed to add DBLP paper: {dblp_url}",
+                str(e),
+            )
 
     def _add_manual_paper(self):
         """Add a paper manually with user input."""
@@ -934,11 +1061,13 @@ Indicators (in the first column):
             self.load_papers()
 
             self.status_bar.set_status(
-                f"📝 ✓ Added manual paper: {paper.title} (use /update to edit metadata)"
+                f"📝 Added manual paper: {paper.title} (use /update to edit metadata)"
             )
 
         except Exception as e:
-            self.status_bar.set_status(f"❌ Error adding manual paper: {e}")
+            self.show_error_panel_with_message(
+                "Add Manual Paper Error", "Failed to add manual paper", str(e)
+            )
 
     def handle_search_command(self, args: List[str]):
         """Handle /search command."""
@@ -962,6 +1091,7 @@ Indicators (in the first column):
             # Update display
             self.current_papers = results
             self.paper_list_control = PaperListControl(self.current_papers)
+            self.is_filtered_view = True
 
             self.status_bar.set_status(
                 f"🎯 Found {len(results)} papers matching '{query}'"
@@ -1010,6 +1140,7 @@ Indicators (in the first column):
             # Update display
             self.current_papers = results
             self.paper_list_control = PaperListControl(self.current_papers)
+            self.is_filtered_view = True
 
             filter_desc = ", ".join([f"{k}={v}" for k, v in filters.items()])
             self.status_bar.set_status(
@@ -1321,30 +1452,30 @@ Indicators (in the first column):
         except Exception as e:
             self.status_bar.set_status(f"❌ Error deleting papers: {e}")
 
-    def handle_show_command(self):
-        """Handle /show command."""
-        papers_to_show = []
+    def handle_open_command(self):
+        """Handle /open command."""
+        papers_to_open = []
 
         if self.in_select_mode:
-            papers_to_show = self.paper_list_control.get_selected_papers()
-            if not papers_to_show:
+            papers_to_open = self.paper_list_control.get_selected_papers()
+            if not papers_to_open:
                 self.status_bar.set_status(f"⚠️ No papers selected")
                 return
         else:
             # Check if there are previously selected papers, otherwise use current paper under cursor
             selected_papers = self.paper_list_control.get_selected_papers()
             if selected_papers:
-                papers_to_show = selected_papers
+                papers_to_open = selected_papers
             else:
                 current_paper = self.paper_list_control.get_current_paper()
                 if not current_paper:
                     self.status_bar.set_status(f"⚠️ No paper under cursor")
                     return
-                papers_to_show = [current_paper]
+                papers_to_open = [current_paper]
 
         try:
             opened_count = 0
-            for paper in papers_to_show:
+            for paper in papers_to_open:
                 if paper.pdf_path:
                     success, error_msg = self.system_service.open_pdf(paper.pdf_path)
                     if success:
@@ -1366,7 +1497,7 @@ Indicators (in the first column):
             if opened_count > 0:
                 if self.in_select_mode:
                     mode_info = "selected"
-                elif len(papers_to_show) > 1:
+                elif len(papers_to_open) > 1:
                     mode_info = "previously selected"
                 else:
                     mode_info = "current"
@@ -1374,7 +1505,7 @@ Indicators (in the first column):
                     f" ✓ Opened {opened_count} {mode_info} PDF(s)"
                 )
             else:
-                self.status_bar.set_status(f" No PDFs found to open")
+                self.status_bar.set_status(f"❌ No PDFs found to open")
 
         except Exception as e:
             self.status_bar.set_status(f"❌ Error opening PDFs: {e}")
@@ -1444,15 +1575,15 @@ Indicators (in the first column):
     def handle_detail_command(self):
         """Handle /detail command."""
         try:
-            papers_to_show = self.paper_list_control.get_selected_papers()
-            if not papers_to_show:
+            papers_to_open = self.paper_list_control.get_selected_papers()
+            if not papers_to_open:
                 current_paper = self.paper_list_control.get_current_paper()
                 if not current_paper:
                     self.status_bar.set_status("⚠️ No paper selected.")
                     return
-                papers_to_show = [current_paper]
+                papers_to_open = [current_paper]
 
-            details_text = self._format_paper_details(papers_to_show)
+            details_text = self._format_paper_details(papers_to_open)
 
             # Update buffer content correctly by bypassing the read-only flag
             doc = Document(details_text, 0)
@@ -1531,8 +1662,10 @@ Indicators (in the first column):
     ):
         """Show error panel with a specific error message."""
         self.error_panel.add_error(title, message, details)
+        doc = Document(self.error_panel.get_formatted_text_for_buffer(), 0)
+        self.error_buffer.set_document(doc, bypass_readonly=True)
         self.show_error_panel = True
-        self.status_bar.set_status(f"❌ {title} - Press ESC to see details")
+        self.status_bar.set_status(f"❌ {title} - Press ESC to close details")
 
     def show_help_dialog(self):
         """Show help dialog and focus it."""

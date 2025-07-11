@@ -52,6 +52,7 @@ class PaperListControl:
         table.add_column("Title", no_wrap=True, style="dim", ratio=2)
         table.add_column("Authors", no_wrap=True, ratio=2)
         table.add_column("Year", width=6, justify="right")
+        table.add_column("Venue", no_wrap=True, width=20)
         table.add_column("Collections", no_wrap=True, width=25)
 
         for i, paper in enumerate(self.papers):
@@ -94,6 +95,12 @@ class PaperListControl:
             )
             title = (paper.title[:45] + "...") if len(paper.title) > 45 else paper.title
             year = str(paper.year) if paper.year else "----"
+            venue = paper.venue_acronym or paper.venue_full or ""
+            venue = (
+                (venue[:18] + "...")
+                if len(venue) > 18
+                else venue
+            )
 
             collections = ""
             if hasattr(paper, "collections") and paper.collections:
@@ -111,6 +118,7 @@ class PaperListControl:
                 Text(title),
                 Text(authors),
                 Text(year),
+                Text(venue),
                 Text(collections),
                 style=row_style,
             )
@@ -243,3 +251,18 @@ class ErrorPanel:
         text.append(("class:error_help", "Press ESC to close this panel"))
 
         return FormattedText(text)
+
+    def get_formatted_text_for_buffer(self) -> str:
+        """Get plain text for the error buffer."""
+        if not self.error_messages:
+            return ""
+
+        text = []
+        for error in self.error_messages:
+            timestamp = error["timestamp"].strftime("%Y-%m-%d %H:%M:%S")
+            text.append(f"[{timestamp}] {error['title']}")
+            text.append(f"  Message: {error['message']}")
+            if error["details"]:
+                text.append(f"  Details: {error['details']}")
+            text.append("-" * 20)
+        return "\n".join(text)
