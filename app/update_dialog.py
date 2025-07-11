@@ -1,105 +1,102 @@
 """
-Update dialog for editing paper metadata.
+Dialog for updating paper metadata using simple terminal input.
 """
 
 from typing import List, Optional, Dict, Any
-from prompt_toolkit.shortcuts import input_dialog, button_dialog, radiolist_dialog
 from .models import Paper
-
-
-class UpdateDialog:
-    """Dialog for updating paper metadata."""
-    
-    def show_update_dialog(self, papers: List[Paper]) -> Optional[Dict[str, Any]]:
-        """Show update dialog and return updates or None if cancelled."""
-        try:
-            # Show what we're updating
-            if len(papers) == 1:
-                title = f"Update Paper: {papers[0].title[:50]}..."
-            else:
-                title = f"Update {len(papers)} Papers"
-            
-            # Ask what field to update
-            field_choice = radiolist_dialog(
-                title="Update Field",
-                text="Select field to update:",
-                values=[
-                    ("notes", "Notes"),
-                    ("venue_full", "Venue (Full Name)"),
-                    ("venue_acronym", "Venue (Acronym)"),
-                    ("year", "Year"),
-                    ("paper_type", "Paper Type"),
-                    ("collections", "Collections (comma-separated)"),
-                ]
-            ).run()
-            
-            if not field_choice:
-                return None
-            
-            # Get current value for display
-            current_value = ""
-            if len(papers) == 1:
-                paper = papers[0]
-                if field_choice == "notes":
-                    current_value = paper.notes or ""
-                elif field_choice == "venue_full":
-                    current_value = paper.venue_full or ""
-                elif field_choice == "venue_acronym":
-                    current_value = paper.venue_acronym or ""
-                elif field_choice == "year":
-                    current_value = str(paper.year) if paper.year else ""
-                elif field_choice == "paper_type":
-                    current_value = paper.paper_type or ""
-                elif field_choice == "collections":
-                    current_value = ", ".join([c.name for c in paper.collections])
-            
-            # Get new value
-            if field_choice == "paper_type":
-                new_value = radiolist_dialog(
-                    title="Paper Type",
-                    text="Select paper type:",
-                    values=[
-                        ("journal", "Journal Article"),
-                        ("conference", "Conference Paper"),
-                        ("preprint", "Preprint"),
-                        ("book", "Book"),
-                        ("thesis", "Thesis"),
-                        ("workshop", "Workshop Paper"),
-                        ("techreport", "Technical Report"),
-                    ]
-                ).run()
-            else:
-                prompt_text = f"Enter new {field_choice.replace('_', ' ')}:"
-                if current_value:
-                    prompt_text += f"\nCurrent: {current_value}"
-                
-                new_value = input_dialog(
-                    title=title,
-                    text=prompt_text,
-                    default=current_value
-                ).run()
-            
-            if new_value is None:
-                return None
-            
-            # Convert year to int if needed
-            if field_choice == "year" and new_value:
-                try:
-                    new_value = int(new_value)
-                except ValueError:
-                    return None
-            
-            return {field_choice: new_value}
-            
-        except Exception as e:
-            return None
+from .simple_dialogs import SimpleDialogs, SimplePaperDialog
 
 
 class SimpleUpdateDialog:
-    """Simple command-line update dialog."""
-    
+    """Dialog for updating paper metadata."""
+
+    def __init__(self):
+        self.dialogs = SimpleDialogs()
+        self.paper_dialog = SimplePaperDialog()
+
     def show_update_dialog(self, papers: List[Paper]) -> Optional[Dict[str, Any]]:
-        """Show simple update dialog using status messages."""
-        # For now, return a simple notes update
-        # This will be enhanced with proper CLI prompts
-        return {"notes": "Updated via PaperCLI"}
+        """Show update dialog for selected papers."""
+        if len(papers) == 1:
+            # Single paper update
+            paper = papers[0]
+            initial_data = {
+                'title': paper.title,
+                'authors': [author.full_name for author in paper.authors],
+                'year': paper.year,
+                'venue_full': paper.venue_full or '',
+                'venue_acronym': paper.venue_acronym or '',
+                'paper_type': paper.paper_type or 'journal',
+                'abstract': paper.abstract or '',
+                'notes': paper.notes or ''
+            }
+            return self.paper_dialog.show_metadata_dialog(initial_data)
+        else:
+            # Multiple papers update
+            return self._show_bulk_update_dialog(papers)
+
+    def _show_bulk_update_dialog(self, papers: List[Paper]) -> Optional[Dict[str, Any]]:
+        """Show bulk update dialog for multiple papers."""
+        common_values = self._find_common_values(papers)
+        updates = {}
+
+        print("\n=== Bulk Update ===")
+        print("Select fields to update:")
+        
+        # Simple choice for fields
+        fields_to_update = self.dialogs.get_input(
+            "Enter fields (year, type, venue, collections), comma-separated"
+        )
+        if not fields_to_update:
+            return None
+        
+        fields = [f.strip() for f in fields_to_update.split(',')]
+
+        if "year" in fields:
+            year_str = self.dialogs.get_input(
+                "New year", 
+                str(common_values.get('year', ''))
+            )
+            if year_str:
+                updates['year'] = int(year_str)
+
+        if "type" in fields:
+            paper_type = self.dialogs.get_choice(
+                "New paper type",
+                [("journal", "Journal"), ("conference", "Conference"), ("preprint", "Preprint")],
+                common_values.get('paper_type', 'journal')
+            )
+            if paper_type:
+                updates['paper_type'] = paper_type
+
+        if "venue" in fields:
+            venue_full = self.dialogs.get_input("New venue (full)", common_values.get('venue_full', ''))
+            venue_acronym = self.dialogs.get_input("New venue (acronym)", common_values.get('venue_acronym', ''))
+            updates['venue_full'] = venue_full
+            updates['venue_acronym'] = venue_acronym
+            
+        return updates
+
+    def _find_common_values(self, papers: List[Paper]) -> Dict[str, Any]:
+        """Find common values among selected papers."""
+        common = {}
+        
+        # Check year
+        years = [p.year for p in papers if p.year]
+        if years and all(y == years[0] for y in years):
+            common['year'] = years[0]
+        
+        # Check paper type
+        types = [p.paper_type for p in papers if p.paper_type]
+        if types and all(t == types[0] for t in types):
+            common['paper_type'] = types[0]
+        
+        # Check venue
+        venues = [p.venue_full for p in papers if p.venue_full]
+        if venues and all(v == venues[0] for v in venues):
+            common['venue_full'] = venues[0]
+        
+        venue_acronyms = [p.venue_acronym for p in papers if p.venue_acronym]
+        if venue_acronyms and all(v == venue_acronyms[0] for v in venue_acronyms):
+            common['venue_acronym'] = venue_acronyms[0]
+        
+        return common

@@ -97,9 +97,15 @@ class PaperService:
     def delete_papers(self, paper_ids: List[int]) -> int:
         """Delete multiple papers. Returns count of deleted papers."""
         with get_db_session() as session:
-            count = session.query(Paper).filter(Paper.id.in_(paper_ids)).delete()
+            papers_to_delete = session.query(Paper).filter(Paper.id.in_(paper_ids)).all()
+            if not papers_to_delete:
+                return 0
+            
+            for paper in papers_to_delete:
+                session.delete(paper)
+                
             session.commit()
-            return count
+            return len(papers_to_delete)
     
     def add_paper_from_metadata(self, paper_data: Dict[str, Any], authors: List[str], 
                                collections: List[str] = None) -> Paper:

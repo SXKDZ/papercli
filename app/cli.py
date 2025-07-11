@@ -40,6 +40,7 @@ from .services import (
 )
 from .ui_components import ErrorPanel, PaperListControl, StatusBar
 from .update_dialog import SimpleUpdateDialog
+from .edit_dialog import EditDialog
 
 
 class SmartCompleter(Completer):
@@ -250,6 +251,8 @@ Indicators (in the first column):
         self.show_error_panel = False
         self.show_details_panel = False
         self.is_filtered_view = False
+        self.edit_dialog = None
+        self.edit_float = None
 
         # Load initial papers
         self.load_papers()
@@ -435,7 +438,9 @@ The doctor command helps maintain database health by:
         # Navigation
         @self.kb.add(
             "up",
-            filter=~has_focus(self.help_control) & ~has_focus(self.details_control),
+            filter=~has_focus(self.help_control)
+            & ~has_focus(self.details_control)
+            & Condition(lambda: self.edit_dialog is None),
         )
         def move_up(event):
             # If completion menu is open, navigate it
@@ -448,7 +453,9 @@ The doctor command helps maintain database health by:
 
         @self.kb.add(
             "down",
-            filter=~has_focus(self.help_control) & ~has_focus(self.details_control),
+            filter=~has_focus(self.help_control)
+            & ~has_focus(self.details_control)
+            & Condition(lambda: self.edit_dialog is None),
         )
         def move_down(event):
             # If completion menu is open, navigate it
@@ -541,6 +548,14 @@ The doctor command helps maintain database health by:
                 self.show_details_panel = False
                 self.app.layout.focus(self.input_buffer)
                 self.status_bar.set_status("← Closed details panel")
+                event.app.invalidate()
+                return
+            elif self.edit_dialog is not None:
+                self.app.layout.container.floats.remove(self.edit_float)
+                self.edit_dialog = None
+                self.edit_float = None
+                self.app.layout.focus(self.input_buffer)
+                self.status_bar.set_status("← Closed edit dialog")
                 event.app.invalidate()
                 return
             elif self.in_select_mode:
@@ -940,6 +955,8 @@ The doctor command helps maintain database health by:
                 ("progress", "#ffff00 bg:#444444"),
                 ("error", "#ff0000"),
                 ("success", "#00ff00"),
+                # Text Area for Edit Dialog
+                ("textarea", "bg:#222222 #ffffff"),
                 # Error panel styles
                 ("error_header", "bold #ffffff bg:#cc0000"),
                 ("error_title", "bold #ff6666"),
@@ -1424,46 +1441,106 @@ The doctor command helps maintain database health by:
                         return
 
                 updates = {field: value}
+                self.status_bar.set_status(f"🔄 Updating papers...")
+
+                # Update papers
+                updated_count = 0
+                for paper in papers_to_update:
+                    try:
+                        self.paper_service.update_paper(paper.id, updates)
+                        updated_count += 1
+                    except Exception as e:
+                        self.status_bar.set_status(f"Error updating paper {paper.id}: {e}")
+                        break  # Show only first error
+
+                # Refresh paper list
+                self.load_papers()
+
+                field_name = list(updates.keys())[0] if updates else "field"
+                if self.in_select_mode:
+                    mode_info = "selected"
+                elif len(papers_to_update) > 1:
+                    mode_info = "previously selected"
+                else:
+                    mode_info = "current"
+                self.status_bar.set_status(
+                    f"✓ Updated {field_name} for {updated_count} {mode_info} paper(s)"
+                )
             else:
                 # Use simple dialog for update
-                dialog = SimpleUpdateDialog()
-                updates = dialog.show_update_dialog(papers_to_update)
+                if len(papers_to_update) > 1:
+                    dialog = SimpleUpdateDialog()
+                    updates = dialog.show_update_dialog(papers_to_update)
 
-                if not updates:
-                    self.status_bar.set_error("Update cancelled")
-                    return
+                    if not updates:
+                        self.status_bar.set_error("Update cancelled")
+                        return
+                    
+                    self.status_bar.set_status(f"🔄 Updating papers...")
 
-            self.status_bar.set_status(f"🔄 Updating papers...")
+                    # Update papers
+                    updated_count = 0
+                    for paper in papers_to_update:
+                        try:
+                            self.paper_service.update_paper(paper.id, updates)
+                            updated_count += 1
+                        except Exception as e:
+                            self.status_bar.set_status(f"Error updating paper {paper.id}: {e}")
+                            break
+                    # Refresh paper list
+                    self.load_papers()
+                    self.status_bar.set_status(
+                        f"✓ Updated {len(updates)} fields for {updated_count} paper(s)"
+                    )
 
-            # Update papers
-            updated_count = 0
-            for paper in papers_to_update:
-                try:
-                    self.paper_service.update_paper(paper.id, updates)
-                    updated_count += 1
-                except Exception as e:
-                    self.status_bar.set_status(f"Error updating paper {paper.id}: {e}")
-                    break  # Show only first error
+                else:
+                    self._show_edit_dialog(papers_to_update[0])
 
-            # Refresh paper list
-            self.load_papers()
-
-            field_name = list(updates.keys())[0] if updates else "field"
-            if self.in_select_mode:
-                mode_info = "selected"
-            elif len(papers_to_update) > 1:
-                mode_info = "previously selected"
-            else:
-                mode_info = "current"
-            self.status_bar.set_status(
-                f"✓ Updated {field_name} for {updated_count} {mode_info} paper(s)"
-            )
 
         except Exception as e:
             # Show detailed error in error panel instead of just status bar
             self.show_error_panel_with_message(
                 "Update Error", f"Failed to update papers", str(e)
             )
+
+    def _show_edit_dialog(self, paper):
+        def callback(result):
+            # Cleanup is the same whether saved or cancelled
+            if self.edit_float in self.app.layout.container.floats:
+                self.app.layout.container.floats.remove(self.edit_float)
+            self.edit_dialog = None
+            self.edit_float = None
+            self.app.layout.focus(self.input_buffer)
+
+            if result:
+                try:
+                    self.paper_service.update_paper(paper.id, result)
+                    self.load_papers()
+                    self.status_bar.set_success(f"✓ Updated paper: {paper.title[:50]}...")
+                except Exception as e:
+                    self.show_error_panel_with_message("Update Error", "Failed to update paper", str(e))
+            else:
+                self.status_bar.set_error("Update cancelled")
+            
+            self.app.invalidate()
+
+        self.edit_dialog = EditDialog(
+            {
+                'title': paper.title,
+                'authors': [author.full_name for author in paper.authors],
+                'year': paper.year,
+                'venue_full': paper.venue_full or '',
+                'venue_acronym': paper.venue_acronym or '',
+                'paper_type': paper.paper_type or 'journal',
+                'abstract': paper.abstract or '',
+                'notes': paper.notes or ''
+            },
+            callback
+        )
+        self.edit_float = Float(self.edit_dialog)
+        self.app.layout.container.floats.append(self.edit_float)
+        self.app.layout.focus(self.edit_dialog)
+        self.app.invalidate()
 
     def handle_export_command(self, args: List[str]):
         """Handle /export command."""
@@ -1518,7 +1595,7 @@ The doctor command helps maintain database health by:
                 }
             else:
                 # Interactive dialog
-                dialog = SimpleExportDialog()  # Use simple dialog for better UX
+                dialog = SimpleExportDialog()
                 export_params = dialog.show_export_dialog(len(papers_to_export))
 
                 if not export_params:
