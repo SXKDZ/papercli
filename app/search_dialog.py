@@ -1,6 +1,6 @@
-
 from typing import Optional, Dict, Any
 from prompt_toolkit.shortcuts import input_dialog, checkboxlist_dialog
+
 
 class SearchDialog:
     """Dialog for search functionality."""
@@ -24,15 +24,12 @@ class SearchDialog:
                 ("authors", "Authors"),
                 ("abstract", "Abstract"),
                 ("venue", "Venue"),
-                ("notes", "Notes")
+                ("notes", "Notes"),
             ],
-            default_values=["title", "authors", "venue"]
+            default_values=["title", "authors", "venue"],
         )
 
         if fields is None:
             return None
 
-        return {
-            'query': query,
-            'fields': fields
-        }
+        return {"query": query, "fields": fields}

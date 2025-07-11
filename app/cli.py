@@ -25,7 +25,6 @@ from prompt_toolkit.layout.menus import CompletionsMenu
 from prompt_toolkit.styles import Style
 from prompt_toolkit.widgets import Dialog, Frame, Button, Label
 
-from .export_dialog import SimpleExportDialog
 from .models import Paper
 from .services import (
     AuthorService,
@@ -1377,11 +1376,11 @@ The doctor command helps maintain database health by:
                     "Usage: /filter <field> <value>. Fields: year, author, venue, type, collection"
                 )
                 return
-            
+
             # Parse command-line filter: /filter <field> <value>
             field = args[0].lower()
             value = " ".join(args[1:])
-            
+
             # Validate field
             valid_fields = ["year", "author", "venue", "type", "collection"]
             if field not in valid_fields:
@@ -1389,9 +1388,9 @@ The doctor command helps maintain database health by:
                     f"Invalid filter field '{field}'. Valid fields: {', '.join(valid_fields)}"
                 )
                 return
-            
+
             filters = {}
-            
+
             # Convert and validate value based on field
             if field == "year":
                 try:
@@ -1405,7 +1404,14 @@ The doctor command helps maintain database health by:
                 filters["venue"] = value
             elif field == "type":
                 # Validate paper type
-                valid_types = ["journal", "conference", "preprint", "website", "book", "thesis"]
+                valid_types = [
+                    "journal",
+                    "conference",
+                    "preprint",
+                    "website",
+                    "book",
+                    "thesis",
+                ]
                 if value.lower() not in valid_types:
                     self.status_bar.set_error(
                         f"Invalid paper type '{value}'. Valid types: {', '.join(valid_types)}"
@@ -1414,7 +1420,7 @@ The doctor command helps maintain database health by:
                 filters["paper_type"] = value.lower()
             elif field == "collection":
                 filters["collection"] = value
-                
+
             self._add_log("filter_command", f"Command-line filter: {field}={value}")
             self.status_bar.set_status(f"🔽 Applying filters...")
 
@@ -1433,7 +1439,11 @@ The doctor command helps maintain database health by:
 
         except Exception as e:
             import traceback
-            self._add_log("filter_error", f"Error filtering papers: {e}\nTraceback: {traceback.format_exc()}")
+
+            self._add_log(
+                "filter_error",
+                f"Error filtering papers: {e}\nTraceback: {traceback.format_exc()}",
+            )
             self.status_bar.set_error(f"Error filtering papers: {e}")
 
     def handle_select_command(self):
@@ -1547,7 +1557,7 @@ The doctor command helps maintain database health by:
         # Handle both single paper and multiple papers
         if not isinstance(papers, list):
             papers = [papers]
-        
+
         def callback(result):
             # Cleanup is the same whether saved or cancelled
             if self.edit_float in self.app.layout.container.floats:
@@ -1563,7 +1573,9 @@ The doctor command helps maintain database health by:
                         details = []
                         for field, value in result.items():
                             old_value = (
-                                getattr(paper, field) if hasattr(paper, field) else "N/A"
+                                getattr(paper, field)
+                                if hasattr(paper, field)
+                                else "N/A"
                             )
                             details.append(f"'{field}' from '{old_value}' to '{value}'")
 
@@ -1573,7 +1585,7 @@ The doctor command helps maintain database health by:
                             f"Updated paper '{paper.title}': " + ", ".join(details),
                         )
                         updated_count += 1
-                    
+
                     self.load_papers()
                     if len(papers) == 1:
                         self.status_bar.set_success(
@@ -1614,7 +1626,7 @@ The doctor command helps maintain database health by:
                 if all(v == values[0] for v in values):
                     return values[0]
                 return f"<Multiple Values - {len(set(values))} different>"
-            
+
             initial_data = {
                 "title": f"<Editing {len(papers)} papers>",
                 "authors": [],  # Too complex for bulk edit
@@ -1755,12 +1767,12 @@ The doctor command helps maintain database health by:
 
         # Create handlers that clean up properly
         def cleanup_delete():
-            if hasattr(self, '_delete_dialog_active'):
+            if hasattr(self, "_delete_dialog_active"):
                 self._delete_dialog_active = False
             perform_delete()
 
         def cleanup_cancel():
-            if hasattr(self, '_delete_dialog_active'):
+            if hasattr(self, "_delete_dialog_active"):
                 self._delete_dialog_active = False
             cancel_delete()
 
@@ -1778,7 +1790,10 @@ The doctor command helps maintain database health by:
         self._delete_dialog_active = True
 
         # Add key binding for ESC to default to "No"
-        @self.kb.add("escape", filter=Condition(lambda: getattr(self, '_delete_dialog_active', False)))
+        @self.kb.add(
+            "escape",
+            filter=Condition(lambda: getattr(self, "_delete_dialog_active", False)),
+        )
         def _(event):
             self._delete_dialog_active = False
             cancel_delete()
@@ -1990,10 +2005,10 @@ The doctor command helps maintain database health by:
         if content is not None:
             doc = Document(content, 0)
             self.help_buffer.set_document(doc, bypass_readonly=True)
-        
+
         # Update dialog title
         self.help_dialog.title = title
-        
+
         self.show_help = True
         self.app.layout.focus(self.help_control)
         self.status_bar.set_status("📖 Help panel opened - Press ESC to close")
@@ -2092,7 +2107,9 @@ The doctor command helps maintain database health by:
         collections = self.collection_service.get_all_collections()
         papers = self.paper_service.get_all_papers()
 
-        self.edit_dialog = CollectionDialog(collections, papers, callback, self.status_bar)
+        self.edit_dialog = CollectionDialog(
+            collections, papers, callback, self.status_bar
+        )
         self.edit_float = Float(self.edit_dialog)
         self.app.layout.container.floats.append(self.edit_float)
         self.app.layout.focus(self.edit_dialog)

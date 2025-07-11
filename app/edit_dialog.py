@@ -7,6 +7,7 @@ from typing import Callable, Dict, Any
 from prompt_toolkit.layout.containers import HSplit, VSplit
 from prompt_toolkit.widgets import Button, Dialog, Frame, Label, TextArea
 
+
 class EditDialog:
     """A full-window dialog for editing paper metadata."""
 
@@ -70,7 +71,9 @@ class EditDialog:
                 HSplit([Label(text="Authors:", width=18), self.authors_area]),
                 HSplit([Label(text="Year:", width=18), self.year_area]),
                 HSplit([Label(text="Venue (Full):", width=18), self.venue_full_area]),
-                HSplit([Label(text="Venue (Acronym):", width=18), self.venue_acronym_area]),
+                HSplit(
+                    [Label(text="Venue (Acronym):", width=18), self.venue_acronym_area]
+                ),
                 Label(text="Abstract:"),
                 Frame(self.abstract_area, height=5),
                 Label(text="Notes:"),

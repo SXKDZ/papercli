@@ -100,14 +100,14 @@ class PaperListControl:
             title = paper.title
             year = str(paper.year) if paper.year else "----"
             venue = paper.venue_acronym or paper.venue_full or ""
-            
+
             collections = ""
             if hasattr(paper, "collections") and paper.collections:
                 collection_names = [
                     c.name if hasattr(c, "name") else str(c) for c in paper.collections
                 ]
                 collections = ", ".join(collection_names)
-            
+
             table.add_row(
                 Text(prefix),
                 Text(title),
@@ -289,7 +289,7 @@ class ScrollableList:
         self.control = FormattedTextControl(
             text=self._get_formatted_text,
             key_bindings=self._get_key_bindings(),
-            focusable=True
+            focusable=True,
         )
 
     def set_items(self, items: List[str]):
