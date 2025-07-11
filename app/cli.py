@@ -123,7 +123,14 @@ class SmartCompleter(Completer):
             },
             "/help": {"description": "Show the help panel", "subcommands": {}},
             "/log": {"description": "Show the error log panel", "subcommands": {}},
-            "/doctor": {"description": "Diagnose and fix database/system issues", "subcommands": {}},
+            "/doctor": {
+                "description": "Diagnose and fix database/system issues",
+                "subcommands": {
+                    "diagnose": "Run full diagnostic check",
+                    "clean": "Clean orphaned database records", 
+                    "help": "Show doctor command help"
+                }
+            },
             "/exit": {"description": "Exit the application", "subcommands": {}},
         }
 
@@ -299,7 +306,7 @@ The doctor command helps maintain database health by:
 • Checking terminal capabilities
 • Providing automated cleanup"""
                 
-                self.show_error_panel_with_message("PaperCLI Doctor - Help", "Available commands and options", help_text)
+                self.show_help_dialog(help_text)
                 
             else:
                 self.status_bar.set_error(f"Unknown doctor action: {action}. Use 'diagnose', 'clean', or 'help'")
@@ -388,7 +395,7 @@ The doctor command helps maintain database health by:
         issues_count = len(report['issues_found'])
         status = "✓ System healthy" if issues_count == 0 else f"⚠ {issues_count} issues found"
         
-        self.show_error_panel_with_message("PaperCLI Doctor Report", status, report_text)
+        self.show_help_dialog(report_text)
 
     def load_papers(self):
         """Load papers from database."""
@@ -1826,8 +1833,11 @@ The doctor command helps maintain database health by:
         self.app.layout.focus(self.error_control)
         self.status_bar.set_status(f"❌ {title} - Press ESC to close details")
 
-    def show_help_dialog(self):
-        """Show help dialog and focus it."""
+    def show_help_dialog(self, content: str = None):
+        """Show help dialog with optional custom content."""
+        if content is not None:
+            doc = Document(content, 0)
+            self.help_buffer.set_document(doc, bypass_readonly=True)
         self.show_help = True
         self.app.layout.focus(self.help_control)
         self.status_bar.set_status("📖 Help panel opened - Press ESC to close")
