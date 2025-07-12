@@ -37,6 +37,9 @@ from .services import (
     SearchService,
     SystemService,
 )
+from .add_dialog import AddDialog
+from .filter_dialog import FilterDialog
+from .sort_dialog import SortDialog
 from .ui_components import ErrorPanel, PaperListControl, StatusBar
 from .edit_dialog import EditDialog
 from .collect_dialog import CollectDialog
@@ -58,13 +61,10 @@ class SmartCompleter(Completer):
                     "sample": "Add a sample paper for demonstration",
                 },
             },
-            "/search": {
-                "description": "Search papers by keyword (title, author, etc.)",
-                "subcommands": {},
-            },
             "/filter": {
-                "description": "Filter papers by specific criteria",
+                "description": "Filter papers by specific criteria or search all fields",
                 "subcommands": {
+                    "all": "Search across all fields (title, author, venue, abstract)",
                     "year": "Filter by publication year (e.g., 2023)",
                     "author": "Filter by author name (e.g., 'Turing')",
                     "venue": "Filter by venue name (e.g., 'NeurIPS')",
@@ -271,6 +271,12 @@ Indicators (in the first column):
         self.is_filtered_view = False
         self.edit_dialog = None
         self.edit_float = None
+        self.add_dialog = None
+        self.add_float = None
+        self.filter_dialog = None
+        self.filter_float = None
+        self.sort_dialog = None
+        self.sort_float = None
         self.logs = []
 
         # Load initial papers
@@ -530,9 +536,9 @@ The doctor command helps maintain database health by:
                 event.app.invalidate()
 
         # Selection (in select mode) - smart space key handling
-        @self.kb.add("space")
+        @self.kb.add("space", filter=~(Condition(lambda: self.add_dialog is not None or self.filter_dialog is not None or self.sort_dialog is not None)))
         def toggle_selection(event):
-            # If an edit dialog is open and a TextArea is focused, insert space into it.
+            # If edit dialog is open and a TextArea is focused, insert space into it.
             if self.edit_dialog and hasattr(event.app.layout.current_control, "buffer"):
                 current_buffer = event.app.layout.current_control.buffer
                 if current_buffer in [f.buffer for f in self.edit_dialog.input_fields.values()]:
@@ -599,10 +605,54 @@ The doctor command helps maintain database health by:
                     self.status_bar.set_status("← Exited selection mode")
                 event.app.invalidate()
 
-        # Help
+        # Function key bindings
         @self.kb.add("f1")
         def show_help(event):
             self.show_help_dialog(self.HELP_TEXT, "PaperCLI Help")
+
+        @self.kb.add("f2")
+        def add_paper(event):
+            self.show_add_dialog()
+
+        @self.kb.add("f3")
+        def toggle_select_mode(event):
+            self.handle_select_command()
+
+        @self.kb.add("f4")
+        def show_detail(event):
+            self.handle_detail_command()
+
+        @self.kb.add("f5")
+        def edit_paper(event):
+            self.handle_edit_command()
+
+        @self.kb.add("f6")
+        def delete_paper(event):
+            self.handle_delete_command()
+
+        @self.kb.add("f7")
+        def manage_collections(event):
+            self.handle_collect_command()
+
+        @self.kb.add("f8")
+        def filter_papers(event):
+            self.show_filter_dialog()
+
+        @self.kb.add("f9")
+        def sort_papers(event):
+            self.show_sort_dialog()
+
+        @self.kb.add("f10")
+        def show_all_papers(event):
+            self.handle_all_command()
+
+        @self.kb.add("f11")
+        def clear_selection(event):
+            self.handle_clear_command()
+
+        @self.kb.add("f12")
+        def exit_app(event):
+            event.app.exit()
 
         # Exit selection mode
         @self.kb.add("escape")
@@ -636,6 +686,30 @@ The doctor command helps maintain database health by:
                 self.edit_float = None
                 self.app.layout.focus(self.input_buffer)
                 self.status_bar.set_status("← Closed edit dialog")
+                event.app.invalidate()
+                return
+            elif self.add_dialog is not None:
+                self.app.layout.container.floats.remove(self.add_float)
+                self.add_dialog = None
+                self.add_float = None
+                self.app.layout.focus(self.input_buffer)
+                self.status_bar.set_status("← Closed add dialog")
+                event.app.invalidate()
+                return
+            elif self.filter_dialog is not None:
+                self.app.layout.container.floats.remove(self.filter_float)
+                self.filter_dialog = None
+                self.filter_float = None
+                self.app.layout.focus(self.input_buffer)
+                self.status_bar.set_status("← Closed filter dialog")
+                event.app.invalidate()
+                return
+            elif self.sort_dialog is not None:
+                self.app.layout.container.floats.remove(self.sort_float)
+                self.sort_dialog = None
+                self.sort_float = None
+                self.app.layout.focus(self.input_buffer)
+                self.status_bar.set_status("← Closed sort dialog")
                 event.app.invalidate()
                 return
             elif self.in_select_mode:
@@ -694,7 +768,7 @@ The doctor command helps maintain database health by:
                     buffer.complete_previous()
 
         # Handle backspace
-        @self.kb.add("backspace")
+        @self.kb.add("backspace", filter=~(Condition(lambda: self.add_dialog is not None or self.filter_dialog is not None or self.sort_dialog is not None)))
         def handle_backspace(event):
             # If the current focused control has a buffer, let it handle the backspace.
             if hasattr(event.app.layout.current_control, "buffer"):
@@ -717,6 +791,7 @@ The doctor command helps maintain database health by:
             # Fallback for other cases (shouldn't be reached if focused buffer handles it)
             if event.app.current_buffer == self.input_buffer:
                 self.input_buffer.delete_before_cursor()
+
 
         # Handle delete key
         @self.kb.add("delete")
@@ -876,6 +951,12 @@ The doctor command helps maintain database health by:
                 ),
                 # Paper list
                 Frame(body=self.paper_list_window),
+                # Shortkey bar
+                Window(
+                    content=FormattedTextControl(text=lambda: self.get_shortkey_bar_text()),
+                    height=1,
+                    style="class:shortkey_bar",
+                ),
                 # Input
                 Frame(body=input_window),
                 # Status
@@ -1001,7 +1082,7 @@ The doctor command helps maintain database health by:
             mode = "ALL"
         selected_count = len(self.paper_list_control.selected_paper_ids)
 
-        # Left side of the header
+        # Left side of the header (just mode)
         left_parts = []
         if self.in_select_mode:
             left_parts.append(("class:mode_select", f" {mode} "))
@@ -1010,20 +1091,19 @@ The doctor command helps maintain database health by:
         else:
             left_parts.append(("class:mode_list", f" {mode} "))
 
-        left_parts.append(("class:header_content", " Total: "))
-        left_parts.append(("class:header_content", str(len(self.current_papers))))
+        # Right side of the header (status info)
+        right_parts = []
+        right_parts.append(("class:header_content", "Total: "))
+        right_parts.append(("class:header_content", str(len(self.current_papers))))
 
-        left_parts.append(("class:header_content", "  Current: "))
-        left_parts.append(
+        right_parts.append(("class:header_content", "  Current: "))
+        right_parts.append(
             ("class:header_content", str(self.paper_list_control.selected_index + 1))
         )
 
-        left_parts.append(("class:header_content", "  Selected: "))
-        left_parts.append(("class:header_content", str(selected_count)))
-
-        # Right side of the header
-        help_text = "Space: Select  ESC: Exit  ↑↓: Nav  F1: Help "
-        right_parts = [("class:header_help_text", help_text)]
+        right_parts.append(("class:header_content", "  Selected: "))
+        right_parts.append(("class:header_content", str(selected_count)))
+        right_parts.append(("class:header_content", " "))
 
         # Calculate lengths
         left_len = sum(len(p[1]) for p in left_parts)
@@ -1046,6 +1126,40 @@ The doctor command helps maintain database health by:
             truncated_text = full_text[: width - 3] + "..."
             return FormattedText([("class:header_content", truncated_text)])
 
+        return FormattedText(final_parts)
+
+    def get_shortkey_bar_text(self) -> FormattedText:
+        """Get shortkey bar text with function key shortcuts."""
+        from prompt_toolkit.application import get_app
+
+        try:
+            width = get_app().output.get_size().columns
+        except Exception:
+            width = 120  # Fallback
+
+        # Function key shortcuts with configurable spacing
+        shortkey_spacing = "    "  # Adjust this to control spacing between shortcuts
+        shortcuts = [
+            "F1: Help", "F2: Add", "F3: Select", "F4: Detail", "F5: Edit", "F6: Delete",
+            "F7: Collect", "F8: Filter", "F9: Sort", "F10: All", "F11: Clear", "F12: Exit", "↑↓: Nav"
+        ]
+        help_text = shortkey_spacing.join(shortcuts)
+        
+        # Create formatted text parts with shortkey bar style
+        parts = [("class:shortkey_bar", help_text)]
+        
+        # Calculate padding to center the text
+        text_len = len(help_text)
+        if text_len < width:
+            padding_len = (width - text_len) // 2
+            left_padding = [("class:shortkey_bar", " " * padding_len)]
+            right_padding = [("class:shortkey_bar", " " * (width - text_len - padding_len))]
+            final_parts = left_padding + parts + right_padding
+        else:
+            # If text is too long, truncate
+            truncated_text = help_text[:width-3] + "..." if width > 3 else help_text[:width]
+            final_parts = [("class:shortkey_bar", truncated_text)]
+        
         return FormattedText(final_parts)
 
     def setup_application(self):
@@ -1091,6 +1205,8 @@ The doctor command helps maintain database health by:
                 ("error_details", "#6272a4 italic"),
                 ("help_header", "bold #f8f8f2 bg:#8be9fd"),
                 ("help_footer", "bold #f1fa8c"),
+                # Shortkey bar
+                ("shortkey_bar", "italic #f8f8f2 bg:#44475a"),
             ]
         )
 
@@ -1146,8 +1262,6 @@ The doctor command helps maintain database health by:
             if cmd in self.smart_completer.commands:
                 if cmd == "/add":
                     self.handle_add_command(parts[1:])
-                elif cmd == "/search":
-                    self.handle_search_command(parts[1:])
                 elif cmd == "/filter":
                     self.handle_filter_command(parts[1:])
                 elif cmd == "/select":
@@ -1400,55 +1514,61 @@ The doctor command helps maintain database health by:
                 "Add Manual Paper Error", "Failed to add manual paper", str(e)
             )
 
-    def handle_search_command(self, args: List[str]):
-        """Handle /search command."""
-        try:
-            if not args:
-                self.status_bar.set_status(f"📖 Usage: /search <query>")
-                return
-
-            query = " ".join(args)
-            self.status_bar.set_status(StatusMessages.search_started(query))
-
-            # Perform search
-            results = self.search_service.search_papers(
-                query, ["title", "authors", "venue", "abstract"]
-            )
-
-            if not results:
-                # Try fuzzy search
-                results = self.search_service.fuzzy_search_papers(query)
-
-            # Update display
-            self.current_papers = results
-            self.paper_list_control = PaperListControl(self.current_papers)
-            self.is_filtered_view = True
-
-            self.status_bar.set_status(
-                f"🎯 Found {len(results)} papers matching '{query}'"
-            )
-
-        except Exception as e:
-            self.status_bar.set_error(f"Error searching papers: {e}")
 
     def handle_filter_command(self, args: List[str]):
         """Handle /filter command."""
         try:
-            if len(args) < 2:
+            if len(args) < 1:
                 self.status_bar.set_status(
-                    "Usage: /filter <field> <value>. Fields: year, author, venue, type, collection"
+                    "Usage: /filter <field> <value> OR /filter all <query>. Fields: year, author, venue, type, collection, all"
                 )
                 return
 
             # Parse command-line filter: /filter <field> <value>
             field = args[0].lower()
+            
+            # Handle "all" field - search across all fields
+            if field == "all":
+                if len(args) < 2:
+                    self.status_bar.set_status("Usage: /filter all <query>")
+                    return
+                    
+                query = " ".join(args[1:])
+                self.status_bar.set_status(f"🔍 Searching all fields for '{query}'")
+                
+                # Perform search across all fields like the old search command
+                results = self.search_service.search_papers(
+                    query, ["title", "authors", "venue", "abstract"]
+                )
+                
+                if not results:
+                    # Try fuzzy search
+                    results = self.search_service.fuzzy_search_papers(query)
+                
+                # Update display
+                self.current_papers = results
+                self.paper_list_control = PaperListControl(self.current_papers)
+                self.is_filtered_view = True
+                
+                self.status_bar.set_status(
+                    f"🎯 Found {len(results)} papers matching '{query}' in all fields"
+                )
+                return
+
+            # Handle specific field filtering
+            if len(args) < 2:
+                self.status_bar.set_status(
+                    "Usage: /filter <field> <value>. Fields: year, author, venue, type, collection, all"
+                )
+                return
+                
             value = " ".join(args[1:])
 
             # Validate field
             valid_fields = ["year", "author", "venue", "type", "collection"]
             if field not in valid_fields:
                 self.status_bar.set_error(
-                    f"Invalid filter field '{field}'. Valid fields: {', '.join(valid_fields)}"
+                    f"Invalid filter field '{field}'. Valid fields: {', '.join(valid_fields + ['all'])}"
                 )
                 return
 
@@ -1690,6 +1810,102 @@ The doctor command helps maintain database health by:
         self.edit_float = Float(self.edit_dialog)
         self.app.layout.container.floats.append(self.edit_float)
         self.app.layout.focus(self.edit_dialog.get_initial_focus() or self.edit_dialog)
+        self.app.invalidate()
+
+    def show_add_dialog(self):
+        """Show the add paper dialog."""
+        def callback(result):
+            # This callback is executed when the dialog is closed.
+            if self.add_float in self.app.layout.container.floats:
+                self.app.layout.container.floats.remove(self.add_float)
+            self.add_dialog = None
+            self.add_float = None
+            self.app.layout.focus(self.input_buffer)
+
+            if result:
+                try:
+                    source = result.get("source", "").strip()
+                    path_id = result.get("path_id", "").strip()
+                    
+                    if not source:
+                        self.status_bar.set_error("Source is required")
+                        return
+                    
+                    # Determine the type of source and call appropriate add command
+                    if source.lower() in ["pdf", "arxiv", "dblp", "manual", "sample"]:
+                        # Handle subcommand-style addition
+                        if path_id:
+                            self.handle_add_command([source, path_id])
+                        else:
+                            self.handle_add_command([source])
+                    else:
+                        # Treat as manual entry with source as title
+                        self.handle_add_command(["manual", source])
+                        
+                except Exception as e:
+                    self.status_bar.set_error(f"Error adding paper: {e}")
+
+        self.add_dialog = AddDialog(callback)
+        self.add_float = Float(self.add_dialog)
+        self.app.layout.container.floats.append(self.add_float)
+        self.app.layout.focus(self.add_dialog.get_initial_focus() or self.add_dialog)
+        self.app.invalidate()
+
+    def show_filter_dialog(self):
+        """Show the filter papers dialog."""
+        def callback(result):
+            # This callback is executed when the dialog is closed.
+            if self.filter_float in self.app.layout.container.floats:
+                self.app.layout.container.floats.remove(self.filter_float)
+            self.filter_dialog = None
+            self.filter_float = None
+            self.app.layout.focus(self.input_buffer)
+
+            if result:
+                try:
+                    field = result.get("field", "").strip()
+                    value = result.get("value", "").strip()
+                    
+                    if not field or not value:
+                        self.status_bar.set_error("Both field and value are required")
+                        return
+                    
+                    # Call the filter command with the selected field and value
+                    self.handle_filter_command([field, value])
+                        
+                except Exception as e:
+                    self.status_bar.set_error(f"Error filtering papers: {e}")
+
+        self.filter_dialog = FilterDialog(callback)
+        self.filter_float = Float(self.filter_dialog)
+        self.app.layout.container.floats.append(self.filter_float)
+        self.app.layout.focus(self.filter_dialog.get_initial_focus() or self.filter_dialog)
+        self.app.invalidate()
+
+    def show_sort_dialog(self):
+        """Show the sort papers dialog."""
+        def callback(result):
+            # This callback is executed when the dialog is closed.
+            if self.sort_float in self.app.layout.container.floats:
+                self.app.layout.container.floats.remove(self.sort_float)
+            self.sort_dialog = None
+            self.sort_float = None
+            self.app.layout.focus(self.input_buffer)
+
+            if result:
+                try:
+                    field, order = result
+                    
+                    # Call the sort command with the selected field and order
+                    self.handle_sort_command([field, order])
+                        
+                except Exception as e:
+                    self.status_bar.set_error(f"Error sorting papers: {e}")
+
+        self.sort_dialog = SortDialog(callback)
+        self.sort_float = Float(self.sort_dialog)
+        self.app.layout.container.floats.append(self.sort_float)
+        self.app.layout.focus(self.sort_dialog.get_initial_focus() or self.sort_dialog)
         self.app.invalidate()
 
     def handle_export_command(self, args: List[str]):

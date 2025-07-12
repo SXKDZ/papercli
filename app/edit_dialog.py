@@ -149,13 +149,8 @@ class EditDialog:
             type_buttons_row
         ])
         
-        # Add the note below the paper type row
-        note_text = FormattedTextControl("Ctrl-S: Save, Esc: Exit", style="class:dialog.note")
-        note_window = Window(content=note_text, height=1, align=WindowAlign.RIGHT)
-
         return [
             paper_type_row,
-            note_window,
             fields_layout,
         ]
 
@@ -168,10 +163,29 @@ class EditDialog:
             width=Dimension(min=110, preferred=130)  # Ensure body fits within dialog frame
         )
         
+        # Create custom button row with centered buttons and right-aligned help text
+        save_button = Button(text="Save", handler=self._handle_save)
+        cancel_button = Button(text="Cancel", handler=self._handle_cancel)
+        
+        # Create button row layout
+        button_row = VSplit([
+            # Flexible spacer
+            Window(),
+            # Centered buttons
+            save_button,
+            Window(width=2),  # Small gap between buttons
+            cancel_button,
+            # Flexible spacer with right-aligned help text
+            Window(
+                content=FormattedTextControl("Ctrl-S: Save  ESC: Exit", style="class:header_help_text"),
+                align=WindowAlign.RIGHT
+            )
+        ])
+        
         self.dialog = Dialog(
             title="Edit Paper Metadata",
             body=self.body_container,
-            buttons=[Button(text="Save", handler=self._handle_save), Button(text="Cancel", handler=self._handle_cancel)],
+            buttons=[button_row],
             with_background=False, modal=True,  # Remove shadow by setting with_background=False
             width=Dimension(min=120, preferred=140),  # Make dialog wider
         )
