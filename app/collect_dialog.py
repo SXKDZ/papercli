@@ -57,7 +57,7 @@ class EditableList:
 
     def _trigger_select(self):
         if self.on_select:
-            self.on_select(self.get_current_item())
+            self.on_select(self)
 
     def _get_formatted_text(self):
         if not self.items:
@@ -126,8 +126,8 @@ class EditableList:
                 self.edit_text = ""
                 self.cursor_position = 0
             else:
-                # Pass escape to parent
-                event.app.layout.focus_previous()
+                # Allow escape to propagate to parent dialog
+                pass
 
         @kb.add("c-s")  # Ctrl+S to save edit (kept for compatibility)
         def save_edit(event):
@@ -199,37 +199,6 @@ class EditableList:
                         + self.edit_text[self.cursor_position :]
                     )
                     self.cursor_position += 1
-
-        # Add tab navigation for the dialog (only when not editing)
-        @kb.add("tab")
-        def handle_tab_navigation(event):
-            if not self.editing_mode and hasattr(self, "parent_dialog"):
-                try:
-                    dialog = self.parent_dialog
-                    dialog.current_focus_index = (dialog.current_focus_index + 1) % len(
-                        dialog.focusable_components
-                    )
-                    event.app.layout.focus(
-                        dialog.focusable_components[dialog.current_focus_index]
-                    )
-                except Exception:
-                    # Fallback to normal tab behavior
-                    pass
-
-        @kb.add("s-tab")  # Shift+Tab
-        def handle_shift_tab_navigation(event):
-            if not self.editing_mode and hasattr(self, "parent_dialog"):
-                try:
-                    dialog = self.parent_dialog
-                    dialog.current_focus_index = (dialog.current_focus_index - 1) % len(
-                        dialog.focusable_components
-                    )
-                    event.app.layout.focus(
-                        dialog.focusable_components[dialog.current_focus_index]
-                    )
-                except Exception:
-                    # Fallback to normal shift+tab behavior
-                    pass
 
         return kb
 
@@ -306,29 +275,32 @@ class CollectDialog:
             width=Dimension(min=3, preferred=3, max=3),
         )
 
+        # Column 1: Collections
+        self.collections_frame = Frame(
+            title="Collections",
+            body=self.collections_list,
+            width=Dimension(min=30, preferred=35),
+        )
+        # Column 2: Papers in selected collection
+        self.papers_in_collection_frame = Frame(
+            title="Papers in Collection",
+            body=self.papers_in_collection_list,
+            width=Dimension(min=35, preferred=45),
+        )
+        # Column 3: All other papers
+        self.other_papers_frame = Frame(
+            title="All Papers",
+            body=self.other_papers_list,
+            width=Dimension(min=35, preferred=45),
+        )
+
         # Main layout with three columns
         main_body = VSplit(
             [
-                # Column 1: Collections
-                Frame(
-                    title="Collections",
-                    body=self.collections_list,
-                    width=Dimension(min=30, preferred=35),
-                ),
-                # Column 2: Papers in selected collection
-                Frame(
-                    title="Papers in Collection",
-                    body=self.papers_in_collection_list,
-                    width=Dimension(min=35, preferred=45),
-                ),
-                # Buttons between columns 2 and 3
+                self.collections_frame,
+                self.papers_in_collection_frame,
                 button_container,
-                # Column 3: All other papers
-                Frame(
-                    title="All Papers",
-                    body=self.other_papers_list,
-                    width=Dimension(min=35, preferred=45),
-                ),
+                self.other_papers_frame,
             ]
         )
 
@@ -350,13 +322,21 @@ class CollectDialog:
             ]
         )
 
-        # Store references to focusable components for TAB navigation
+        # Store references to focusable components and their frames for TAB navigation
         self.focusable_components = [
             self.collections_list,
             self.papers_in_collection_list,
             self.other_papers_list,
         ]
+        self.component_frames = {
+            self.collections_list: self.collections_frame,
+            self.papers_in_collection_list: self.papers_in_collection_frame,
+            self.other_papers_list: self.other_papers_frame,
+        }
         self.current_focus_index = 0
+
+        # Set initial focus style
+        self._set_focus_style()
 
         # Create dialog
         self.dialog = Dialog(
@@ -369,14 +349,21 @@ class CollectDialog:
             ],
             width=Dimension(min=140, preferred=160),
             with_background=False,
+            modal=True,
+            key_bindings=self._create_dialog_key_bindings(),
         )
-
-        # Add dialog key bindings directly to the dialog
-        self.dialog.container.key_bindings = self._create_dialog_key_bindings()
 
         # Initialize with first collection if available
         if collections:
-            self.on_collection_select(collections[0].name)
+            self.on_collection_select(self.collections_list)
+
+    def _set_focus_style(self):
+        """Update the border style of frames based on current focus."""
+        for component, frame in self.component_frames.items():
+            if component == self.focusable_components[self.current_focus_index]:
+                frame.style = "class:frame.focused"
+            else:
+                frame.style = "class:frame.unfocused"
 
     def _create_dialog_key_bindings(self):
         """Create key bindings for dialog navigation."""
@@ -388,6 +375,7 @@ class CollectDialog:
                 self.focusable_components
             )
             event.app.layout.focus(self.focusable_components[self.current_focus_index])
+            self._set_focus_style()
 
         @kb.add("s-tab")  # Shift+Tab
         def focus_previous(event):
@@ -395,6 +383,7 @@ class CollectDialog:
                 self.focusable_components
             )
             event.app.layout.focus(self.focusable_components[self.current_focus_index])
+            self._set_focus_style()
 
         @kb.add("escape")
         def quit_dialog(event):
@@ -403,8 +392,9 @@ class CollectDialog:
 
         return kb
 
-    def on_collection_select(self, collection_name: str):
+    def on_collection_select(self, editable_list_instance):
         """Handle collection selection."""
+        collection_name = editable_list_instance.get_current_item()
         if not collection_name:
             return
 
@@ -486,8 +476,9 @@ class CollectDialog:
                     )
                     self.collections_list.set_items(current_names)
 
-    def on_paper_select(self, paper_title: str):
+    def on_paper_select(self, editable_list_instance):
         """Handle paper selection to show details."""
+        paper_title = editable_list_instance.get_current_item()
         if not paper_title:
             self.paper_details.text = "Select a paper to view details"
             return

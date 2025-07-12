@@ -18,7 +18,7 @@ class FilterDialog:
     def __init__(self, callback: Callable):
         self.callback = callback
         self.result = None
-        
+
         # Available fields for filtering
         self.filter_fields = [
             ("all", "All Fields (search across title, author, venue, abstract)"),
@@ -28,19 +28,16 @@ class FilterDialog:
             ("type", "Paper Type"),
             ("collection", "Collection"),
         ]
-        
+
         self._create_layout()
         self._add_key_bindings()
 
     def _create_layout(self):
         """Creates the dialog layout."""
-        
+
         # Field selection list
-        self.field_list = RadioList(
-            values=self.filter_fields,
-            default="all"
-        )
-        
+        self.field_list = RadioList(values=self.filter_fields, default="all")
+
         # Value input field
         self.value_input = TextArea(
             text="",
@@ -48,54 +45,58 @@ class FilterDialog:
             width=Dimension(min=40, preferred=60),
             height=Dimension(preferred=1, max=1),
             focusable=True,
-            style="class:textarea"
+            style="class:textarea",
         )
-        
+
         # Layout with field selection and value input
-        main_content = HSplit([
-            # Field selection
-            Window(
-                content=FormattedTextControl("Filter Field:", focusable=False),
-                height=1,
-                style="class:dialog.label"
-            ),
-            self.field_list,
-            
-            Window(height=1),  # Spacing
-            
-            # Value input
-            VSplit([
+        main_content = HSplit(
+            [
+                # Field selection
                 Window(
-                    content=FormattedTextControl("Filter Value:", focusable=False),
-                    width=15,
-                    style="class:dialog.label"
+                    content=FormattedTextControl("Filter Field:", focusable=False),
+                    height=1,
+                    style="class:dialog.label",
                 ),
-                self.value_input
-            ]),
-        ])
-        
-        # Help text
-        help_text_window = Window(
-            content=FormattedTextControl("Enter: Apply Filter  ESC: Cancel", style="class:header_help_text"),
-            height=1,
-            align=WindowAlign.RIGHT
+                self.field_list,
+                Window(height=1),  # Spacing
+                # Value input
+                VSplit(
+                    [
+                        Window(
+                            content=FormattedTextControl(
+                                "Filter Value:", focusable=False
+                            ),
+                            width=15,
+                            style="class:dialog.label",
+                        ),
+                        self.value_input,
+                    ]
+                ),
+            ]
         )
-        
+
         # Body with content and help text
-        self.body_container = HSplit([
-            main_content,
-            Window(height=1),  # Spacing
-            help_text_window,
-        ])
-        
+        self.body_container = HSplit(
+            [
+                main_content,
+            ]
+        )
+
         # Create dialog with buttons
-        self.apply_button = Button(text="Apply Filter", handler=self._handle_apply)
+        self.apply_button = Button(text="Apply", handler=self._handle_apply)
         self.cancel_button = Button(text="Cancel", handler=self._handle_cancel)
-        
+        button_row = VSplit(
+            [
+                self.apply_button,
+                Window(width=2),  # Two spaces between buttons
+                self.cancel_button,
+            ]
+        )
+
         self.dialog = Dialog(
             title="Filter Papers",
             body=self.body_container,
-            buttons=[self.apply_button, self.cancel_button],
+            buttons=[button_row],
             with_background=False,
             modal=True,
             width=Dimension(min=70, preferred=90),
@@ -105,15 +106,12 @@ class FilterDialog:
         """Handles the Apply Filter button press."""
         field = self.field_list.current_value
         value = self.value_input.text.strip()
-        
+
         if not value:
             # TODO: Show validation error
             return
-            
-        self.result = {
-            "field": field,
-            "value": value
-        }
+
+        self.result = {"field": field, "value": value}
         self.callback(self.result)
 
     def _handle_cancel(self):
@@ -127,7 +125,7 @@ class FilterDialog:
     def _add_key_bindings(self):
         """Add key bindings for the dialog."""
         kb = KeyBindings()
-        
+
         @kb.add("enter")
         def _(event):
             self._handle_apply()
@@ -164,13 +162,13 @@ class FilterDialog:
         @kb.add("backspace")
         def _(event):
             current_control = event.app.layout.current_control
-            if hasattr(current_control, 'buffer'):
+            if hasattr(current_control, "buffer"):
                 current_control.buffer.delete_before_cursor()
 
         @kb.add("delete")
         def _(event):
             current_control = event.app.layout.current_control
-            if hasattr(current_control, 'buffer'):
+            if hasattr(current_control, "buffer"):
                 current_control.buffer.delete()
 
         @kb.add("<any>")
@@ -178,14 +176,16 @@ class FilterDialog:
             # Handle all character input to prevent it from reaching main app
             if event.data and len(event.data) == 1 and event.data.isprintable():
                 current_control = event.app.layout.current_control
-                if hasattr(current_control, 'buffer'):
+                if hasattr(current_control, "buffer"):
                     current_control.buffer.insert_text(event.data)
 
         # Apply key bindings to the body container
-        self.body_container.key_bindings = merge_key_bindings([
-            self.body_container.key_bindings or KeyBindings(),
-            kb,
-        ])
+        self.body_container.key_bindings = merge_key_bindings(
+            [
+                self.body_container.key_bindings or KeyBindings(),
+                kb,
+            ]
+        )
 
     def __pt_container__(self):
         return self.dialog

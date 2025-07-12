@@ -1179,12 +1179,6 @@ The doctor command helps maintain database health by:
                     "editing",
                     "bold #ffffff bg:#50fa7b",
                 ),  # Edit mode with white text on green background
-                ("highlighted", "bold #50fa7b"),  # Selected paper checkmark
-                (
-                    "selected_highlighted",
-                    "bold #ffb86c bg:#44475a",
-                ),  # Current and selected
-                ("paper", "#f8f8f2"),
                 ("empty", "#6272a4 italic"),
                 # Input & Prompt
                 ("prompt", "bold #50fa7b"),
@@ -1207,6 +1201,9 @@ The doctor command helps maintain database health by:
                 ("help_footer", "bold #f1fa8c"),
                 # Shortkey bar
                 ("shortkey_bar", "italic #f8f8f2 bg:#44475a"),
+                # Frame styles for CollectDialog
+                ("frame.focused", "bold #8be9fd"),  # Blue border for focused frame
+                ("frame.unfocused", "#6272a4"),  # Grey border for unfocused frame
             ]
         )
 
@@ -1844,6 +1841,9 @@ The doctor command helps maintain database health by:
                         
                 except Exception as e:
                     self.status_bar.set_error(f"Error adding paper: {e}")
+            else:
+                # Dialog was cancelled
+                self.status_bar.set_status("← Cancelled add paper")
 
         self.add_dialog = AddDialog(callback)
         self.add_float = Float(self.add_dialog)
@@ -1875,6 +1875,9 @@ The doctor command helps maintain database health by:
                         
                 except Exception as e:
                     self.status_bar.set_error(f"Error filtering papers: {e}")
+            else:
+                # Dialog was cancelled
+                self.status_bar.set_status("← Cancelled filter")
 
         self.filter_dialog = FilterDialog(callback)
         self.filter_float = Float(self.filter_dialog)
@@ -1901,6 +1904,9 @@ The doctor command helps maintain database health by:
                         
                 except Exception as e:
                     self.status_bar.set_error(f"Error sorting papers: {e}")
+            else:
+                # Dialog was cancelled
+                self.status_bar.set_status("← Cancelled sort")
 
         self.sort_dialog = SortDialog(callback)
         self.sort_float = Float(self.sort_dialog)

@@ -18,7 +18,7 @@ class SortDialog:
     def __init__(self, callback: Callable):
         self.callback = callback
         self.result = None
-        
+
         # Available fields for sorting
         self.sort_fields = [
             ("title", "Title"),
@@ -29,81 +29,87 @@ class SortDialog:
             ("created_at", "Date Added"),
             ("updated_at", "Date Modified"),
         ]
-        
+
         # Sort order options
         self.sort_orders = [
             ("asc", "Ascending"),
             ("desc", "Descending"),
         ]
-        
+
         self._create_layout()
         self._add_key_bindings()
 
     def _create_layout(self):
         """Creates the dialog layout."""
-        
+
         # Field selection list
         self.field_list = RadioList(
             values=self.sort_fields,
             default="title",
         )
         self.field_list.show_scrollbar = False
-        
+
         # Sort order selection list
         self.order_list = RadioList(
             values=self.sort_orders,
             default="asc",
         )
         self.order_list.show_scrollbar = False
-        
+
         # Labels and lists in columns
-        field_column = HSplit([
-            Window(
-                content=FormattedTextControl("Sort Field:", focusable=False),
-                height=1,
-                style="class:dialog.label"
-            ),
-            self.field_list,
-        ])
-        
-        order_column = HSplit([
-            Window(
-                content=FormattedTextControl("Sort Order:", focusable=False),
-                height=1,
-                style="class:dialog.label"
-            ),
-            self.order_list,
-        ])
-        
-        # Two-column layout
-        main_content = VSplit([
-            field_column,
-            Window(width=3),  # Spacing between columns
-            order_column,
-        ])
-        
-        # Help text
-        help_text_window = Window(
-            content=FormattedTextControl("Enter: OK  ESC: Cancel", style="class:header_help_text"),
-            height=1,
-            align=WindowAlign.RIGHT
+        field_column = HSplit(
+            [
+                Window(
+                    content=FormattedTextControl("Sort Field:", focusable=False),
+                    height=1,
+                    style="class:dialog.label",
+                ),
+                self.field_list,
+            ]
         )
-        
-        # Body with content and help text
-        self.body_container = HSplit([
-            main_content,
-            Window(height=1),  # Spacing
-            help_text_window,
-        ])
-        
+
+        order_column = HSplit(
+            [
+                Window(
+                    content=FormattedTextControl("Sort Order:", focusable=False),
+                    height=1,
+                    style="class:dialog.label",
+                ),
+                self.order_list,
+            ]
+        )
+
+        # Two-column layout
+        main_content = VSplit(
+            [
+                field_column,
+                Window(width=3),  # Spacing between columns
+                order_column,
+            ]
+        )
+
+        # Body with content
+        self.body_container = HSplit(
+            [
+                main_content,
+            ]
+        )
+
         # Create dialog with custom button row
         ok_button = Button(text="OK", handler=self._handle_ok)
         cancel_button = Button(text="Cancel", handler=self._handle_cancel)
-        
+        button_row = VSplit(
+            [
+                ok_button,
+                Window(width=2),  # Two spaces between buttons
+                cancel_button,
+            ]
+        )
+
         self.dialog = Dialog(
             title="Sort Papers",
             body=self.body_container,
-            buttons=[ok_button, cancel_button],
+            buttons=[button_row],
             with_background=False,
             modal=True,
             width=Dimension(min=60, preferred=80),
@@ -127,7 +133,7 @@ class SortDialog:
     def _add_key_bindings(self):
         """Add key bindings for the dialog."""
         kb = KeyBindings()
-        
+
         @kb.add("enter")
         def _(event):
             self._handle_ok()
@@ -137,7 +143,9 @@ class SortDialog:
             self._handle_cancel()
 
         # Apply key bindings like EditDialog does
-        self.body_container.key_bindings = merge_key_bindings([self.body_container.key_bindings or KeyBindings(), kb])
+        self.body_container.key_bindings = merge_key_bindings(
+            [self.body_container.key_bindings or KeyBindings(), kb]
+        )
 
     def __pt_container__(self):
         return self.dialog

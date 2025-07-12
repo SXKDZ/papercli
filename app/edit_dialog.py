@@ -177,7 +177,7 @@ class EditDialog:
             cancel_button,
             # Flexible spacer with right-aligned help text
             Window(
-                content=FormattedTextControl("Ctrl-S: Save  ESC: Exit", style="class:header_help_text"),
+                content=FormattedTextControl("Ctrl-S: Save  ESC: Exit"),
                 align=WindowAlign.RIGHT
             )
         ])

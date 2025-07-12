@@ -77,22 +77,23 @@ class AddDialog:
         # Create body container that will hold key bindings
         self.body_container = HSplit([
             form_content,
-            Window(height=1),  # Spacing
-            Window(
-                content=FormattedTextControl("Ctrl-S: Add  ESC: Cancel", style="class:header_help_text"),
-                height=1,
-                align=WindowAlign.RIGHT
-            )
         ])
         
         # Create dialog with simple buttons
         self.add_button = Button(text="Add", handler=self._handle_add)
         self.cancel_button = Button(text="Cancel", handler=self._handle_cancel)
         
+        # Create button row with proper spacing
+        button_row = VSplit([
+            self.add_button,
+            Window(width=2),  # Two spaces between buttons
+            self.cancel_button,
+        ])
+        
         self.dialog = Dialog(
             title="Add New Paper",
             body=self.body_container,
-            buttons=[self.add_button, self.cancel_button],
+            buttons=[button_row],
             with_background=False,
             modal=True,
             width=Dimension(min=80, preferred=100),
