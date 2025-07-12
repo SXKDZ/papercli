@@ -237,7 +237,7 @@ class EditableList:
         return Window(content=self.control)
 
 
-class CollectionDialog:
+class CollectDialog:
     """A comprehensive collection management dialog with three columns."""
 
     def __init__(
