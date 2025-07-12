@@ -5,7 +5,7 @@ Main CLI application for PaperCLI.
 import os
 from typing import List, Optional
 
-from prompt_toolkit.application import Application
+from prompt_toolkit.application import Application, get_app
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.document import Document
@@ -39,7 +39,7 @@ from .services import (
 )
 from .ui_components import ErrorPanel, PaperListControl, StatusBar
 from .edit_dialog import EditDialog
-from .collection_dialog import CollectionDialog
+from .collect_dialog import CollectDialog
 from .status_messages import StatusMessages
 
 
@@ -503,7 +503,7 @@ The doctor command helps maintain database health by:
             "up",
             filter=~has_focus(self.help_control)
             & ~has_focus(self.details_control)
-            & Condition(lambda: self.edit_dialog is None),
+            & Condition(lambda: self.edit_dialog is None or not (hasattr(get_app().layout.current_control, 'buffer') and get_app().layout.current_control.buffer in [f.buffer for f in self.edit_dialog.input_fields.values()]))
         )
         def move_up(event):
             # If completion menu is open, navigate it
@@ -518,7 +518,7 @@ The doctor command helps maintain database health by:
             "down",
             filter=~has_focus(self.help_control)
             & ~has_focus(self.details_control)
-            & Condition(lambda: self.edit_dialog is None),
+            & Condition(lambda: self.edit_dialog is None or not (hasattr(get_app().layout.current_control, 'buffer') and get_app().layout.current_control.buffer in [f.buffer for f in self.edit_dialog.input_fields.values()]))
         )
         def move_down(event):
             # If completion menu is open, navigate it
@@ -532,7 +532,14 @@ The doctor command helps maintain database health by:
         # Selection (in select mode) - smart space key handling
         @self.kb.add("space")
         def toggle_selection(event):
-            # Check if user is actively typing a command
+            # If an edit dialog is open and a TextArea is focused, insert space into it.
+            if self.edit_dialog and hasattr(event.app.layout.current_control, "buffer"):
+                current_buffer = event.app.layout.current_control.buffer
+                if current_buffer in [f.buffer for f in self.edit_dialog.input_fields.values()]:
+                    current_buffer.insert_text(" ")
+                    return # Consume the event
+
+            # Check if user is actively typing a command in the main input buffer
             current_text = self.input_buffer.text
             cursor_pos = self.input_buffer.cursor_position
 
@@ -548,12 +555,19 @@ The doctor command helps maintain database health by:
                 )
                 event.app.invalidate()  # Force refresh of UI
             else:
-                # Default behavior - add space
+                # Default behavior - add space to main input buffer
                 self.input_buffer.insert_text(" ")
 
         # Command input
         @self.kb.add("enter")
         def handle_enter(event):
+            # If an edit dialog is open and a multiline TextArea is focused, insert a newline.
+            if self.edit_dialog and hasattr(event.app.layout.current_control, "buffer"):
+                current_buffer = event.app.layout.current_control.buffer
+                if current_buffer in [f.buffer for f in self.edit_dialog.input_fields.values()] and current_buffer.multiline():
+                    current_buffer.insert_text("\n")
+                    return # Consume the event
+
             # If completion menu is open and a completion is selected, accept it
             if (
                 self.input_buffer.complete_state
@@ -641,17 +655,22 @@ The doctor command helps maintain database health by:
                 self.status_bar.set_status("🧹 Input cleared")
 
         # Auto-completion - Tab key
-        @self.kb.add(
-            "tab",
-            filter=Condition(lambda: self.edit_dialog is None),
-        )
+        @self.kb.add("tab")
         def complete(event):
-            # Always ensure we're focused on the input buffer first
+            # If the current focused control has a buffer, let it handle the tab.
+            # This allows TextArea to handle its own tab behavior (e.g., inserting tab character).
+            if hasattr(event.app.layout.current_control, "buffer"):
+                current_buffer = event.app.layout.current_control.buffer
+                # If it's a TextArea, let it handle the tab
+                if isinstance(event.app.layout.current_control, BufferControl) and current_buffer.multiline():
+                    current_buffer.insert_text("    ") # Insert 4 spaces for tab in TextArea
+                    return
+
+            # Otherwise, if focused on the input buffer, trigger completion
             if event.app.current_buffer != self.input_buffer:
                 event.app.layout.focus(self.input_buffer)
                 return
 
-            # Trigger completion
             buffer = self.input_buffer
             if buffer.complete_state:
                 buffer.complete_next()
@@ -659,61 +678,85 @@ The doctor command helps maintain database health by:
                 buffer.start_completion(select_first=True)
 
         # Shift+Tab for previous completion
-        @self.kb.add(
-            "s-tab",
-            filter=Condition(lambda: self.edit_dialog is None),
-        )
+        @self.kb.add("s-tab")
         def complete_previous(event):
+            # If the current focused control has a buffer, let it handle the shift-tab.
+            # For TextArea, we might want to do nothing or move cursor.
+            if hasattr(event.app.layout.current_control, "buffer"):
+                current_buffer = event.app.layout.current_control.buffer
+                if isinstance(event.app.layout.current_control, BufferControl) and current_buffer.multiline():
+                    # For TextArea, s-tab might move cursor or do nothing. Let default handle.
+                    return
+
             if event.app.current_buffer == self.input_buffer:
                 buffer = self.input_buffer
                 if buffer.complete_state:
                     buffer.complete_previous()
 
         # Handle backspace
-        @self.kb.add(
-            "backspace",
-            filter=Condition(lambda: self.edit_dialog is None),
-        )
+        @self.kb.add("backspace")
         def handle_backspace(event):
+            # If the current focused control has a buffer, let it handle the backspace.
+            if hasattr(event.app.layout.current_control, "buffer"):
+                current_buffer = event.app.layout.current_control.buffer
+                # If it's a TextArea or the main input buffer, let it handle backspace
+                if current_buffer == self.input_buffer or \
+                   (self.edit_dialog and current_buffer in [f.buffer for f in self.edit_dialog.input_fields.values()]):
+                    current_buffer.delete_before_cursor()
+                    # Force completion refresh after deletion if it's the input buffer
+                    if current_buffer == self.input_buffer and current_buffer.text.startswith("/"):
+                        event.app.invalidate()
+                        if current_buffer.complete_state:
+                            current_buffer.cancel_completion()
+                        def restart_completion():
+                            if current_buffer.text.startswith("/"):
+                                current_buffer.start_completion(select_first=False)
+                        event.app.loop.call_soon(restart_completion)
+                    return # Consume the event
+
+            # Fallback for other cases (shouldn't be reached if focused buffer handles it)
             if event.app.current_buffer == self.input_buffer:
                 self.input_buffer.delete_before_cursor()
-                # Force completion refresh after deletion
-                if self.input_buffer.text.startswith("/"):
-                    event.app.invalidate()
-                    # Cancel existing completion and restart
-                    if self.input_buffer.complete_state:
-                        self.input_buffer.cancel_completion()
-
-                    # Small delay to allow text to update, then restart completion
-                    def restart_completion():
-                        if self.input_buffer.text.startswith("/"):
-                            self.input_buffer.start_completion(select_first=False)
-
-                    event.app.loop.call_soon(restart_completion)
 
         # Handle delete key
-        @self.kb.add(
-            "delete",
-            filter=Condition(lambda: self.edit_dialog is None),
-        )
+        @self.kb.add("delete")
         def handle_delete(event):
+            # If the current focused control has a buffer, let it handle the delete.
+            if hasattr(event.app.layout.current_control, "buffer"):
+                current_buffer = event.app.layout.current_control.buffer
+                # If it's a TextArea or the main input buffer, let it handle delete
+                if current_buffer == self.input_buffer or \
+                   (self.edit_dialog and current_buffer in [f.buffer for f in self.edit_dialog.input_fields.values()]):
+                    current_buffer.delete()
+                    return # Consume the event
+
+            # Fallback for other cases
             if event.app.current_buffer == self.input_buffer:
                 self.input_buffer.delete()
 
         # Handle normal character input
-        @self.kb.add(
-            "<any>",
-            filter=Condition(lambda: self.edit_dialog is None),
-        )
+        @self.kb.add("<any>")
         def handle_any_key(event):
-            # Make sure we're focused on the input buffer for text input
-            if event.app.current_buffer != self.input_buffer:
-                event.app.layout.focus(self.input_buffer)
-
-            # Let the buffer handle the key if it's a printable character (except space which has its own handler)
+            # If the current focused control has a buffer, let it handle the key.
+            # This allows TextArea to handle its own input.
+            if hasattr(event.app.layout.current_control, "buffer"):
+                # Check if the current buffer is the input buffer or part of an edit dialog
+                if event.app.layout.current_control.buffer == self.input_buffer or \
+                   (self.edit_dialog and event.app.layout.current_control.buffer in [f.buffer for f in self.edit_dialog.input_fields.values()]):
+                    # Let the buffer handle the key if it's a printable character (except space which has its own handler)
+                    if hasattr(event, "data") and event.data and len(event.data) == 1:
+                        char = event.data
+                        if char.isprintable() and char != " ":
+                            event.app.layout.current_control.buffer.insert_text(char)
+                            return # Consume the event
+            
+            # If not handled by a focused buffer, and it's a printable character, fall back to input buffer
             if hasattr(event, "data") and event.data and len(event.data) == 1:
                 char = event.data
                 if char.isprintable() and char != " ":
+                    # If no specific buffer handled it, and it's a printable char, direct to input buffer
+                    if event.app.current_buffer != self.input_buffer:
+                        event.app.layout.focus(self.input_buffer)
                     self.input_buffer.insert_text(char)
 
         # Exit application
@@ -2112,7 +2155,7 @@ The doctor command helps maintain database health by:
         collections = self.collection_service.get_all_collections()
         papers = self.paper_service.get_all_papers()
 
-        self.edit_dialog = CollectionDialog(
+        self.edit_dialog = CollectDialog(
             collections, papers, callback, self.status_bar
         )
         self.edit_float = Float(self.edit_dialog)
