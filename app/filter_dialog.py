@@ -160,9 +160,26 @@ class FilterDialog:
             else:
                 app.layout.focus(self.cancel_button)
 
+        # Add backspace and delete handling for text input
+        @kb.add("backspace")
+        def _(event):
+            current_control = event.app.layout.current_control
+            if hasattr(current_control, 'buffer'):
+                current_control.buffer.delete_before_cursor()
+
+        @kb.add("delete")
+        def _(event):
+            current_control = event.app.layout.current_control
+            if hasattr(current_control, 'buffer'):
+                current_control.buffer.delete()
+
         @kb.add("<any>")
         def _(event):
-            event.app.layout.current_control.buffer.insert_text(event.data)
+            # Handle all character input to prevent it from reaching main app
+            if event.data and len(event.data) == 1 and event.data.isprintable():
+                current_control = event.app.layout.current_control
+                if hasattr(current_control, 'buffer'):
+                    current_control.buffer.insert_text(event.data)
 
         # Apply key bindings to the body container
         self.body_container.key_bindings = merge_key_bindings([

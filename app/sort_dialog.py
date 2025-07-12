@@ -45,14 +45,16 @@ class SortDialog:
         # Field selection list
         self.field_list = RadioList(
             values=self.sort_fields,
-            default="title"
+            default="title",
         )
+        self.field_list.show_scrollbar = False
         
         # Sort order selection list
         self.order_list = RadioList(
             values=self.sort_orders,
-            default="asc"
+            default="asc",
         )
+        self.order_list.show_scrollbar = False
         
         # Labels and lists in columns
         field_column = HSplit([
