@@ -768,7 +768,7 @@ The doctor command helps maintain database health by:
                     buffer.complete_previous()
 
         # Handle backspace
-        @self.kb.add("backspace", filter=~(Condition(lambda: self.add_dialog is not None or self.filter_dialog is not None or self.sort_dialog is not None)))
+        @self.kb.add("backspace")
         def handle_backspace(event):
             # If the current focused control has a buffer, let it handle the backspace.
             if hasattr(event.app.layout.current_control, "buffer"):

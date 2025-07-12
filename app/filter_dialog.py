@@ -89,13 +89,13 @@ class FilterDialog:
         ])
         
         # Create dialog with buttons
-        apply_button = Button(text="Apply Filter", handler=self._handle_apply)
-        cancel_button = Button(text="Cancel", handler=self._handle_cancel)
+        self.apply_button = Button(text="Apply Filter", handler=self._handle_apply)
+        self.cancel_button = Button(text="Cancel", handler=self._handle_cancel)
         
         self.dialog = Dialog(
             title="Filter Papers",
             body=self.body_container,
-            buttons=[apply_button, cancel_button],
+            buttons=[self.apply_button, self.cancel_button],
             with_background=False,
             modal=True,
             width=Dimension(min=70, preferred=90),
@@ -136,8 +136,39 @@ class FilterDialog:
         def _(event):
             self._handle_cancel()
 
-        # Apply key bindings like EditDialog does
-        self.body_container.key_bindings = merge_key_bindings([self.body_container.key_bindings or KeyBindings(), kb])
+        @kb.add("tab")
+        def _(event):
+            app = get_app()
+            if app.layout.current_window == self.field_list.window:
+                app.layout.focus(self.value_input)
+            elif app.layout.current_window == self.value_input.window:
+                app.layout.focus(self.apply_button)
+            elif app.layout.current_window == self.apply_button.window:
+                app.layout.focus(self.cancel_button)
+            else:
+                app.layout.focus(self.field_list)
+
+        @kb.add("s-tab")
+        def _(event):
+            app = get_app()
+            if app.layout.current_window == self.cancel_button.window:
+                app.layout.focus(self.apply_button)
+            elif app.layout.current_window == self.apply_button.window:
+                app.layout.focus(self.value_input)
+            elif app.layout.current_window == self.value_input.window:
+                app.layout.focus(self.field_list)
+            else:
+                app.layout.focus(self.cancel_button)
+
+        @kb.add("<any>")
+        def _(event):
+            event.app.layout.current_control.buffer.insert_text(event.data)
+
+        # Apply key bindings to the body container
+        self.body_container.key_bindings = merge_key_bindings([
+            self.body_container.key_bindings or KeyBindings(),
+            kb,
+        ])
 
     def __pt_container__(self):
         return self.dialog

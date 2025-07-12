@@ -85,13 +85,13 @@ class AddDialog:
         ])
         
         # Create dialog with simple buttons
-        add_button = Button(text="Add", handler=self._handle_add)
-        cancel_button = Button(text="Cancel", handler=self._handle_cancel)
+        self.add_button = Button(text="Add", handler=self._handle_add)
+        self.cancel_button = Button(text="Cancel", handler=self._handle_cancel)
         
         self.dialog = Dialog(
             title="Add New Paper",
             body=self.body_container,
-            buttons=[add_button, cancel_button],
+            buttons=[self.add_button, self.cancel_button],
             with_background=False,
             modal=True,
             width=Dimension(min=80, preferred=100),
@@ -132,8 +132,39 @@ class AddDialog:
         def _(event):
             self._handle_cancel()
 
-        # Apply key bindings like EditDialog does
-        self.body_container.key_bindings = merge_key_bindings([self.body_container.key_bindings or KeyBindings(), kb])
+        @kb.add("tab")
+        def _(event):
+            app = get_app()
+            if app.layout.current_window == self.source_list.window:
+                app.layout.focus(self.path_input)
+            elif app.layout.current_window == self.path_input.window:
+                app.layout.focus(self.add_button)
+            elif app.layout.current_window == self.add_button.window:
+                app.layout.focus(self.cancel_button)
+            else:
+                app.layout.focus(self.source_list)
+
+        @kb.add("s-tab")
+        def _(event):
+            app = get_app()
+            if app.layout.current_window == self.cancel_button.window:
+                app.layout.focus(self.add_button)
+            elif app.layout.current_window == self.add_button.window:
+                app.layout.focus(self.path_input)
+            elif app.layout.current_window == self.path_input.window:
+                app.layout.focus(self.source_list)
+            else:
+                app.layout.focus(self.cancel_button)
+
+        @kb.add("<any>")
+        def _(event):
+            event.app.layout.current_control.buffer.insert_text(event.data)
+
+        # Apply key bindings to the body container
+        self.body_container.key_bindings = merge_key_bindings([
+            self.body_container.key_bindings or KeyBindings(),
+            kb,
+        ])
 
     def __pt_container__(self):
         return self.dialog
