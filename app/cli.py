@@ -30,6 +30,7 @@ from prompt_toolkit.styles import Style
 from prompt_toolkit.widgets import Dialog, Frame, Button, Label
 
 from .models import Paper
+from .database import get_pdf_directory
 from .services import (
     AuthorService,
     ChatService,
@@ -2949,12 +2950,12 @@ The doctor command helps maintain database health by:
             collections = ", ".join([c.name for c in paper.collections])
             # Format timestamps
             added_date_str = (
-                paper.added_date.strftime("%Y-%m-%d %H:%M:%S")
+                paper.added_date.strftime("%Y-%m-%d %H:%M:%S %Z")
                 if paper.added_date
                 else "N/A"
             )
             modified_date_str = (
-                paper.modified_date.strftime("%Y-%m-%d %H:%M:%S")
+                paper.modified_date.strftime("%Y-%m-%d %H:%M:%S %Z")
                 if paper.modified_date
                 else "N/A"
             )

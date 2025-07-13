@@ -170,7 +170,7 @@ class PaperService:
                     if hasattr(paper, key):
                         setattr(paper, key, value)
 
-                paper.modified_date = datetime.utcnow()
+                paper.modified_date = datetime.now()
                 session.commit()
                 session.refresh(paper)
 

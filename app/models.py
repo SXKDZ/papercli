@@ -121,9 +121,9 @@ class Paper(Base):
     notes: Mapped[Optional[str]] = mapped_column(Text)
 
     # Metadata
-    added_date: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    added_date: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
     modified_date: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=datetime.now, onupdate=datetime.now
     )
 
     # Relationships

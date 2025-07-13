@@ -284,7 +284,8 @@ class EditDialog:
         
         if changes_made:
             paper_id = self.paper_data.get('id', 'New Paper')
-            log_message = f"Paper '{self.paper_data.get('title')}' (ID: {paper_id}) updated: \n{'  \n'.join(changes_made)}"
+            changes_text = '  \n'.join(changes_made)
+            log_message = f"Paper '{self.paper_data.get('title')}' (ID: {paper_id}) updated: \n{changes_text}"
             self.log_callback("edit", log_message)
         
         self.result = result
