@@ -40,9 +40,15 @@ For more information, visit: https://github.com/SXKDZ/papercli
     
     load_dotenv()
     
+    # Get data directory from environment or use default
+    data_dir_env = os.getenv("PAPERCLI_DATA_DIR")
+    if data_dir_env:
+        data_dir = Path(data_dir_env).expanduser().resolve()
+    else:
+        data_dir = Path.home() / ".papercli"
+    
     # Ensure data directory exists
-    data_dir = Path.home() / ".papercli"
-    data_dir.mkdir(exist_ok=True)
+    data_dir.mkdir(exist_ok=True, parents=True)
     
     # Initialize database
     db_path = data_dir / "papers.db"

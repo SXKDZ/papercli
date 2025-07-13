@@ -153,15 +153,17 @@ Create a `.env` file in your project directory:
 # OpenAI API key for LLM features (optional)
 OPENAI_API_KEY=your_openai_api_key_here
 
-# PDF storage directory (optional, defaults to ~/.papercli/pdfs)
-PAPERCLI_PDF_DIR=/path/to/your/pdfs
+# Data directory for database and PDFs (optional, defaults to ~/.papercli)
+PAPERCLI_DATA_DIR=/path/to/your/papercli/data
 ```
 
 ### Data Storage
-PaperCLI stores all data in `~/.papercli/`:
+PaperCLI stores all data in a single directory (default: `~/.papercli/`):
 - `papers.db` - SQLite database with paper metadata
 - `pdfs/` - Downloaded PDF files
-- `logs/` - Application logs
+- `version_config.json` - Version update settings
+
+You can customize the data directory by setting `PAPERCLI_DATA_DIR` in your `.env` file.
 
 ## Dependencies
 

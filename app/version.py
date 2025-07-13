@@ -21,7 +21,14 @@ class VersionManager:
     def __init__(self):
         self.github_repo = "SXKDZ/papercli"
         self.current_version = __version__
-        self.config_dir = Path.home() / ".papercli"
+        
+        # Use same data directory as main application
+        data_dir_env = os.getenv("PAPERCLI_DATA_DIR")
+        if data_dir_env:
+            self.config_dir = Path(data_dir_env).expanduser().resolve()
+        else:
+            self.config_dir = Path.home() / ".papercli"
+        
         self.config_file = self.config_dir / "version_config.json"
         
     def get_current_version(self) -> str:
