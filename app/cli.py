@@ -58,7 +58,6 @@ class SmartCompleter(Completer):
                     "arxiv": "Add from an arXiv ID (e.g., 2106.09685)",
                     "dblp": "Add from a DBLP URL",
                     "manual": "Add a paper with manual entry",
-                    "sample": "Add a sample paper for demonstration",
                 },
             },
             "/filter": {
@@ -1143,7 +1142,7 @@ The doctor command helps maintain database health by:
         elif self.is_filtered_view:
             mode = "FILTERED"
         else:
-            mode = "ALL"
+            mode = "✦ PaperCLI ✦"
         selected_count = len(self.paper_list_control.selected_paper_ids)
 
         # Left side of the header (just mode)
@@ -1250,7 +1249,7 @@ The doctor command helps maintain database health by:
                 ("header_content", "#f8f8f2 bg:#282a36"),
                 ("header_help_text", "italic #f8f8f2 bg:#282a36"),
                 ("mode_select", "bold #ff5555 bg:#282a36"),
-                ("mode_list", "bold #8be9fd bg:#282a36"),
+                ("mode_list", "bold #ffffff bg:#6272a4"),
                 ("mode_filtered", "bold #f1fa8c bg:#282a36"),
                 # Paper list
                 ("selected", "bold #f8f8f2 bg:#44475a"),  # Current paper row
@@ -1423,15 +1422,13 @@ The doctor command helps maintain database health by:
                     )  # Support URLs with parameters
                 elif args[0] == "manual":
                     self._add_manual_paper()
-                elif args[0] == "sample":
-                    self._add_sample_paper()
                 else:
                     self.status_bar.set_status(
-                        "📝 Usage: /add [arxiv <id>|dblp <url>|manual|sample]"
+                        "📝 Usage: /add [arxiv <id>|dblp <url>|manual]"
                     )
             else:
                 self.status_bar.set_status(
-                    "📝 Usage: /add [arxiv <id>|dblp <url>|manual|sample]"
+                    "📝 Usage: /add [arxiv <id>|dblp <url>|manual]"
                 )
 
         except Exception as e:
@@ -1482,35 +1479,6 @@ The doctor command helps maintain database health by:
                 str(e),
             )
 
-    def _add_sample_paper(self):
-        """Add a sample paper for demonstration."""
-        try:
-            paper_data = {
-                "title": "Sample Paper: Introduction to Machine Learning",
-                "abstract": "This is a sample paper demonstrating the PaperCLI system functionality.",
-                "year": 2024,
-                "venue_full": "Journal of Sample Papers",
-                "venue_acronym": "JSP",
-                "paper_type": "journal",
-                "notes": "Sample paper added for demonstration",
-            }
-
-            authors = ["Sample Author", "Demo User"]
-            collections = ["Sample Collection"]
-
-            paper = self.paper_service.add_paper_from_metadata(
-                paper_data, authors, collections
-            )
-
-            # Refresh display
-            self.load_papers()
-            self._add_log("add_sample", f"Added sample paper '{paper.title}'")
-            self.status_bar.set_status(StatusMessages.paper_added(paper.title))
-
-        except Exception as e:
-            self.show_error_panel_with_message(
-                "Add Sample Paper Error", "Failed to add sample paper", str(e)
-            )
 
     def _quick_add_dblp(self, dblp_url: str):
         """Quickly add a paper from DBLP URL."""
@@ -1910,7 +1878,7 @@ The doctor command helps maintain database health by:
                         return
 
                     # Determine the type of source and call appropriate add command
-                    if source.lower() in ["pdf", "arxiv", "dblp", "manual", "sample"]:
+                    if source.lower() in ["pdf", "arxiv", "dblp", "manual"]:
                         # Handle subcommand-style addition
                         if path_id:
                             self.handle_add_command([source, path_id])
