@@ -1,0 +1,230 @@
+# PaperCLI
+
+```
+ ██████╗  █████╗ ██████╗ ███████╗██████╗  ██████╗██╗     ██╗
+ ██╔══██╗██╔══██╗██╔══██╗██╔════╝██╔══██╗██╔════╝██║     ██║
+ ██████╔╝███████║██████╔╝█████╗  ██████╔╝██║     ██║     ██║
+ ██╔═══╝ ██╔══██║██╔═══╝ ██╔══╝  ██╔══██╗██║     ██║     ██║
+ ██║     ██║  ██║██║     ███████╗██║  ██║╚██████╗███████╗██║
+ ╚═╝     ╚═╝  ╚═╝╚═╝     ╚══════╝╚═╝  ╚═╝ ╚═════╝╚══════╝╚═╝
+                                                              
+        📚 Your Command-Line Research Paper Manager 📚
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+A powerful command-line paper management system for researchers and academics. PaperCLI helps you organize, search, and manage your research papers with an intuitive terminal interface.
+
+## Features
+
+### 📄 Paper Management
+- **Multiple Import Sources**: Add papers from arXiv, DBLP, OpenReview, local PDFs, BibTeX, and RIS files
+- **Smart Metadata Extraction**: Automatically extract metadata from PDFs and online sources
+- **Collection Organization**: Organize papers into custom collections
+- **Comprehensive Search**: Filter papers by title, author, venue, year, type, and collection
+
+### 🤖 AI-Powered Features
+- **LLM Summarization**: Generate paper summaries using OpenAI integration
+- **Smart Chat**: Chat with an LLM about your papers and research
+- **Enhanced Metadata**: AI-powered metadata extraction and improvement
+
+### 📊 Export & Integration
+- **Multiple Export Formats**: Export to BibTeX, Markdown, HTML, and JSON
+- **Clipboard Support**: Copy paper data directly to clipboard
+- **PDF Management**: Automatic PDF downloading and organization
+
+### 🔧 Advanced Features
+- **Database Health**: Built-in diagnostic tools for database maintenance
+- **Interactive UI**: Modern terminal interface with auto-completion
+- **Multi-selection**: Batch operations on multiple papers
+- **Real-time Search**: Filter and search as you type
+
+## Installation
+
+### Prerequisites
+- Python 3.8 or higher
+- pip package manager
+
+### Install from Source
+```bash
+git clone https://github.com/SXKDZ/papercli.git
+cd papercli
+pip install -r requirements.txt
+python papercli.py
+```
+
+### Using pipx (Recommended)
+```bash
+# Coming soon - pipx install support
+```
+
+## Quick Start
+
+1. **Launch PaperCLI**:
+   ```bash
+   python papercli.py
+   ```
+
+2. **Add your first paper**:
+   ```
+   /add arxiv 2307.10635
+   ```
+
+3. **Search and filter**:
+   ```
+   /filter all machine learning
+   ```
+
+4. **Export your library**:
+   ```
+   /export bibtex
+   ```
+
+## Commands Reference
+
+### Core Commands
+- `/add` - Open add dialog or add paper directly (e.g., `/add arxiv 2307.10635`)
+- `/filter` - Filter papers by criteria or search all fields (e.g., `/filter all keyword`)
+- `/sort` - Open sort dialog or sort directly (e.g., `/sort title asc`)
+- `/all` - Show all papers in the database
+- `/select` - Enter multi-selection mode to act on multiple papers
+- `/clear` - Clear all selected papers
+- `/help` - Show help panel (or press F1)
+- `/log` - Show the error log panel
+- `/exit` - Exit the application (or press Ctrl+C)
+
+### Paper Operations
+Work on the paper under the cursor ► or selected papers ✓:
+- `/chat` - Chat with an LLM about the paper(s)
+- `/edit` - Open edit dialog or edit field directly (e.g., `/edit title ...`)
+- `/open` - Open the PDF for the paper(s)
+- `/detail` - Show detailed metadata for the paper(s)
+- `/export` - Export paper(s) to a file or clipboard (BibTeX, Markdown, etc.)
+- `/delete` - Delete the paper(s) from the library
+
+### Collection Management
+- `/collect` - Manage collections
+- `/add-to` - Add selected paper(s) to a collection
+- `/remove-from` - Remove selected paper(s) from a collection
+
+### System Commands
+- `/doctor` - Diagnose and fix database/system issues
+  - `diagnose` - Run full diagnostic check (default)
+  - `clean` - Clean orphaned database records and PDF files
+  - `help` - Show doctor command help
+
+## Supported Sources
+
+### Academic Platforms
+- **arXiv**: Add papers using arXiv IDs (e.g., `2307.10635`)
+- **DBLP**: Import papers from DBLP URLs
+- **OpenReview**: Add papers using OpenReview IDs
+
+### File Formats
+- **PDF**: Local PDF files with automatic metadata extraction
+- **BibTeX**: Import from `.bib` files
+- **RIS**: Import from `.ris` files
+- **Manual Entry**: Add papers manually with custom metadata
+
+## Configuration
+
+### Environment Variables
+Create a `.env` file in your project directory:
+
+```env
+# OpenAI API key for LLM features (optional)
+OPENAI_API_KEY=your_openai_api_key_here
+
+# PDF storage directory (optional, defaults to ~/.papercli/pdfs)
+PAPERCLI_PDF_DIR=/path/to/your/pdfs
+```
+
+### Data Storage
+PaperCLI stores all data in `~/.papercli/`:
+- `papers.db` - SQLite database with paper metadata
+- `pdfs/` - Downloaded PDF files
+- `logs/` - Application logs
+
+## Dependencies
+
+- **prompt-toolkit** - Modern terminal interface
+- **SQLAlchemy** - Database management
+- **requests** - HTTP requests for metadata fetching
+- **beautifulsoup4** - HTML parsing for web scraping
+- **PyPDF2** - PDF text extraction
+- **openai** - LLM integration (optional)
+- **bibtexparser** - BibTeX file parsing
+- **rispy** - RIS file parsing
+
+## Database Schema
+
+PaperCLI uses a SQLite database with the following main entities:
+- **Papers**: Title, abstract, venue, year, authors, collections, PDF path, notes
+- **Authors**: Name, email, affiliation with ordered relationships
+- **Collections**: Custom paper groupings
+- **Metadata**: DOI, preprint IDs, URLs, paper types
+
+## Keyboard Shortcuts
+
+- **↑/↓** - Navigate the paper list or scroll panels
+- **PageUp/PageDown** - Scroll panels by a full page
+- **Space** - Toggle selection for a paper (only in `/select` mode)
+- **Enter** - Execute a command from the input bar
+- **ESC** - Close panels, exit selection mode, or clear input
+- **Tab** - Trigger and cycle through auto-completions
+- **F1** - Show help panel
+
+## Troubleshooting
+
+### Common Issues
+
+1. **PDF Download Failures**:
+   ```
+   /doctor diagnose
+   ```
+
+2. **Database Issues**:
+   ```
+   /doctor clean
+   ```
+
+3. **Missing Dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+### Logs and Debugging
+- Check `/log` panel for recent errors
+- Use `/doctor diagnose` for system health checks
+- Log files are stored in `~/.papercli/logs/`
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature-name`
+3. Make your changes and add tests
+4. Commit your changes: `git commit -m "feat: add new feature"`
+5. Push to the branch: `git push origin feature-name`
+6. Submit a pull request
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Support
+
+- **Issues**: Report bugs and request features on [GitHub Issues](https://github.com/SXKDZ/papercli/issues)
+- **Documentation**: Run `/help` within the application
+- **Discussions**: Join discussions on [GitHub Discussions](https://github.com/SXKDZ/papercli/discussions)
+
+## Roadmap
+
+- [ ] Package distribution via PyPI and pipx
+- [ ] Version management and auto-updates
+- [ ] Plugin system for custom metadata extractors
+- [ ] Cloud synchronization support
+- [ ] Advanced citation analysis
+- [ ] Integration with reference managers
+
+---
+
+**PaperCLI** - Streamline your research workflow with powerful command-line paper management.
