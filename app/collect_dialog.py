@@ -275,6 +275,7 @@ class CollectDialog:
 
         # Initialize buttons
         self.save_button = Button(text="Save", handler=self.save_and_close)
+        self.purge_button = Button(text="Purge", handler=self.purge_empty_collections)
         self.close_button = Button(text="Cancel", handler=self.cancel)
 
         # Initialize lists
@@ -381,8 +382,10 @@ class CollectDialog:
 
         button_row = VSplit(
             [
+                self.purge_button,
+                Window(width=3),
                 self.save_button,
-                Window(width=2),
+                Window(width=3),
                 self.close_button,
             ]
         )
@@ -407,6 +410,7 @@ class CollectDialog:
             self.add_button,
             self.remove_button,
             self.other_papers_list,
+            self.purge_button,
             self.save_button,
             self.close_button,
         ]
@@ -999,6 +1003,45 @@ class CollectDialog:
     def cancel(self):
         """Cancel changes and close dialog."""
         self.callback(None)
+
+    def purge_empty_collections(self):
+        """Purge all empty collections."""
+        from .services import CollectionService
+        
+        try:
+            collection_service = CollectionService()
+            deleted_count = collection_service.purge_empty_collections()
+            
+            if deleted_count == 0:
+                # Set status message - no collections to purge
+                if self.status_bar:
+                    self.status_bar.set_status("No empty collections found to purge.")
+            else:
+                # Collections were purged, refresh the dialog
+                if self.status_bar:
+                    self.status_bar.set_success(f"Purged {deleted_count} empty collection{'s' if deleted_count != 1 else ''}.")
+                
+                # Refresh collections list
+                collection_service = CollectionService()
+                self.all_collections = collection_service.get_all_collections()
+                current_names = (
+                    [c.name for c in self.all_collections]
+                    + self.new_collections
+                    + ["+ New Collection"]
+                )
+                self.collections_list.set_items(current_names)
+                # Reset selection to first item
+                self.collections_list.current_index = 0
+                self.on_collection_select(self.collections_list)
+                
+        except Exception as e:
+            import traceback
+            if self.error_display_callback:
+                self.error_display_callback(
+                    "Collection Purge Error",
+                    f"Failed to purge empty collections: {e}",
+                    traceback.format_exc()
+                )
 
     def __pt_container__(self):
         return self.dialog

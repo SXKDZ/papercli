@@ -508,6 +508,23 @@ class CollectionService:
             session.expunge(collection)
             return collection
 
+    def purge_empty_collections(self) -> int:
+        """Delete all collections that have no papers. Returns number of collections deleted."""
+        with get_db_session() as session:
+            # Find collections with no papers
+            empty_collections = session.query(Collection).filter(
+                ~Collection.papers.any()
+            ).all()
+            
+            count = len(empty_collections)
+            
+            # Delete empty collections
+            for collection in empty_collections:
+                session.delete(collection)
+            
+            session.commit()
+            return count
+
 
 class SearchService:
     """Service for searching and filtering papers."""

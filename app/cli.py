@@ -157,7 +157,9 @@ class SmartCompleter(Completer):
             },
             "/collect": {
                 "description": "Manage collections",
-                "subcommands": {},
+                "subcommands": {
+                    "purge": "Delete all empty collections",
+                },
             },
             "/version": {
                 "description": "Show version information and check for updates",
@@ -241,9 +243,10 @@ Paper Operations (work on the paper under the cursor ► or selected papers ✓)
 
 Collection Management:
 ---------------------
-/collect     Manage collections
-/add-to      Add selected paper(s) to a collection
-/remove-from Remove selected paper(s) from a collection
+/collect       Manage collections
+/collect purge Delete all empty collections
+/add-to        Add selected paper(s) to a collection
+/remove-from   Remove selected paper(s) from a collection
 
 System Commands:
 ---------------
@@ -697,7 +700,7 @@ The doctor command helps maintain database health by:
 
         @self.kb.add("f7")
         def manage_collections(event):
-            self.handle_collect_command()
+            self.handle_collect_command([])
 
         @self.kb.add("f8")
         def filter_papers(event):
@@ -1444,7 +1447,7 @@ The doctor command helps maintain database health by:
                 elif cmd == "/remove-from":
                     self.handle_remove_from_command(parts[1:])
                 elif cmd == "/collect":
-                    self.handle_collect_command()
+                    self.handle_collect_command(parts[1:])
                 elif cmd == "/version":
                     self.handle_version_command(parts[1:])
             else:
@@ -3149,9 +3152,37 @@ The doctor command helps maintain database health by:
         elif not errors:
             self.status_bar.set_status("No papers were removed from the collection.")
 
-    def handle_collect_command(self):
-        """Handle /collect command by showing the collection management dialog."""
-        self.show_collect_dialog()
+    def handle_collect_command(self, args):
+        """Handle /collect command with optional subcommands."""
+        if not args:
+            # No arguments - show the collection management dialog
+            self.show_collect_dialog()
+        elif args[0] == "purge":
+            # Purge empty collections
+            self.handle_collect_purge_command()
+        else:
+            self.status_bar.set_error(f"Unknown collect subcommand '{args[0]}'. Usage: /collect [purge]")
+
+    def handle_collect_purge_command(self):
+        """Handle /collect purge command to delete empty collections."""        
+        try:
+            collection_service = CollectionService()
+            deleted_count = collection_service.purge_empty_collections()
+            
+            if deleted_count == 0:
+                self.status_bar.set_status("No empty collections found to purge.")
+                self._add_log("Collection Purge", "No empty collections found")
+            else:
+                self.status_bar.set_success(f"Purged {deleted_count} empty collection{'s' if deleted_count != 1 else ''}.")
+                self._add_log("Collection Purge", f"Successfully deleted {deleted_count} empty collection{'s' if deleted_count != 1 else ''}")
+                # Refresh the display if we're showing papers
+                self.refresh_display()
+        except Exception as e:
+            self.show_error_panel_with_message(
+                "Collection Purge Error",
+                f"Failed to purge empty collections: {e}",
+                traceback.format_exc()
+            )
 
     def show_collect_dialog(self):
         """Show the collection management dialog."""

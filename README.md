@@ -130,6 +130,7 @@ Work on the paper under the cursor ► or selected papers ✓:
 
 ### Collection Management
 - `/collect` - Manage collections
+- `/collect purge` - Delete all empty collections
 - `/add-to` - Add selected paper(s) to a collection
 - `/remove-from` - Remove selected paper(s) from a collection
 
