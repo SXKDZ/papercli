@@ -8,9 +8,9 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-from app.cli import PaperCLI
-from app.database import init_database
-from app.version import get_version
+from .cli import PaperCLI
+from .database import init_database
+from .version import get_version
 
 
 def main():

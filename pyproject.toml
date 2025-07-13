@@ -73,7 +73,7 @@ dev = [
 "Documentation" = "https://github.com/SXKDZ/papercli#readme"
 
 [project.scripts]
-papercli = "papercli:main"
+papercli = "app.papercli:main"
 
 [tool.setuptools]
 packages = ["app"]
