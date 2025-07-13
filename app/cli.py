@@ -3060,17 +3060,19 @@ The doctor command helps maintain database health by:
         # Check for updates on startup (non-blocking)
         try:
             version_manager = VersionManager()
-            if version_manager.should_check_for_updates():
-                # Perform check in background without blocking startup
-                import threading
-                def check_updates():
-                    try:
-                        version_manager.check_and_prompt_update()
-                    except Exception:
-                        pass  # Silently ignore update check failures
-                
-                update_thread = threading.Thread(target=check_updates, daemon=True)
-                update_thread.start()
+            # Perform silent check in background without blocking startup
+            import threading
+            def check_updates():
+                try:
+                    update_available, latest_version = version_manager.check_for_updates_silently()
+                    if update_available:
+                        # Log to activity log instead of interfering with UI
+                        self._add_log("version_check", f"Update available: v{latest_version}")
+                except Exception:
+                    pass  # Silently ignore update check failures
+            
+            update_thread = threading.Thread(target=check_updates, daemon=True)
+            update_thread.start()
         except Exception:
             pass  # Silently ignore any version checking issues
         

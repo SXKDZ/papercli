@@ -33,6 +33,11 @@ class VersionManager:
         try:
             url = f"https://api.github.com/repos/{self.github_repo}/releases/latest"
             response = requests.get(url, timeout=10)
+            
+            if response.status_code == 404:
+                # No releases yet - this is normal for new repositories
+                return None
+            
             response.raise_for_status()
             
             release_data = response.json()
@@ -44,8 +49,11 @@ class VersionManager:
                 
             return latest_version
             
-        except Exception as e:
-            print(f"Warning: Could not check for latest version: {e}")
+        except requests.exceptions.RequestException:
+            # Silently handle network errors - don't interfere with UI
+            return None
+        except Exception:
+            # Silently handle other errors (parsing, etc.)
             return None
     
     def is_update_available(self) -> Tuple[bool, Optional[str]]:
@@ -152,11 +160,9 @@ class VersionManager:
             ], capture_output=True, text=True, check=True)
             
             return result.returncode == 0
-        except subprocess.CalledProcessError as e:
-            print(f"Failed to update via pipx: {e}")
+        except subprocess.CalledProcessError:
             return False
         except FileNotFoundError:
-            print("pipx not found. Please install pipx first.")
             return False
     
     def update_via_pip(self) -> bool:
@@ -169,8 +175,7 @@ class VersionManager:
             ], capture_output=True, text=True, check=True)
             
             return result.returncode == 0
-        except subprocess.CalledProcessError as e:
-            print(f"Failed to update via pip: {e}")
+        except subprocess.CalledProcessError:
             return False
     
     def perform_update(self) -> bool:
@@ -182,8 +187,7 @@ class VersionManager:
         elif install_method == "pip":
             return self.update_via_pip()
         else:
-            print("Automatic updates not supported for source installations.")
-            print(f"Please update manually: git pull origin main")
+            # Don't print - let the CLI handle the messaging
             return False
     
     def get_update_instructions(self) -> str:
@@ -197,38 +201,13 @@ class VersionManager:
         else:
             return "cd /path/to/papercli && git pull origin main"
     
-    def check_and_prompt_update(self, force_check: bool = False) -> None:
-        """Check for updates and prompt user if available."""
-        if not force_check and not self.should_check_for_updates():
-            return
+    def check_for_updates_silently(self) -> Tuple[bool, Optional[str]]:
+        """Check for updates silently without UI interference."""
+        if not self.should_check_for_updates():
+            return False, None
         
         self.mark_update_check()
-        
-        update_available, latest_version = self.is_update_available()
-        if not update_available:
-            if force_check:
-                print(f"✅ You're running the latest version ({self.current_version})")
-            return
-        
-        print(f"\n🎉 Update available!")
-        print(f"Current version: {self.current_version}")
-        print(f"Latest version:  {latest_version}")
-        
-        config = self.get_update_config()
-        if config.get("auto_update", False) and self.can_auto_update():
-            print("\n🔄 Auto-updating...")
-            if self.perform_update():
-                print("✅ Update successful! Please restart PaperCLI.")
-                sys.exit(0)
-            else:
-                print("❌ Auto-update failed. Please update manually:")
-                print(f"   {self.get_update_instructions()}")
-        else:
-            print(f"\n📝 To update, run:")
-            print(f"   {self.get_update_instructions()}")
-            
-            if self.can_auto_update():
-                print(f"\n💡 You can enable auto-updates with: /settings auto_update true")
+        return self.is_update_available()
 
 
 def get_version() -> str:
@@ -236,7 +215,10 @@ def get_version() -> str:
     return __version__
 
 
-def check_for_updates(force: bool = False) -> None:
+def check_for_updates(force: bool = False) -> Tuple[bool, Optional[str]]:
     """Check for updates (convenience function)."""
     version_manager = VersionManager()
-    version_manager.check_and_prompt_update(force_check=force)
+    if force:
+        return version_manager.is_update_available()
+    else:
+        return version_manager.check_for_updates_silently()
