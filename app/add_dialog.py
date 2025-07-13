@@ -26,6 +26,8 @@ class AddDialog:
             ("arxiv", "arXiv - Add from an arXiv ID (e.g., 2307.10635)"),
             ("dblp", "DBLP - Add from a DBLP URL"),
             ("openreview", "OpenReview - Add from an OpenReview ID (e.g., bq1JEgioLr)"),
+            ("bib", "BibTeX File - Add papers from a .bib file"),
+            ("ris", "RIS File - Add papers from a .ris file"),
             ("manual", "Manual - Add with manual entry"),
         ]
 
@@ -56,13 +58,17 @@ class AddDialog:
         def get_input_label():
             source = self.source_list.current_value
             if source == "pdf":
-                return "Path:"
+                return "PDF Path:"
             elif source == "arxiv":
                 return "arXiv ID:"
             elif source == "dblp":
-                return "URL:"
+                return "DBLP URL:"
             elif source == "openreview":
                 return "OpenReview ID:"
+            elif source == "bib":
+                return "BibTeX Path:"
+            elif source == "ris":
+                return "RIS Path:"
             else:
                 return "Path/ID/URL:"
         

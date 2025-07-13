@@ -23,9 +23,9 @@ def fix_broken_lines(text: str) -> str:
     if not text:
         return text
     # Join lines unless next line starts with capital letter
-    text = re.sub(r'\n(?![A-Z])', ' ', text)
+    text = re.sub(r"\n(?![A-Z])", " ", text)
     # Normalize multiple spaces
-    text = re.sub(r'\s+', ' ', text)
+    text = re.sub(r"\s+", " ", text)
     return text.strip()
 
 
@@ -90,7 +90,7 @@ class PaperService:
         self, paper_id: int, paper_data: Dict[str, Any]
     ) -> tuple[Optional[Paper], str]:
         """Update an existing paper.
-        
+
         Returns:
             tuple[Optional[Paper], str]: (updated_paper, error_message)
             If successful: (paper, "")
@@ -100,27 +100,29 @@ class PaperService:
             paper = session.query(Paper).filter(Paper.id == paper_id).first()
             if not paper:
                 return None, f"Paper with ID {paper_id} not found"
-            
+
             pdf_error = ""
-            
+
             try:
                 # Handle PDF path processing if present
                 if "pdf_path" in paper_data and paper_data["pdf_path"]:
                     pdf_manager = PDFManager()
-                    
+
                     # Create paper data for filename generation
                     current_paper_data = {
-                        'title': paper_data.get('title', paper.title),
-                        'authors': [author.full_name for author in paper.authors] if paper.authors else [],
-                        'year': paper_data.get('year', paper.year)
+                        "title": paper_data.get("title", paper.title),
+                        "authors": (
+                            [author.full_name for author in paper.authors]
+                            if paper.authors
+                            else []
+                        ),
+                        "year": paper_data.get("year", paper.year),
                     }
-                    
+
                     new_pdf_path, error = pdf_manager.process_pdf_path(
-                        paper_data["pdf_path"], 
-                        current_paper_data, 
-                        paper.pdf_path
+                        paper_data["pdf_path"], current_paper_data, paper.pdf_path
                     )
-                    
+
                     if error:
                         pdf_error = f"PDF processing failed: {error}"
                         # Remove pdf_path from update data to prevent invalid path from being saved
@@ -151,9 +153,9 @@ class PaperService:
 
                 # Expunge to follow the detached object pattern used elsewhere in the app
                 session.expunge(paper)
-                
+
                 return paper, pdf_error
-                
+
             except Exception as e:
                 session.rollback()
                 return None, f"Failed to update paper: {str(e)}"
@@ -676,6 +678,9 @@ class SearchService:
 class MetadataExtractor:
     """Service for extracting metadata from various sources."""
 
+    def __init__(self, log_callback=None):
+        self.log_callback = log_callback
+
     def extract_from_arxiv(self, arxiv_id: str) -> Dict[str, Any]:
         """Extract metadata from arXiv."""
         import xml.etree.ElementTree as ET
@@ -730,7 +735,7 @@ class MetadataExtractor:
                 year_match = re.search(r"(\d{4})", published_date)
                 if year_match:
                     year = int(year_match.group(1))
-            
+
             # Extract arXiv category
             category = None
             category_elem = entry.find("atom:category", ns)
@@ -763,121 +768,76 @@ class MetadataExtractor:
         except ET.ParseError as e:
             raise Exception(f"Failed to parse arXiv response: {e}")
 
-    def extract_from_pdf(self, pdf_path: str) -> Dict[str, Any]:
-        """Extract metadata from PDF file."""
-        try:
-            import PyPDF2
-
-            with open(pdf_path, "rb") as file:
-                pdf_reader = PyPDF2.PdfReader(file)
-
-                # Extract metadata
-                metadata = pdf_reader.metadata
-
-                # Extract title from metadata or first page
-                title = (
-                    metadata.get("/Title", "Unknown Title")
-                    if metadata
-                    else "Unknown Title"
-                )
-                # Fix broken lines and apply titlecase to PDF titles
-                title = fix_broken_lines(title)
-                title = titlecase(title)
-
-                # Extract author from metadata
-                author = metadata.get("/Author", "") if metadata else ""
-                authors = [author] if author else []
-
-                # Extract text from first page for additional info
-                if pdf_reader.pages:
-                    first_page = pdf_reader.pages[0]
-                    text = first_page.extract_text()
-
-                    # Try to extract year from text
-                    year_match = re.search(r"(19|20)\d{2}", text)
-                    year = int(year_match.group()) if year_match else None
-                else:
-                    year = None
-
-                return {
-                    "title": title,
-                    "authors": authors,
-                    "year": year,
-                    "pdf_path": pdf_path,
-                    "paper_type": "unknown",
-                }
-
-        except Exception as e:
-            raise Exception(f"Failed to extract PDF metadata: {e}")
-
     def extract_from_dblp(self, dblp_url: str) -> Dict[str, Any]:
         """Extract metadata from DBLP URL using BibTeX endpoint and LLM processing."""
         try:
             import bibtexparser
-            
+
             # Convert DBLP HTML URL to BibTeX URL
             bib_url = self._convert_dblp_url_to_bib(dblp_url)
-            
+
             # Fetch BibTeX data
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
             }
             response = requests.get(bib_url, headers=headers, timeout=30)
             response.raise_for_status()
-            
+
             bibtex_content = response.text.strip()
             if not bibtex_content:
                 raise Exception("Empty BibTeX response")
-            
+
             # Parse BibTeX using bibtexparser
             parser = bibtexparser.bparser.BibTexParser(common_strings=True)
             bib_database = bibtexparser.loads(bibtex_content, parser=parser)
-            
+
             if not bib_database.entries:
                 raise Exception("No entries found in BibTeX data")
-            
+
             entry = bib_database.entries[0]  # Take the first entry
-            
+
             # Get venue field based on entry type
             venue_field = ""
             paper_type = "conference"
-            if 'booktitle' in entry:
-                venue_field = entry['booktitle']
+            if "booktitle" in entry:
+                venue_field = entry["booktitle"]
                 paper_type = "conference"
-            elif 'journal' in entry:
-                venue_field = entry['journal']
+            elif "journal" in entry:
+                venue_field = entry["journal"]
                 paper_type = "journal"
-            
+
             # Extract venue names using LLM
             venue_info = self._extract_venue_with_llm(venue_field)
-            
+
             # Parse authors
             authors = []
-            if 'author' in entry:
+            if "author" in entry:
                 # Split by 'and' and clean up, handling multiline authors
-                author_text = re.sub(r'\s+', ' ', entry['author'])  # Normalize whitespace
-                for author in author_text.split(' and '):
+                author_text = re.sub(
+                    r"\s+", " ", entry["author"]
+                )  # Normalize whitespace
+                for author in author_text.split(" and "):
                     author = author.strip()
                     if author:
                         authors.append(author)
-            
+
             # Extract year
             year = None
-            if 'year' in entry:
+            if "year" in entry:
                 try:
-                    year = int(entry['year'])
+                    year = int(entry["year"])
                 except ValueError:
                     pass
-            
+
             # Extract and clean title
-            title = entry.get('title', 'Unknown Title')
+            title = entry.get("title", "Unknown Title")
             title = fix_broken_lines(title)  # Fix any line breaks in title
             title = titlecase(title)  # Apply title case
 
             # Extract and clean abstract if present (though DBLP usually doesn't have abstracts)
             abstract = ""
-            if 'abstract' in entry:
-                abstract = fix_broken_lines(entry['abstract'])
+            if "abstract" in entry:
+                abstract = fix_broken_lines(entry["abstract"])
 
             # Build result
             result = {
@@ -885,16 +845,18 @@ class MetadataExtractor:
                 "abstract": abstract,
                 "authors": authors,
                 "year": year,
-                "venue_full": venue_info.get('venue_full', venue_field),
-                "venue_acronym": venue_info.get('venue_acronym', ''),
+                "venue_full": venue_info.get("venue_full", venue_field),
+                "venue_acronym": venue_info.get("venue_acronym", ""),
                 "paper_type": paper_type,
-                "url": entry.get('url', dblp_url),  # Use BibTeX URL if available, fallback to DBLP URL
-                "pages": entry.get('pages'),
-                "doi": entry.get('doi'),
-                "volume": entry.get('volume'),
-                "issue": entry.get('number'),
+                "url": entry.get(
+                    "url", dblp_url
+                ),  # Use BibTeX URL if available, fallback to DBLP URL
+                "pages": entry.get("pages"),
+                "doi": entry.get("doi"),
+                "volume": entry.get("volume"),
+                "issue": entry.get("number"),
             }
-            
+
             return result
 
         except requests.RequestException as e:
@@ -905,38 +867,42 @@ class MetadataExtractor:
     def _convert_dblp_url_to_bib(self, dblp_url: str) -> str:
         """Convert DBLP HTML URL to BibTeX URL."""
         # Handle both .html and regular DBLP URLs
-        if '.html' in dblp_url:
+        if ".html" in dblp_url:
             # Remove .html and any query parameters, then add .bib
-            base_url = dblp_url.split('.html')[0]
+            base_url = dblp_url.split(".html")[0]
             bib_url = f"{base_url}.bib?param=1"
         else:
             # Direct DBLP record URL
             bib_url = f"{dblp_url}.bib?param=1"
-        
+
         return bib_url
 
     def _extract_venue_with_llm(self, venue_field: str) -> Dict[str, str]:
         """Extract venue name and acronym using LLM."""
         if not venue_field:
-            return {'venue_full': '', 'venue_acronym': ''}
-        
+            return {"venue_full": "", "venue_acronym": ""}
+
         # Initialize chat service if not available
-        if not hasattr(self, '_chat_service'):
+        if not hasattr(self, "_chat_service"):
             self._chat_service = ChatService()
-        
+
         if not self._chat_service.openai_client:
             # Fallback without LLM
             return {
-                'venue_full': venue_field,
-                'venue_acronym': self._extract_acronym_fallback(venue_field)
+                "venue_full": venue_field,
+                "venue_acronym": self._extract_acronym_fallback(venue_field),
             }
-        
+
         try:
             prompt = f"""Given this conference/journal venue field from a DBLP BibTeX entry: "{venue_field}"
 
 Please extract:
-1. venue_full: The full venue name in the format "International Conference on XXX" (ignore "The", "First", "Second", etc.)
-2. venue_acronym: The short acronym (e.g., ICML, NIPS, ICLR)
+1. venue_full: The full venue name following these guidelines:
+   - For journals: Use full journal name (e.g., "Journal of Chemical Information and Modeling")
+   - For conferences: Use full name without "Proceedings of" or ordinal numbers (e.g., "International Conference on Machine Learning" for Proceedings of the 41st International Conference on Machine Learning)
+2. venue_acronym: The abbreviation following these guidelines:
+   - For journals: Use ISO 4 abbreviated format with periods (e.g., "J. Chem. Inf. Model." for Journal of Chemical Information and Modeling)
+   - For conferences: Use common name (e.g., "NeurIPS" for Conference on Neural Information Processing Systems, not "NIPS")
 
 Respond in this exact JSON format:
 {{"venue_full": "...", "venue_acronym": "..."}}"""
@@ -944,247 +910,514 @@ Respond in this exact JSON format:
             response = self._chat_service.openai_client.chat.completions.create(
                 model="gpt-4o",
                 messages=[
-                    {"role": "system", "content": "You are a helpful assistant that extracts venue information from academic paper titles."},
-                    {"role": "user", "content": prompt}
+                    {
+                        "role": "system",
+                        "content": "You are a helpful assistant that extracts venue information from academic paper titles.",
+                    },
+                    {"role": "user", "content": prompt},
                 ],
                 max_tokens=200,
                 temperature=0.1,
             )
-            
+
             response_text = response.choices[0].message.content.strip()
-            
+
             # Clean up markdown code blocks if present
-            if response_text.startswith('```json'):
+            if response_text.startswith("```json"):
                 response_text = response_text[7:]  # Remove ```json
-            if response_text.startswith('```'):
-                response_text = response_text[3:]   # Remove ```
-            if response_text.endswith('```'):
+            if response_text.startswith("```"):
+                response_text = response_text[3:]  # Remove ```
+            if response_text.endswith("```"):
                 response_text = response_text[:-3]  # Remove trailing ```
             response_text = response_text.strip()
-            
+
             # Try to parse JSON response
             try:
                 venue_info = json.loads(response_text)
                 return {
-                    'venue_full': venue_info.get('venue_full', venue_field),
-                    'venue_acronym': venue_info.get('venue_acronym', '')
+                    "venue_full": venue_info.get("venue_full", venue_field),
+                    "venue_acronym": venue_info.get("venue_acronym", ""),
                 }
             except json.JSONDecodeError:
                 # Fallback if JSON parsing fails
                 return {
-                    'venue_full': venue_field,
-                    'venue_acronym': self._extract_acronym_fallback(venue_field)
+                    "venue_full": venue_field,
+                    "venue_acronym": self._extract_acronym_fallback(venue_field),
                 }
-        
+
         except Exception as e:
             # Fallback on any error
             return {
-                'venue_full': venue_field,
-                'venue_acronym': self._extract_acronym_fallback(venue_field)
+                "venue_full": venue_field,
+                "venue_acronym": self._extract_acronym_fallback(venue_field),
             }
 
     def _extract_acronym_fallback(self, venue_field: str) -> str:
         """Fallback method to extract acronym without LLM."""
         if not venue_field:
             return ""
-        
+
         # Common conference acronyms
         acronym_map = {
-            'international conference on machine learning': 'ICML',
-            'neural information processing systems': 'NeurIPS',
-            'international conference on learning representations': 'ICLR',
-            'ieee conference on computer vision and pattern recognition': 'CVPR',
-            'international conference on computer vision': 'ICCV',
-            'european conference on computer vision': 'ECCV',
-            'conference on empirical methods in natural language processing': 'EMNLP',
-            'annual meeting of the association for computational linguistics': 'ACL',
-            'international joint conference on artificial intelligence': 'IJCAI',
-            'aaai conference on artificial intelligence': 'AAAI',
+            "international conference on machine learning": "ICML",
+            "neural information processing systems": "NeurIPS",
+            "international conference on learning representations": "ICLR",
+            "ieee conference on computer vision and pattern recognition": "CVPR",
+            "international conference on computer vision": "ICCV",
+            "european conference on computer vision": "ECCV",
+            "conference on empirical methods in natural language processing": "EMNLP",
+            "annual meeting of the association for computational linguistics": "ACL",
+            "international joint conference on artificial intelligence": "IJCAI",
+            "aaai conference on artificial intelligence": "AAAI",
         }
-        
+
         venue_lower = venue_field.lower()
         for full_name, acronym in acronym_map.items():
             if full_name in venue_lower:
                 return acronym
-        
+
         # Extract first letters of significant words
-        words = re.findall(r'\b[A-Z][a-z]*', venue_field)
+        words = re.findall(r"\b[A-Z][a-z]*", venue_field)
         if words:
-            return ''.join(word[0].upper() for word in words[:4])
-        
+            return "".join(word[0].upper() for word in words[:4])
+
         return ""
 
     def extract_from_openreview(self, openreview_id: str) -> Dict[str, Any]:
         """Extract metadata from OpenReview paper ID."""
         try:
             # Clean OpenReview ID - extract just the ID part
-            if openreview_id.startswith('https://openreview.net/forum?id='):
-                openreview_id = openreview_id.split('id=')[1]
-            elif openreview_id.startswith('https://openreview.net/pdf?id='):
-                openreview_id = openreview_id.split('id=')[1]
-            
+            if openreview_id.startswith("https://openreview.net/forum?id="):
+                openreview_id = openreview_id.split("id=")[1]
+            elif openreview_id.startswith("https://openreview.net/pdf?id="):
+                openreview_id = openreview_id.split("id=")[1]
+
             # Remove any additional parameters
-            openreview_id = openreview_id.split('&')[0].split('#')[0]
-            
+            openreview_id = openreview_id.split("&")[0].split("#")[0]
+
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
             }
-            
+
             # Try newer API v2 format first
             api_url_v2 = f"https://api2.openreview.net/notes?forum={openreview_id}&limit=1000&details=writable%2Csignatures%2Cinvitation%2Cpresentation%2Ctags"
-            
+
             try:
                 response = requests.get(api_url_v2, headers=headers, timeout=30)
                 response.raise_for_status()
                 data = response.json()
-                
-                if data.get('notes') and len(data['notes']) > 0:
+
+                if data.get("notes") and len(data["notes"]) > 0:
                     return self._parse_openreview_v2_response(data, openreview_id)
             except (requests.RequestException, KeyError):
                 pass  # Fall back to older API format
-            
+
             # Try older API format if v2 fails
             api_url_v1 = f"https://api.openreview.net/notes?forum={openreview_id}&trash=true&details=replyCount%2Cwritable%2Crevisions%2Coriginal%2Coverwriting%2Cinvitation%2Ctags&limit=1000&offset=0"
-            
+
             response = requests.get(api_url_v1, headers=headers, timeout=30)
             response.raise_for_status()
             data = response.json()
-            
-            if not data.get('notes') or len(data['notes']) == 0:
+
+            if not data.get("notes") or len(data["notes"]) == 0:
                 raise Exception("Paper not found on OpenReview")
-            
+
             return self._parse_openreview_v1_response(data, openreview_id)
-            
+
         except requests.RequestException as e:
             raise Exception(f"Failed to fetch OpenReview metadata: {e}")
         except Exception as e:
             raise Exception(f"Failed to process OpenReview metadata: {e}")
-    
-    def _parse_openreview_v2_response(self, data: Dict[str, Any], openreview_id: str) -> Dict[str, Any]:
+
+    def _parse_openreview_v2_response(
+        self, data: Dict[str, Any], openreview_id: str
+    ) -> Dict[str, Any]:
         """Parse OpenReview API v2 response."""
         # Find the main submission note (where id equals forum)
         note = None
-        for n in data['notes']:
-            if n.get('id') == n.get('forum'):
+        for n in data["notes"]:
+            if n.get("id") == n.get("forum"):
                 note = n
                 break
-        
+
         if not note:
             # Fallback to first note if main submission not found
-            note = data['notes'][0]
-            
-        content = note.get('content', {})
-        
+            note = data["notes"][0]
+
+        content = note.get("content", {})
+
         # Extract title
-        title = content.get('title', {}).get('value', 'Unknown Title')
+        title = content.get("title", {}).get("value", "Unknown Title")
         title = fix_broken_lines(title)
         title = titlecase(title)
-        
+
         # Extract abstract
-        abstract = content.get('abstract', {}).get('value', '')
+        abstract = content.get("abstract", {}).get("value", "")
         if abstract:
             abstract = fix_broken_lines(abstract)
-        
+
         # Extract authors
         authors = []
-        authors_data = content.get('authors', {}).get('value', [])
+        authors_data = content.get("authors", {}).get("value", [])
         if authors_data:
             authors = [author.strip() for author in authors_data if author.strip()]
-        
+
         # Extract venue information using LLM
-        venue_info = content.get('venue', {}).get('value', '')
+        venue_info = content.get("venue", {}).get("value", "")
         venue_data = self._extract_venue_with_llm(venue_info)
-        
+
         # Extract year from venue or other sources
         year = None
         if venue_info:
-            year_match = re.search(r'(\d{4})', venue_info)
+            year_match = re.search(r"(\d{4})", venue_info)
             if year_match:
                 year = int(year_match.group(1))
-        
+
         return {
             "title": title,
             "abstract": abstract,
             "authors": authors,
             "year": year,
-            "venue_full": venue_data.get('venue_full', venue_info),
-            "venue_acronym": venue_data.get('venue_acronym', ''),
-            "paper_type": "conference",
-            "url": f"https://openreview.net/forum?id={openreview_id}",
-            "category": None,
-            "pdf_path": None,
-        }
-    
-    def _parse_openreview_v1_response(self, data: Dict[str, Any], openreview_id: str) -> Dict[str, Any]:
-        """Parse OpenReview API v1 response."""
-        # Find the main submission note (where id equals forum)
-        note = None
-        for n in data['notes']:
-            if n.get('id') == n.get('forum'):
-                note = n
-                break
-        
-        if not note:
-            # Fallback to first note if main submission not found
-            note = data['notes'][0]
-            
-        content = note.get('content', {})
-        
-        # Extract title (v1 format may have direct string values)
-        title = content.get('title', 'Unknown Title')
-        if isinstance(title, dict):
-            title = title.get('value', 'Unknown Title')
-        title = fix_broken_lines(title)
-        title = titlecase(title)
-        
-        # Extract abstract
-        abstract = content.get('abstract', '')
-        if isinstance(abstract, dict):
-            abstract = abstract.get('value', '')
-        if abstract:
-            abstract = fix_broken_lines(abstract)
-        
-        # Extract authors
-        authors = []
-        authors_data = content.get('authors', [])
-        if isinstance(authors_data, dict):
-            authors_data = authors_data.get('value', [])
-        if authors_data:
-            authors = [author.strip() for author in authors_data if author.strip()]
-        
-        # Extract venue information using LLM
-        venue_info = content.get('venue', '')
-        if isinstance(venue_info, dict):
-            venue_info = venue_info.get('value', '')
-        venue_data = self._extract_venue_with_llm(venue_info)
-        
-        # Extract year from venue or other sources
-        year = None
-        if venue_info:
-            year_match = re.search(r'(\d{4})', venue_info)
-            if year_match:
-                year = int(year_match.group(1))
-        
-        return {
-            "title": title,
-            "abstract": abstract,
-            "authors": authors,
-            "year": year,
-            "venue_full": venue_data.get('venue_full', venue_info),
-            "venue_acronym": venue_data.get('venue_acronym', ''),
+            "venue_full": venue_data.get("venue_full", venue_info),
+            "venue_acronym": venue_data.get("venue_acronym", ""),
             "paper_type": "conference",
             "url": f"https://openreview.net/forum?id={openreview_id}",
             "category": None,
             "pdf_path": None,
         }
 
-    def extract_from_google_scholar(self, gs_url: str) -> Dict[str, Any]:
-        """Extract metadata from Google Scholar URL."""
-        # Note: Google Scholar blocks automated requests
-        # This is a placeholder implementation
-        raise Exception(
-            "Google Scholar metadata extraction not implemented due to anti-bot measures"
-        )
+    def _parse_openreview_v1_response(
+        self, data: Dict[str, Any], openreview_id: str
+    ) -> Dict[str, Any]:
+        """Parse OpenReview API v1 response."""
+        # Find the main submission note (where id equals forum)
+        note = None
+        for n in data["notes"]:
+            if n.get("id") == n.get("forum"):
+                note = n
+                break
+
+        if not note:
+            # Fallback to first note if main submission not found
+            note = data["notes"][0]
+
+        content = note.get("content", {})
+
+        # Extract title (v1 format may have direct string values)
+        title = content.get("title", "Unknown Title")
+        if isinstance(title, dict):
+            title = title.get("value", "Unknown Title")
+        title = fix_broken_lines(title)
+        title = titlecase(title)
+
+        # Extract abstract
+        abstract = content.get("abstract", "")
+        if isinstance(abstract, dict):
+            abstract = abstract.get("value", "")
+        if abstract:
+            abstract = fix_broken_lines(abstract)
+
+        # Extract authors
+        authors = []
+        authors_data = content.get("authors", [])
+        if isinstance(authors_data, dict):
+            authors_data = authors_data.get("value", [])
+        if authors_data:
+            authors = [author.strip() for author in authors_data if author.strip()]
+
+        # Extract venue information using LLM
+        venue_info = content.get("venue", "")
+        if isinstance(venue_info, dict):
+            venue_info = venue_info.get("value", "")
+        venue_data = self._extract_venue_with_llm(venue_info)
+
+        # Extract year from venue or other sources
+        year = None
+        if venue_info:
+            year_match = re.search(r"(\d{4})", venue_info)
+            if year_match:
+                year = int(year_match.group(1))
+
+        return {
+            "title": title,
+            "abstract": abstract,
+            "authors": authors,
+            "year": year,
+            "venue_full": venue_data.get("venue_full", venue_info),
+            "venue_acronym": venue_data.get("venue_acronym", ""),
+            "paper_type": "conference",
+            "url": f"https://openreview.net/forum?id={openreview_id}",
+            "category": None,
+            "pdf_path": None,
+        }
+
+    def extract_from_pdf(self, pdf_path: str) -> Dict[str, Any]:
+        """Extract metadata from PDF file using LLM analysis of first two pages."""
+        try:
+            import PyPDF2
+            from openai import OpenAI
+
+            # Extract text from first two pages
+            with open(pdf_path, "rb") as file:
+                pdf_reader = PyPDF2.PdfReader(file)
+
+                if len(pdf_reader.pages) == 0:
+                    raise Exception("PDF file is empty")
+
+                # Extract text from first 1-2 pages
+                pages_to_extract = min(2, len(pdf_reader.pages))
+                text_content = ""
+
+                for i in range(pages_to_extract):
+                    page = pdf_reader.pages[i]
+                    text_content += page.extract_text() + "\n\n"
+
+                if not text_content.strip():
+                    raise Exception("Could not extract text from PDF")
+
+            # Use LLM to extract metadata
+            client = OpenAI()
+
+            prompt = f"""
+            Extract the following metadata from this academic paper text. Return your response as a JSON object with these exact keys:
+            
+            - title: The paper title
+            - authors: List of author names as strings
+            - abstract: The abstract text (if available)
+            - year: Publication year as integer (if available)
+            - venue_full: Full venue/conference/journal name following these guidelines:
+              * For journals: Use full journal name (e.g., "Journal of Chemical Information and Modeling")
+              * For conferences: Use full name without "Proceedings of" or ordinal numbers (e.g., "International Conference on Machine Learning" for Proceedings of the 41st International Conference on Machine Learning)
+            - venue_acronym: Venue abbreviation following these guidelines:
+              * For journals: Use ISO 4 abbreviated format with periods (e.g., "J. Chem. Inf. Model." for Journal of Chemical Information and Modeling)
+              * For conferences: Use common name (e.g., "NeurIPS" for Conference on Neural Information Processing Systems, not "NIPS")
+            - paper_type: One of "conference", "journal", "workshop", "preprint", "other"
+            - doi: DOI (if available)
+            - url: URL of the paper mentioned (if available)
+            - category: Subject category like "cs.LG" (if available)
+            
+            If any field is not available, use null for that field.
+            
+            Paper text:
+            {text_content[:8000]}
+            """
+
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are an expert at extracting metadata from academic papers. Always respond with valid JSON.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0,
+            )
+
+            # Parse the JSON response
+            import json
+
+            response_content = response.choices[0].message.content.strip()
+
+            # Clean up potential markdown code blocks
+            if response_content.startswith("```json"):
+                response_content = response_content[7:]
+            if response_content.startswith("```"):
+                response_content = response_content[3:]
+            if response_content.endswith("```"):
+                response_content = response_content[:-3]
+            response_content = response_content.strip()
+
+            if not response_content:
+                raise Exception("Empty response from LLM")
+
+            try:
+                metadata = json.loads(response_content)
+            except json.JSONDecodeError as e:
+                # Fallback: create basic metadata from extracted text
+                if self.log_callback:
+                    self.log_callback(
+                        "pdf_extraction_warning",
+                        f"LLM JSON parsing failed: {e}. Response: {response_content[:500]}...",
+                    )
+
+                # Extract basic info from text using regex as fallback
+                title_match = re.search(
+                    r"^(.+?)(?:\n|$)", text_content.strip(), re.MULTILINE
+                )
+                title = title_match.group(1).strip() if title_match else "Unknown Title"
+
+                # Basic year extraction
+                year_match = re.search(r"\b(19|20)\d{2}\b", text_content)
+                year = int(year_match.group()) if year_match else None
+
+                metadata = {
+                    "title": title,
+                    "authors": [],
+                    "abstract": "",
+                    "year": year,
+                    "venue_full": "",
+                    "venue_acronym": "",
+                    "paper_type": "conference",
+                    "doi": "",
+                    "url": "",
+                    "category": "",
+                }
+
+            # Clean up author names if they're strings
+            if isinstance(metadata.get("authors"), list):
+                metadata["authors"] = [
+                    name.strip()
+                    for name in metadata["authors"]
+                    if name and name.strip()
+                ]
+            elif isinstance(metadata.get("authors"), str):
+                # Split comma-separated authors
+                metadata["authors"] = [
+                    name.strip()
+                    for name in metadata["authors"].split(",")
+                    if name.strip()
+                ]
+            else:
+                metadata["authors"] = []
+
+            return metadata
+
+        except Exception as e:
+            raise Exception(f"Failed to extract metadata from PDF: {e}")
+
+    def extract_from_bibtex(self, bib_path: str) -> List[Dict[str, Any]]:
+        """Extract metadata from BibTeX file."""
+        try:
+            import bibtexparser
+
+            with open(bib_path, "r", encoding="utf-8") as file:
+                bib_database = bibtexparser.load(file)
+
+            papers_metadata = []
+
+            for entry in bib_database.entries:
+                # Extract common BibTeX fields
+                metadata = {
+                    "title": entry.get("title", "").replace("{", "").replace("}", ""),
+                    "abstract": entry.get("abstract", ""),
+                    "year": (
+                        int(entry.get("year"))
+                        if entry.get("year", "").isdigit()
+                        else None
+                    ),
+                    "venue_full": entry.get("booktitle") or entry.get("journal", ""),
+                    "venue_acronym": "",
+                    "paper_type": self._infer_paper_type_from_bibtex(entry),
+                    "doi": entry.get("doi", ""),
+                    "url": entry.get("url", ""),
+                    "category": "",
+                    "pdf_path": None,
+                    "preprint_id": entry.get("eprint", ""),
+                    "volume": entry.get("volume", ""),
+                    "issue": entry.get("number", ""),
+                    "pages": entry.get("pages", ""),
+                }
+
+                # Extract authors
+                authors_str = entry.get("author", "")
+                if authors_str:
+                    # Split by "and" and clean up
+                    authors = [author.strip() for author in authors_str.split(" and ")]
+                    metadata["authors"] = authors
+                else:
+                    metadata["authors"] = []
+
+                papers_metadata.append(metadata)
+
+            return papers_metadata
+
+        except Exception as e:
+            raise Exception(f"Failed to extract metadata from BibTeX file: {e}")
+
+    def extract_from_ris(self, ris_path: str) -> List[Dict[str, Any]]:
+        """Extract metadata from RIS file."""
+        try:
+            import rispy
+
+            with open(ris_path, "r", encoding="utf-8") as file:
+                entries = rispy.load(file)
+
+            papers_metadata = []
+
+            for entry in entries:
+                # Extract common RIS fields
+                metadata = {
+                    "title": entry.get("title", "") or entry.get("primary_title", ""),
+                    "abstract": entry.get("abstract", ""),
+                    "year": int(entry.get("year")) if entry.get("year") else None,
+                    "venue_full": entry.get("journal_name", "")
+                    or entry.get("secondary_title", ""),
+                    "venue_acronym": entry.get("alternate_title1", ""),
+                    "paper_type": self._infer_paper_type_from_ris(entry),
+                    "doi": entry.get("doi", ""),
+                    "url": entry.get("url", ""),
+                    "category": "",
+                    "pdf_path": None,
+                    "preprint_id": "",
+                    "volume": entry.get("volume", ""),
+                    "issue": entry.get("number", ""),
+                    "pages": entry.get("start_page", "")
+                    + (
+                        "-" + entry.get("end_page", "") if entry.get("end_page") else ""
+                    ),
+                }
+
+                # Extract authors
+                authors = entry.get("authors", []) or entry.get("first_authors", [])
+                if authors:
+                    metadata["authors"] = [
+                        (
+                            f"{author.get('given', '')} {author.get('family', '')}".strip()
+                            if isinstance(author, dict)
+                            else str(author)
+                        )
+                        for author in authors
+                    ]
+                else:
+                    metadata["authors"] = []
+
+                papers_metadata.append(metadata)
+
+            return papers_metadata
+
+        except Exception as e:
+            raise Exception(f"Failed to extract metadata from RIS file: {e}")
+
+    def _infer_paper_type_from_bibtex(self, entry: Dict[str, str]) -> str:
+        """Infer paper type from BibTeX entry type."""
+        entry_type = entry.get("ENTRYTYPE", "").lower()
+
+        if entry_type in ["article"]:
+            return "journal"
+        elif entry_type in ["inproceedings", "conference"]:
+            return "conference"
+        elif entry_type in ["inbook", "incollection"]:
+            return "workshop"
+        elif entry_type in ["misc", "unpublished"]:
+            return "preprint"
+        else:
+            return "other"
+
+    def _infer_paper_type_from_ris(self, entry: Dict[str, Any]) -> str:
+        """Infer paper type from RIS entry type."""
+        type_of_reference = entry.get("type_of_reference", "").upper()
+
+        if type_of_reference in ["JOUR"]:
+            return "journal"
+        elif type_of_reference in ["CONF", "CPAPER"]:
+            return "conference"
+        elif type_of_reference in ["CHAP", "BOOK"]:
+            return "workshop"
+        elif type_of_reference in ["UNPB", "MANSCPT"]:
+            return "preprint"
+        else:
+            return "other"
 
 
 class ExportService:
@@ -1336,159 +1569,74 @@ class ExportService:
 
 
 class ChatService:
-    """Service for LLM integration and chat functionality."""
+    """Service for chat functionality."""
 
-    def __init__(self):
-        self.openai_client = None
-        self._initialize_openai()
-
-    def _initialize_openai(self):
-        """Initialize OpenAI client."""
-        try:
-            import openai
-
-            api_key = os.getenv("OPENAI_API_KEY")
-            if api_key:
-                self.openai_client = openai.OpenAI(api_key=api_key)
-            else:
-                print(
-                    "Warning: OPENAI_API_KEY not set. Chat functionality will be limited."
-                )
-        except ImportError:
-            print(
-                "Warning: OpenAI package not found. Chat functionality will be limited."
-            )
-
-    def chat_about_papers(self, papers: List[Paper], user_query: str) -> str:
-        """Chat with LLM about selected papers."""
-        if not self.openai_client:
-            return "Error: OpenAI client not initialized. Please set OPENAI_API_KEY environment variable."
-
-        try:
-            # Create context from papers
-            context = self._create_paper_context(papers)
-
-            # Create prompt
-            prompt = f"""You are a research assistant helping with academic papers. 
-            
-Here are the papers we're discussing:
-
-{context}
-
-User question: {user_query}
-
-Please provide a helpful response based on the papers provided."""
-
-            response = self.openai_client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a helpful research assistant.",
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                max_tokens=1000,
-                temperature=0.7,
-            )
-
-            return response.choices[0].message.content
-
-        except Exception as e:
-            return f"Error communicating with OpenAI: {str(e)}"
-
-    def _create_paper_context(self, papers: List[Paper]) -> str:
-        """Create context string from papers."""
-        context_parts = []
-
-        for i, paper in enumerate(papers, 1):
-            context = f"Paper {i}: {paper.title}\n"
-            context += f"Authors: {paper.author_names}\n"
-            context += f"Year: {paper.year}\n"
-            context += f"Venue: {paper.venue_display}\n"
-
-            if paper.abstract:
-                abstract = (
-                    paper.abstract[:300] + "..."
-                    if len(paper.abstract) > 300
-                    else paper.abstract
-                )
-                context += f"Abstract: {abstract}\n"
-
-            if paper.notes:
-                context += f"Notes: {paper.notes}\n"
-
-            context_parts.append(context)
-
-        return "\n".join(context_parts)
+    def __init__(self, log_callback=None):
+        self.log_callback = log_callback
 
     def open_chat_interface(self, papers: List[Paper]):
-        """Open chat interface in browser."""
+        """Open Claude and show PDF files in Finder/File Explorer."""
         try:
-            # Create a simple HTML page for chat
-            html_content = self._create_chat_html(papers)
+            import platform
+            import subprocess
 
-            # Save to temporary file
-            import tempfile
+            # Open Claude in browser
+            webbrowser.open("https://claude.ai")
 
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".html", delete=False
-            ) as f:
-                f.write(html_content)
-                temp_path = f.name
+            # Open PDF files in Finder/File Explorer
+            system = platform.system()
+            opened_files = []
+            failed_files = []
 
-            # Open in browser
-            webbrowser.open(f"file://{temp_path}")
+            for paper in papers:
+                if paper.pdf_path and os.path.exists(paper.pdf_path):
+                    try:
+                        if system == "Darwin":  # macOS
+                            subprocess.run(["open", "-R", paper.pdf_path], check=True)
+                        elif system == "Windows":
+                            subprocess.run(
+                                ["explorer", "/select,", paper.pdf_path], check=True
+                            )
+                        elif system == "Linux":
+                            # For Linux, open the directory containing the file
+                            pdf_dir = os.path.dirname(paper.pdf_path)
+                            subprocess.run(["xdg-open", pdf_dir], check=True)
 
-            return temp_path
+                        opened_files.append(paper.title)
+                    except Exception as e:
+                        error_msg = f"{paper.title}: {str(e)}"
+                        failed_files.append(error_msg)
+                        if self.log_callback:
+                            self.log_callback(
+                                "chat_pdf_error", f"Failed to open PDF: {error_msg}"
+                            )
+
+            # Prepare result message
+            result_parts = []
+            if opened_files:
+                result_parts.append(
+                    f"Opened Claude and {len(opened_files)} PDF file(s)"
+                )
+            else:
+                result_parts.append("Opened Claude (no local PDF files found)")
+
+            if failed_files:
+                result_parts.append(f"Failed to open {len(failed_files)} file(s)")
+                # Return error details for logging by CLI
+                return {
+                    "success": True,
+                    "message": "; ".join(result_parts),
+                    "errors": failed_files,
+                }
+
+            return {"success": True, "message": result_parts[0], "errors": []}
 
         except Exception as e:
-            return f"Error opening chat interface: {str(e)}"
-
-    def _create_chat_html(self, papers: List[Paper]) -> str:
-        """Create HTML for chat interface."""
-        context = self._create_paper_context(papers)
-
-        html = f"""<!DOCTYPE html>
-<html>
-<head>
-    <title>PaperCLI Chat Interface</title>
-    <style>
-        body {{ font-family: Arial, sans-serif; margin: 20px; }}
-        .papers {{ background: #f5f5f5; padding: 20px; border-radius: 8px; margin-bottom: 20px; }}
-        .chat-area {{ border: 1px solid #ddd; padding: 20px; border-radius: 8px; }}
-        .instructions {{ background: #e8f4f8; padding: 15px; border-radius: 8px; margin-bottom: 20px; }}
-    </style>
-</head>
-<body>
-    <h1>PaperCLI Chat Interface</h1>
-    
-    <div class="instructions">
-        <h3>Instructions:</h3>
-        <p>Copy the paper information below and paste it into your preferred AI chat interface (ChatGPT, Claude, etc.)</p>
-        <p>You can also drag and drop PDF files into the chat interface if available.</p>
-    </div>
-    
-    <div class="papers">
-        <h3>Paper Information:</h3>
-        <pre>{context}</pre>
-    </div>
-    
-    <div class="chat-area">
-        <h3>Chat Interface:</h3>
-        <p>Use this space to formulate your questions about the papers above.</p>
-        <p>Examples:</p>
-        <ul>
-            <li>What are the main contributions of these papers?</li>
-            <li>How do these papers relate to each other?</li>
-            <li>What are the key findings and implications?</li>
-            <li>What are the limitations mentioned in these papers?</li>
-        </ul>
-    </div>
-</body>
-</html>"""
-
-        return html
+            return {
+                "success": False,
+                "message": f"Error opening chat interface: {str(e)}",
+                "errors": [],
+            }
 
 
 class SystemService:
@@ -1592,7 +1740,13 @@ class SystemService:
             # Return False and let the caller handle the error message
             return False
 
-    def download_pdf(self, source: str, identifier: str, download_dir: str, paper_data: Dict[str, Any] = None) -> Optional[str]:
+    def download_pdf(
+        self,
+        source: str,
+        identifier: str,
+        download_dir: str,
+        paper_data: Dict[str, Any] = None,
+    ) -> Optional[str]:
         """Download PDF from various sources (arXiv, OpenReview, etc.)."""
         try:
             # Create download directory
@@ -1613,12 +1767,12 @@ class SystemService:
             pdf_manager = PDFManager()
             filename = pdf_manager._generate_pdf_filename(paper_data, pdf_url)
             filepath = os.path.join(download_dir, filename)
-            
+
             pdf_path, error_msg = pdf_manager._download_pdf_from_url(pdf_url, filepath)
-            
+
             if error_msg:
                 return None
-                
+
             return pdf_path
 
         except Exception as e:
@@ -1635,6 +1789,7 @@ class PDFManager:
     def _setup_pdf_directory(self):
         """Setup PDF directory path."""
         from .database import get_db_manager
+
         db_manager = get_db_manager()
         self.pdf_dir = os.path.join(os.path.dirname(db_manager.db_path), "pdfs")
         os.makedirs(self.pdf_dir, exist_ok=True)
@@ -1645,24 +1800,62 @@ class PDFManager:
         import secrets
 
         # Extract first author last name
-        authors = paper_data.get('authors', [])
+        authors = paper_data.get("authors", [])
         if authors and isinstance(authors[0], str):
             first_author = authors[0]
             # Extract last name (assume last word is surname)
             author_lastname = first_author.split()[-1].lower()
             # Remove non-alphanumeric characters
-            author_lastname = re.sub(r'[^\w]', '', author_lastname)
+            author_lastname = re.sub(r"[^\w]", "", author_lastname)
         else:
             author_lastname = "unknown"
 
         # Extract year
-        year = paper_data.get('year', 'nodate')
+        year = paper_data.get("year", "nodate")
 
         # Extract first significant word from title
-        title = paper_data.get('title', 'untitled')
+        title = paper_data.get("title", "untitled")
         # Split into words and find first significant word (length > 3, not common words)
-        common_words = {'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'had', 'her', 'was', 'one', 'our', 'out', 'day', 'get', 'has', 'him', 'his', 'how', 'its', 'may', 'new', 'now', 'old', 'see', 'two', 'who', 'boy', 'did', 'man', 'run', 'say', 'she', 'too', 'use'}
-        words = re.findall(r'\b[a-zA-Z]+\b', title.lower())
+        common_words = {
+            "the",
+            "and",
+            "for",
+            "are",
+            "but",
+            "not",
+            "you",
+            "all",
+            "can",
+            "had",
+            "her",
+            "was",
+            "one",
+            "our",
+            "out",
+            "day",
+            "get",
+            "has",
+            "him",
+            "his",
+            "how",
+            "its",
+            "may",
+            "new",
+            "now",
+            "old",
+            "see",
+            "two",
+            "who",
+            "boy",
+            "did",
+            "man",
+            "run",
+            "say",
+            "she",
+            "too",
+            "use",
+        }
+        words = re.findall(r"\b[a-zA-Z]+\b", title.lower())
         first_word = "untitled"
         for word in words:
             if len(word) > 3 and word not in common_words:
@@ -1673,7 +1866,7 @@ class PDFManager:
         try:
             if os.path.exists(pdf_path):
                 # Hash from file content
-                with open(pdf_path, 'rb') as f:
+                with open(pdf_path, "rb") as f:
                     content = f.read(8192)  # Read first 8KB for hash
                     file_hash = hashlib.md5(content).hexdigest()[:6]
             else:
@@ -1685,16 +1878,18 @@ class PDFManager:
 
         # Combine all parts
         filename = f"{author_lastname}{year}{first_word}_{file_hash}.pdf"
-        
+
         # Ensure filename is filesystem-safe
-        filename = re.sub(r'[^\w\-_.]', '', filename)
-        
+        filename = re.sub(r"[^\w\-_.]", "", filename)
+
         return filename
 
-    def process_pdf_path(self, pdf_input: str, paper_data: Dict[str, Any], old_pdf_path: str = None) -> tuple[str, str]:
+    def process_pdf_path(
+        self, pdf_input: str, paper_data: Dict[str, Any], old_pdf_path: str = None
+    ) -> tuple[str, str]:
         """
         Process PDF input (local file, URL, or invalid) and return the final path.
-        
+
         Returns:
             tuple[str, str]: (final_pdf_path, error_message)
             If successful: (path, "")
@@ -1706,11 +1901,14 @@ class PDFManager:
         pdf_input = pdf_input.strip()
 
         # Determine input type
-        is_url = pdf_input.startswith(('http://', 'https://'))
+        is_url = pdf_input.startswith(("http://", "https://"))
         is_local_file = os.path.exists(pdf_input) and os.path.isfile(pdf_input)
 
         if not is_url and not is_local_file:
-            return "", f"Invalid PDF input: '{pdf_input}' is neither a valid file path nor a URL"
+            return (
+                "",
+                f"Invalid PDF input: '{pdf_input}' is neither a valid file path nor a URL",
+            )
 
         try:
             # Generate target filename
@@ -1718,7 +1916,11 @@ class PDFManager:
             target_path = os.path.join(self.pdf_dir, target_filename)
 
             # Clean up old PDF if it exists and is different from target
-            if old_pdf_path and os.path.exists(old_pdf_path) and old_pdf_path != target_path:
+            if (
+                old_pdf_path
+                and os.path.exists(old_pdf_path)
+                and old_pdf_path != target_path
+            ):
                 try:
                     os.remove(old_pdf_path)
                 except Exception:
@@ -1727,6 +1929,7 @@ class PDFManager:
             if is_local_file:
                 # Copy local file to PDF directory
                 import shutil
+
                 shutil.copy2(pdf_input, target_path)
                 return target_path, ""
 
@@ -1741,21 +1944,21 @@ class PDFManager:
         """Download PDF from URL to target path."""
         try:
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
             }
             response = requests.get(url, headers=headers, timeout=60, stream=True)
             response.raise_for_status()
 
             # Check if content is actually a PDF
-            content_type = response.headers.get('content-type', '').lower()
-            if 'pdf' not in content_type:
+            content_type = response.headers.get("content-type", "").lower()
+            if "pdf" not in content_type:
                 # Check first few bytes for PDF signature
-                first_chunk = next(response.iter_content(chunk_size=1024), b'')
-                if not first_chunk.startswith(b'%PDF'):
+                first_chunk = next(response.iter_content(chunk_size=1024), b"")
+                if not first_chunk.startswith(b"%PDF"):
                     return "", "URL does not point to a valid PDF file"
 
             # Download the file
-            with open(target_path, 'wb') as f:
+            with open(target_path, "wb") as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     if chunk:
                         f.write(chunk)

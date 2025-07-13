@@ -210,3 +210,4 @@ __marimo__/
 pdfs
 papers.db
 .papercli_history
+.claude/
