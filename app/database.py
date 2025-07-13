@@ -73,3 +73,11 @@ def get_db_session() -> Generator[Session, None, None]:
     db_manager = get_db_manager()
     with db_manager.get_session() as session:
         yield session
+
+
+def get_pdf_directory() -> str:
+    """Get the global PDF directory path."""
+    db_manager = get_db_manager()
+    pdf_dir = os.path.join(os.path.dirname(db_manager.db_path), "pdfs")
+    os.makedirs(pdf_dir, exist_ok=True)
+    return pdf_dir

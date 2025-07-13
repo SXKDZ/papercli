@@ -175,6 +175,7 @@ class EditDialog:
         
         # Create custom button row with centered buttons and right-aligned help text
         extract_pdf_button = Button(text="Extract PDF", handler=self._handle_extract_pdf, width=17)
+        summarize_button = Button(text="Summarize", handler=self._handle_summarize, width=15)
         save_button = Button(text="Save", handler=self._handle_save)
         cancel_button = Button(text="Cancel", handler=self._handle_cancel)
         
@@ -185,12 +186,14 @@ class EditDialog:
             # Centered buttons
             extract_pdf_button,
             Window(width=2),  # Small gap between buttons
+            summarize_button,
+            Window(width=2),  # Small gap between buttons
             save_button,
             Window(width=2),  # Small gap between buttons
             cancel_button,
             # Flexible spacer with right-aligned help text
             Window(
-                content=FormattedTextControl("Ctrl-S: Save  ESC: Exit"),
+                content=FormattedTextControl("Ctrl-S: Save  Ctrl-E: Extract  Ctrl-L: Summarize  Esc: Cancel"),
                 align=WindowAlign.RIGHT
             )
         ])
@@ -352,6 +355,36 @@ class EditDialog:
         # Refresh the display
         get_app().invalidate()
 
+    def _handle_summarize(self):
+        """Handle Summarize button press."""
+        pdf_path = self.paper_data.get("pdf_path")
+        if not pdf_path or not os.path.exists(pdf_path):
+            self.error_display_callback("Summarize Error", "No PDF file available for this paper.", "Please ensure the paper has an associated PDF and the file exists.")
+            return
+            
+        try:
+            self.log_callback("summarize_dialog", f"Generating summary for paper via edit dialog")
+            
+            # Generate summary using LLM
+            extractor = MetadataExtractor(log_callback=self.log_callback)
+            summary = extractor.generate_paper_summary(pdf_path)
+            
+            if summary:
+                # Update the notes field with the generated summary
+                if 'notes' in self.input_fields:
+                    self.input_fields['notes'].text = summary
+                    self.log_callback("summarize_dialog", "Successfully updated notes field with LLM summary")
+                else:
+                    self.error_display_callback("Summarize Error", "Notes field not available", "The notes field is not visible in the current paper type view.")
+            else:
+                self.error_display_callback("Summarize Error", "Failed to generate summary", "The LLM was unable to generate a summary for this paper. Check the /log for details.")
+                
+        except Exception as e:
+            self.error_display_callback("Summarize Error", "Failed to generate paper summary", traceback.format_exc())
+        
+        # Refresh the display
+        get_app().invalidate()
+
     def _set_initial_focus(self):
         """Sets the initial focus to the first editable field."""
         visible_fields = self.fields_by_type.get(self.current_paper_type, self.fields_by_type["other"])
@@ -450,7 +483,13 @@ class EditDialog:
         def _(event):
             self._handle_cancel()
 
-        
+        @kb.add("c-e")
+        def _(event):
+            self._handle_extract_pdf()
+            
+        @kb.add("c-l")
+        def _(event):
+            self._handle_summarize()
 
         self.body_container.key_bindings = merge_key_bindings([self.body_container.key_bindings or KeyBindings(), kb])
 

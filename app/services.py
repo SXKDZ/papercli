@@ -136,6 +136,8 @@ class PaperService:
                         pdf_error = f"PDF processing failed: {error}"
                         # Remove pdf_path from update data to prevent invalid path from being saved
                         paper_data.pop("pdf_path")
+                        # Return immediately with the PDF error
+                        return None, pdf_error
                     else:
                         paper_data["pdf_path"] = new_pdf_path
 
@@ -343,18 +345,6 @@ class AuthorService:
                 session.refresh(author)
             return author
 
-    def search_authors(self, query: str) -> List[Author]:
-        """Search authors by name."""
-        with get_db_session() as session:
-            authors = (
-                session.query(Author).filter(Author.full_name.ilike(f"%{query}%")).all()
-            )
-            # Force load all attributes and expunge to make detached
-            for author in authors:
-                _ = author.full_name  # Ensure name is loaded
-            session.expunge_all()
-            return authors
-
 
 class CollectionService:
     """Service for managing collections."""
@@ -390,98 +380,93 @@ class CollectionService:
                 session.refresh(collection)
             return collection
 
-    def add_paper_to_collection(self, paper_id: int, collection_name: str) -> bool:
-        """Add paper to collection."""
-        with get_db_session() as session:
-            paper = session.query(Paper).filter(Paper.id == paper_id).first()
-            if not paper:
-                return False
+    def manage_papers_in_collection(
+        self, paper_ids: List[int], collection_name: str, operation: str
+    ) -> tuple[int, list[str]]:
+        """Add or remove papers from a collection.
 
-            # Get or create collection within the same session
+        Args:
+            paper_ids: List of paper IDs to process
+            collection_name: Name of the collection
+            operation: "add" or "remove"
+
+        Returns:
+            tuple[int, list[str]]: (count, errors) where count is papers processed and errors is list of error messages
+        """
+        if operation not in ["add", "remove"]:
+            return 0, [f"Invalid operation: {operation}. Use 'add' or 'remove'."]
+
+        if not paper_ids:
+            return 0, ["No paper IDs provided."]
+
+        with get_db_session() as session:
+            # Get or create collection for add operation
             collection = (
                 session.query(Collection)
                 .filter(Collection.name == collection_name)
                 .first()
             )
-            if not collection:
-                collection = Collection(name=collection_name)
-                session.add(collection)
-                session.flush()  # Ensure new collection has an ID before use
 
-            if collection not in paper.collections:
-                paper.collections.append(collection)
+            if not collection:
+                if operation == "add":
+                    collection = Collection(name=collection_name)
+                    session.add(collection)
+                    session.flush()
+                else:
+                    return 0, [f"Collection '{collection_name}' not found."]
+
+            papers = session.query(Paper).filter(Paper.id.in_(paper_ids)).all()
+            if not papers:
+                return 0, ["No valid papers found with provided IDs."]
+
+            count = 0
+            errors = []
+
+            for paper in papers:
+                if operation == "add":
+                    if collection not in paper.collections:
+                        paper.collections.append(collection)
+                        count += 1
+                else:  # remove
+                    if collection in paper.collections:
+                        paper.collections.remove(collection)
+                        count += 1
+                    else:
+                        errors.append(
+                            f"Paper '{paper.title[:30]}...' not in collection: {collection_name}"
+                        )
+
+            if count > 0:
                 session.commit()
-                return True
-            else:
-                return False
+
+            return count, errors
+
+    def add_paper_to_collection(self, paper_id: int, collection_name: str) -> bool:
+        """Add single paper to collection."""
+        count, errors = self.manage_papers_in_collection(
+            [paper_id], collection_name, "add"
+        )
+        return count > 0
 
     def add_papers_to_collection(
         self, paper_ids: List[int], collection_name: str
     ) -> int:
-        """Add multiple papers to a collection.
-
-        Returns the number of papers successfully added.
-        """
-        with get_db_session() as session:
-            # Get or create the collection
-            collection = (
-                session.query(Collection)
-                .filter(Collection.name == collection_name)
-                .first()
-            )
-            if not collection:
-                collection = Collection(name=collection_name)
-                session.add(collection)
-                session.flush()  # Ensure collection has an ID before proceeding
-
-            # Get papers to be added
-            papers = session.query(Paper).filter(Paper.id.in_(paper_ids)).all()
-
-            added_count = 0
-            for paper in papers:
-                if collection not in paper.collections:
-                    paper.collections.append(collection)
-                    added_count += 1
-
-            if added_count > 0:
-                session.commit()
-
-            return added_count
+        """Add multiple papers to collection."""
+        count, _ = self.manage_papers_in_collection(paper_ids, collection_name, "add")
+        return count
 
     def remove_papers_from_collection(
         self, paper_ids: List[int], collection_name: str
     ) -> tuple[int, list[str]]:
-        """Remove multiple papers from a collection.
+        """Remove multiple papers from collection."""
+        return self.manage_papers_in_collection(paper_ids, collection_name, "remove")
 
-        Returns a tuple of (removed_count, errors).
-        """
-        with get_db_session() as session:
-            collection = (
-                session.query(Collection)
-                .filter(Collection.name == collection_name)
-                .first()
-            )
-            if not collection:
-                return 0, [f"Collection '{collection_name}' not found."]
-
-            papers = session.query(Paper).filter(Paper.id.in_(paper_ids)).all()
-
-            removed_count = 0
-            errors = []
-
-            for paper in papers:
-                if collection in paper.collections:
-                    paper.collections.remove(collection)
-                    removed_count += 1
-                else:
-                    errors.append(
-                        f"Paper '{paper.title[:30]}...' does not belong to the collection: {collection_name}"
-                    )
-
-            if removed_count > 0:
-                session.commit()
-
-            return removed_count, errors
+    def remove_paper_from_collection(self, paper_id: int, collection_name: str) -> bool:
+        """Remove single paper from collection."""
+        count, _ = self.manage_papers_in_collection(
+            [paper_id], collection_name, "remove"
+        )
+        return count > 0
 
     def update_collection_name(self, old_name: str, new_name: str) -> bool:
         """Update collection name."""
@@ -502,27 +487,6 @@ class CollectionService:
             collection.name = new_name
             session.commit()
             return True
-
-    def remove_paper_from_collection(self, paper_id: int, collection_name: str) -> bool:
-        """Remove a single paper from collection."""
-        with get_db_session() as session:
-            collection = (
-                session.query(Collection)
-                .filter(Collection.name == collection_name)
-                .first()
-            )
-            if not collection:
-                return False
-
-            paper = session.query(Paper).filter(Paper.id == paper_id).first()
-            if not paper:
-                return False
-
-            if collection in paper.collections:
-                paper.collections.remove(collection)
-                session.commit()
-                return True
-            return False
 
     def create_collection(self, name: str, description: str = None) -> Collection:
         """Create a new collection."""
@@ -1323,6 +1287,86 @@ Respond in this exact JSON format:
         except Exception as e:
             raise Exception(f"Failed to extract metadata from PDF: {e}")
 
+    def generate_paper_summary(self, pdf_path: str) -> str:
+        """Generate an academic summary of the paper using LLM analysis of the full text."""
+        try:
+            # Extract text from all pages (or first 10 pages to avoid token limits)
+            with open(pdf_path, "rb") as file:
+                pdf_reader = PyPDF2.PdfReader(file)
+                
+                if len(pdf_reader.pages) == 0:
+                    return ""
+                
+                # Extract text from first 10 pages to stay within token limits
+                pages_to_extract = min(10, len(pdf_reader.pages))
+                full_text = ""
+                
+                for i in range(pages_to_extract):
+                    page = pdf_reader.pages[i]
+                    full_text += page.extract_text() + "\n\n"
+                
+                if not full_text.strip():
+                    return ""
+            
+            # Use LLM to generate academic summary
+            client = OpenAI()
+            
+            prompt = f"""You are an excellent academic paper reviewer. You conduct paper summarization on the full paper text provided, with following instructions:
+
+IMPORTANT: Only include information that is explicitly present in the paper text. Do not hallucinate or make up information. If a section is not applicable (e.g., a theory paper may not have experiments), clearly state "Not applicable" or "Not described in the provided text".
+
+Motivation: Explain the motivation behind this research - what problem or gap in knowledge motivated the authors to conduct this study. Only include if explicitly mentioned.
+
+Objective: Begin by clearly stating the primary objective of the research presented in the academic paper. Describe the core idea or hypothesis that underpins the study in simple, accessible language.
+
+Technical Approach: Provide a detailed explanation of the methodology used in the research. Focus on describing how the study was conducted, including any specific techniques, models, or algorithms employed. Only describe what is actually present in the text.
+
+Distinctive Features: Identify and elaborate on what sets this research apart from other studies in the same field. Only mention features that are explicitly highlighted by the authors.
+
+Experimental Setup and Results: Describe the experimental design and data collection process used in the study. Summarize the results obtained or key findings. If this is a theoretical paper without experiments, state "Not applicable - theoretical work".
+
+Advantages and Limitations: Concisely discuss the strengths of the proposed approach and limitations mentioned by the authors. Only include what is explicitly stated in the paper.
+
+Conclusion: Sum up the key points made about the paper's technical approach, its uniqueness, and its comparative advantages and limitations. Base this only on information present in the text.
+
+Please provide your analysis in clear, readable text format (not markdown). Use the exact headers provided above. Be honest about missing information rather than making assumptions.
+
+Paper text:
+{full_text[:15000]}"""  # Limit to ~15k characters to avoid token limits
+
+            # Log the LLM request
+            if self.log_callback:
+                self.log_callback("llm_summarization_request", f"Requesting paper summary for PDF: {pdf_path}")
+                self.log_callback("llm_summarization_prompt", f"Prompt sent to GPT-4o:\n{prompt[:500]}...")
+
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are an expert academic paper reviewer specializing in technical paper analysis and summarization. You are extremely careful to only report information that is explicitly present in the provided text and never hallucinate or make assumptions."
+                    },
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=5000,
+                temperature=0.1,
+            )
+            
+            summary_response = response.choices[0].message.content.strip()
+            
+            # Log the LLM response
+            if self.log_callback:
+                self.log_callback("llm_summarization_response", f"GPT-4o response received ({len(summary_response)} chars)")
+                self.log_callback("llm_summarization_content", f"Generated summary:\n{summary_response}")
+            
+            return summary_response
+            
+        except Exception as e:
+            if self.log_callback:
+                self.log_callback("paper_summary_error", f"Failed to generate paper summary: {e}")
+            return ""  # Return empty string if summarization fails, don't break the workflow
+
+
     def extract_from_bibtex(self, bib_path: str) -> List[Dict[str, Any]]:
         """Extract metadata from BibTeX file."""
         try:
@@ -1652,7 +1696,8 @@ class ChatService:
                         failed_files.append(error_msg)
                         if self.log_callback:
                             self.log_callback(
-                                "chat_pdf_error", f"Failed to open PDF for {paper.title}: {traceback.format_exc()}"
+                                "chat_pdf_error",
+                                f"Failed to open PDF for {paper.title}: {traceback.format_exc()}",
                             )
 
             # Prepare result message
@@ -1730,29 +1775,6 @@ class SystemService:
         except Exception as e:
             return False, f"Error opening PDF: {str(e)}"
 
-    def open_file_explorer(self, file_path: str) -> bool:
-        """Open file explorer pointing to the file."""
-        try:
-            if not os.path.exists(file_path):
-                return False
-
-            # Cross-platform file explorer opening
-            if os.name == "nt":  # Windows
-                subprocess.run(["explorer", "/select,", file_path])
-            elif os.name == "posix":  # macOS and Linux
-                if os.uname().sysname == "Darwin":  # macOS
-                    subprocess.run(["open", "-R", file_path])
-                else:  # Linux
-                    # Open parent directory
-                    parent_dir = os.path.dirname(file_path)
-                    subprocess.run(["xdg-open", parent_dir])
-
-            return True
-
-        except Exception as e:
-            # Return False and let the caller handle the error message
-            return False
-
     def copy_to_clipboard(self, text: str) -> bool:
         """Copy text to system clipboard."""
         try:
@@ -1790,8 +1812,14 @@ class SystemService:
         identifier: str,
         download_dir: str,
         paper_data: Dict[str, Any] = None,
-    ) -> Optional[str]:
-        """Download PDF from various sources (arXiv, OpenReview, etc.)."""
+    ) -> tuple[Optional[str], str]:
+        """Download PDF from various sources (arXiv, OpenReview, etc.).
+
+        Returns:
+            tuple[Optional[str], str]: (pdf_path, error_message)
+            If successful: (path, "")
+            If error: (None, error_message)
+        """
         try:
             # Create download directory
             os.makedirs(download_dir, exist_ok=True)
@@ -1805,7 +1833,7 @@ class SystemService:
             elif source == "openreview":
                 pdf_url = f"https://openreview.net/pdf?id={identifier}"
             else:
-                raise ValueError(f"Unsupported source: {source}")
+                return None, f"Unsupported source: {source}"
 
             # Use PDFManager to handle everything
             pdf_manager = PDFManager()
@@ -1815,12 +1843,12 @@ class SystemService:
             pdf_path, error_msg = pdf_manager._download_pdf_from_url(pdf_url, filepath)
 
             if error_msg:
-                return None
+                return None, error_msg
 
-            return pdf_path
+            return pdf_path, ""
 
         except Exception as e:
-            return None
+            return None, f"Error downloading PDF: {str(e)}\n{traceback.format_exc()}"
 
 
 class PDFManager:
@@ -1832,11 +1860,9 @@ class PDFManager:
 
     def _setup_pdf_directory(self):
         """Setup PDF directory path."""
-        from .database import get_db_manager
+        from .database import get_pdf_directory
 
-        db_manager = get_db_manager()
-        self.pdf_dir = os.path.join(os.path.dirname(db_manager.db_path), "pdfs")
-        os.makedirs(self.pdf_dir, exist_ok=True)
+        self.pdf_dir = get_pdf_directory()
 
     def _generate_pdf_filename(self, paper_data: Dict[str, Any], pdf_path: str) -> str:
         """Generate a smart filename for the PDF based on paper metadata."""
@@ -1959,27 +1985,42 @@ class PDFManager:
             target_filename = self._generate_pdf_filename(paper_data, pdf_input)
             target_path = os.path.join(self.pdf_dir, target_filename)
 
-            # Clean up old PDF if it exists and is different from target
-            if (
-                old_pdf_path
-                and os.path.exists(old_pdf_path)
-                and old_pdf_path != target_path
-            ):
-                try:
-                    os.remove(old_pdf_path)
-                except Exception:
-                    pass  # Don't fail if cleanup fails
-
             if is_local_file:
                 # Copy local file to PDF directory
                 import shutil
 
                 shutil.copy2(pdf_input, target_path)
+                
+                # Clean up old PDF only after successful copy
+                if (
+                    old_pdf_path
+                    and os.path.exists(old_pdf_path)
+                    and old_pdf_path != target_path
+                ):
+                    try:
+                        os.remove(old_pdf_path)
+                    except Exception:
+                        pass  # Don't fail if cleanup fails
+                
                 return target_path, ""
 
             elif is_url:
                 # Download URL to PDF directory
-                return self._download_pdf_from_url(pdf_input, target_path)
+                new_path, error = self._download_pdf_from_url(pdf_input, target_path)
+                
+                if not error:
+                    # Clean up old PDF only after successful download
+                    if (
+                        old_pdf_path
+                        and os.path.exists(old_pdf_path)
+                        and old_pdf_path != target_path
+                    ):
+                        try:
+                            os.remove(old_pdf_path)
+                        except Exception:
+                            pass  # Don't fail if cleanup fails
+                
+                return new_path, error
 
         except Exception as e:
             return "", f"Error processing PDF: {str(e)}"
@@ -1999,7 +2040,9 @@ class PDFManager:
                 # Check first few bytes for PDF signature
                 first_chunk = next(response.iter_content(chunk_size=1024), b"")
                 if not first_chunk.startswith(b"%PDF"):
-                    return "", "URL does not point to a valid PDF file"
+                    # Provide more detailed error information
+                    content_preview = first_chunk[:100].decode('utf-8', errors='ignore')
+                    return "", f"URL does not point to a valid PDF file.\nContent-Type: {content_type}\nContent preview: {content_preview}..."
 
             # Download the file
             with open(target_path, "wb") as f:

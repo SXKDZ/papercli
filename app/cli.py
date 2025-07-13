@@ -54,7 +54,7 @@ class SmartCompleter(Completer):
     def __init__(self):
         self.commands = {
             "/add": {
-                "description": "Add a new paper",
+                "description": "Open add dialog or add paper directly (e.g., /add arxiv 2307.10635)",
                 "subcommands": {
                     "pdf": "Add from a local PDF file",
                     "arxiv": "Add from an arXiv ID (e.g., 2307.10635)",
@@ -96,9 +96,10 @@ class SmartCompleter(Completer):
                 "subcommands": {},
             },
             "/edit": {
-                "description": "Open edit dialog, or quick-edit a field (e.g., /edit title ...)",
+                "description": "Open edit dialog or edit field directly (e.g., /edit title ...)",
                 "subcommands": {
                     "extract-pdf": "Extract metadata from PDF and update paper",
+                    "summarize": "Generate LLM summary and update notes field",
                     "title": "Edit the title",
                     "abstract": "Edit the abstract",
                     "notes": "Edit your personal notes",
@@ -208,23 +209,37 @@ PaperCLI Help
 
 Core Commands:
 --------------
-/add      Add a new paper (from PDF, arXiv, DBLP, etc.)
-/search   Search papers by keyword (or just type to search)
-/filter   Filter papers by specific criteria (e.g., year, author)
-/sort     Sort the paper list by a field (e.g., title, year)
+/add      Open add dialog or add paper directly (e.g., /add arxiv 2307.10635)
+/filter   Filter papers by criteria or search all fields (e.g., /filter all keyword)
+/sort     Open sort dialog or sort directly (e.g., /sort title asc)
+/all      Show all papers in the database
 /select   Enter multi-selection mode to act on multiple papers
 /clear    Clear all selected papers
 /help     Show this help panel (or press F1)
+/log      Show the error log panel
 /exit     Exit the application (or press Ctrl+C)
 
 Paper Operations (work on the paper under the cursor ► or selected papers ✓):
 -----------------------------------------------------------------------------
 /chat     Chat with an LLM about the paper(s)
-/edit     Open edit dialog or quick-edit a field
+/edit     Open edit dialog or edit field directly (e.g., /edit title ...)
 /open     Open the PDF for the paper(s)
 /detail   Show detailed metadata for the paper(s)
 /export   Export paper(s) to a file or clipboard (BibTeX, Markdown, etc.)
 /delete   Delete the paper(s) from the library
+
+Collection Management:
+---------------------
+/collect     Manage collections
+/add-to      Add selected paper(s) to a collection
+/remove-from Remove selected paper(s) from a collection
+
+System Commands:
+---------------
+/doctor      Diagnose and fix database/system issues
+  diagnose   Run full diagnostic check (default)
+  clean      Clean orphaned database records and PDF files
+  help       Show doctor command help
 
 Navigation & Interaction:
 -------------------------
@@ -248,7 +263,7 @@ Indicators (in the first column):
         self.db_path = db_path
 
         # Initialize database if not already done
-        from .database import init_database
+        from .database import init_database, get_pdf_directory
 
         init_database(db_path)
 
@@ -975,7 +990,7 @@ The doctor command helps maintain database health by:
         self.details_control = BufferControl(
             buffer=self.details_buffer,
             focusable=True,
-            key_bindings=self._get_help_key_bindings(),  # Reuse the same scroll bindings
+            key_bindings=self._get_details_key_bindings(),
         )
         self.details_dialog = Dialog(
             title="Paper Details",
@@ -1096,6 +1111,41 @@ The doctor command helps maintain database health by:
             # Swallow any other key presses to prevent them from reaching the input buffer.
             pass
 
+        return kb
+
+    def _get_details_key_bindings(self):
+        """Key bindings for the details dialog for intuitive scrolling."""
+        kb = KeyBindings()
+        
+        @kb.add("up")
+        def _(event):
+            if hasattr(event.app.layout, "current_control") and hasattr(
+                event.app.layout.current_control, "buffer"
+            ):
+                buffer = event.app.layout.current_control.buffer
+                buffer.cursor_up()
+        
+        @kb.add("down")
+        def _(event):
+            if hasattr(event.app.layout, "current_control") and hasattr(
+                event.app.layout.current_control, "buffer"
+            ):
+                buffer = event.app.layout.current_control.buffer
+                buffer.cursor_down()
+        
+        @kb.add("pageup")
+        def _(event):
+            scroll.scroll_page_up(event)
+        
+        @kb.add("pagedown")
+        def _(event):
+            scroll.scroll_page_down(event)
+        
+        @kb.add("<any>")
+        def _(event):
+            # Swallow any other key presses to prevent them from reaching the input buffer.
+            pass
+        
         return kb
 
     def _get_error_key_bindings(self):
@@ -1442,9 +1492,8 @@ The doctor command helps maintain database health by:
                         "📝 Usage: /add [arxiv <id>|dblp <url>|openreview <id>|pdf <path>|bib <path>|ris <path>|manual]"
                     )
             else:
-                self.status_bar.set_status(
-                    "📝 Usage: /add [arxiv <id>|dblp <url>|openreview <id>|pdf <path>|bib <path>|ris <path>|manual]"
-                )
+                # Open add dialog when no arguments provided
+                self.show_add_dialog()
 
         except Exception as e:
             self.status_bar.set_error(f"Error adding paper: {e}")
@@ -1457,11 +1506,7 @@ The doctor command helps maintain database health by:
             # Extract metadata from arXiv
             metadata = self.metadata_extractor.extract_from_arxiv(arxiv_id)
 
-            # Download PDF
-            pdf_dir = os.path.join(os.path.expanduser("~"), ".papercli", "pdfs")
-            pdf_path = self.system_service.download_pdf("arxiv", arxiv_id, pdf_dir)
-
-            # Prepare paper data
+            # Prepare paper data (without PDF initially)
             paper_data = {
                 "title": metadata["title"],
                 "abstract": metadata.get("abstract", ""),
@@ -1469,19 +1514,51 @@ The doctor command helps maintain database health by:
                 "venue_full": metadata.get("venue_full", ""),
                 "venue_acronym": metadata.get("venue_acronym", ""),
                 "paper_type": metadata.get("paper_type", "preprint"),
-                "preprint_id": metadata.get("arxiv_id"),
+                "preprint_id": metadata.get("preprint_id"),
                 "doi": metadata.get("doi"),
-                "pdf_path": pdf_path,
                 "url": f"https://arxiv.org/pdf/{arxiv_id}.pdf",
             }
 
-            # Add to database
+            # Add to database first (without PDF)
             authors = metadata.get("authors", [])
             collections = []
 
             paper = self.paper_service.add_paper_from_metadata(
                 paper_data, authors, collections
             )
+
+            # Download PDF
+            pdf_dir = get_pdf_directory()
+            self.status_bar.set_status(f"📡 Downloading PDF for {arxiv_id}...")
+            pdf_path, pdf_error = self.system_service.download_pdf("arxiv", arxiv_id, pdf_dir, paper_data)
+
+            if pdf_path:
+                self._add_log("add_arxiv", f"PDF download successful: {pdf_path}")
+                # Update paper with local PDF path (this will generate proper filename with authors)
+                updated_paper, error = self.paper_service.update_paper(
+                    paper.id, {"pdf_path": pdf_path}
+                )
+                if error:
+                    self.status_bar.set_error(
+                        f"Failed to update PDF path for '{paper.title}': {error}"
+                    )
+                    self.show_error_panel_with_message(
+                        "Database Update Error",
+                        f"Failed to update PDF path for '{paper.title}'",
+                        str(error),
+                    )
+                else:
+                    self._add_log(
+                        "add_arxiv", f"Database updated with PDF path: {pdf_path}"
+                    )
+            else:
+                # Continue without PDF but show warning
+                self.status_bar.set_error(f"PDF download failed for arXiv {arxiv_id}")
+                self.show_error_panel_with_message(
+                    "PDF Download Warning",
+                    f"Could not download PDF for arXiv paper: {arxiv_id}",
+                    pdf_error or "The paper metadata will still be added, but without the PDF file.",
+                )
 
             # Refresh display
             self.load_papers()
@@ -1559,7 +1636,6 @@ The doctor command helps maintain database health by:
                 "url": metadata.get(
                     "url", f"https://openreview.net/forum?id={openreview_id}"
                 ),
-                "pdf_path": metadata.get("pdf_path"),
             }
 
             # Add to database
@@ -1571,9 +1647,9 @@ The doctor command helps maintain database health by:
             )
 
             # Download PDF
-            pdf_dir = os.path.join(os.path.expanduser("~"), ".papercli", "pdfs")
+            pdf_dir = get_pdf_directory()
             self._add_log("add_openreview", f"Attempting to download PDF to {pdf_dir}")
-            pdf_path = self.system_service.download_pdf(
+            pdf_path, pdf_error = self.system_service.download_pdf(
                 "openreview", openreview_id, pdf_dir, paper_data
             )
 
@@ -1597,11 +1673,11 @@ The doctor command helps maintain database health by:
                         "add_openreview", f"Database updated with PDF path: {pdf_path}"
                     )
             else:
-                self.status_bar.set_error(f"Failed to update PDF path: {error}")
+                self.status_bar.set_error(f"PDF download failed for '{paper.title}'")
                 self.show_error_panel_with_message(
                     "PDF Download Error",
                     f"PDF download failed for '{paper.title}'",
-                    "Please check the network connection or the paper's availability.",
+                    pdf_error or "Please check the network connection or the paper's availability.",
                 )
 
             # Refresh display
@@ -1610,8 +1686,6 @@ The doctor command helps maintain database health by:
             self.status_bar.set_success(f"Added: {paper.title[:50]}...")
 
         except Exception as e:
-            import traceback
-
             self.show_error_panel_with_message(
                 "Add OpenReview Paper Error",
                 f"Failed to add OpenReview paper: {openreview_id}",
@@ -1646,8 +1720,7 @@ The doctor command helps maintain database health by:
                 return
 
             # Copy PDF to pdfs folder
-            pdf_dir = os.path.join(os.path.expanduser("~"), ".papercli", "pdfs")
-            os.makedirs(pdf_dir, exist_ok=True)
+            pdf_dir = get_pdf_directory()
 
             # Generate smart filename using PDFManager
             from .services import PDFManager
@@ -2045,6 +2118,11 @@ The doctor command helps maintain database health by:
                 self._handle_extract_pdf_command(papers_to_update)
                 return
 
+            # Handle summarize subcommand
+            if args and len(args) == 1 and args[0].lower() == "summarize":
+                self._handle_summarize_command(papers_to_update)
+                return
+
             # Parse command line arguments for quick update
             if args and len(args) >= 2:
                 # Quick update: /edit field value
@@ -2146,6 +2224,13 @@ The doctor command helps maintain database health by:
                         )
                         if error:
                             self.status_bar.set_error(f"Update error: {error}")
+                            # Show detailed error for PDF processing issues
+                            if "PDF processing failed" in error:
+                                self.show_error_panel_with_message(
+                                    "PDF Processing Error",
+                                    f"Failed to process PDF for '{paper.title}'",
+                                    error,
+                                )
                         else:
                             updated_count += 1
 
@@ -2366,6 +2451,72 @@ The doctor command helps maintain database health by:
                 f"Failed to extract metadata from PDF: {pdf_path}",
                 traceback.format_exc(),
             )
+
+    def _handle_summarize_command(self, papers):
+        """Handle /edit summarize command to generate LLM summary for paper(s)."""
+        if not isinstance(papers, list):
+            papers = [papers]
+
+        from .database import get_pdf_directory
+
+        successful_count = 0
+        failed_papers = []
+
+        for paper in papers:
+            pdf_path = paper.pdf_path
+
+            if not pdf_path or not os.path.exists(pdf_path):
+                failed_papers.append(f"'{paper.title}': No PDF file available")
+                continue
+
+            try:
+                self.status_bar.set_status(f"🤖 Generating summary for '{paper.title}'...")
+                self._add_log("summarize", f"Generating LLM summary for '{paper.title}'")
+                
+                # Generate summary using LLM
+                summary = self.metadata_extractor.generate_paper_summary(pdf_path)
+                
+                if summary:
+                    # Update paper with the generated summary
+                    updated_paper, error = self.paper_service.update_paper(
+                        paper.id, {"notes": summary}
+                    )
+                    
+                    if error:
+                        failed_papers.append(f"'{paper.title}': Database update failed - {error}")
+                    else:
+                        successful_count += 1
+                        self._add_log("summarize", f"Successfully generated summary for '{paper.title}'")
+                else:
+                    failed_papers.append(f"'{paper.title}': LLM summary generation failed")
+
+            except Exception as e:
+                failed_papers.append(f"'{paper.title}': {str(e)}")
+                self._add_log("summarize_error", f"Error summarizing '{paper.title}': {traceback.format_exc()}")
+
+        # Update display and show results
+        if successful_count > 0:
+            self.load_papers()
+
+        # Prepare result message
+        if successful_count > 0 and not failed_papers:
+            self.status_bar.set_success(f"Generated summaries for {successful_count} paper(s)")
+        elif successful_count > 0 and failed_papers:
+            self.status_bar.set_success(f"Generated summaries for {successful_count} paper(s), {len(failed_papers)} failed")
+            # Show details about failures
+            self.show_error_panel_with_message(
+                "Partial Summary Success",
+                f"Successfully summarized {successful_count} papers, but {len(failed_papers)} failed:",
+                "\n".join(failed_papers)
+            )
+        else:
+            self.status_bar.set_error(f"Failed to generate summaries for all {len(failed_papers)} paper(s)")
+            if failed_papers:
+                self.show_error_panel_with_message(
+                    "Summary Generation Failed",
+                    "Failed to generate summaries:",
+                    "\n".join(failed_papers)
+                )
 
     def show_add_dialog(self):
         """Show the add paper dialog."""
@@ -2831,6 +2982,7 @@ The doctor command helps maintain database health by:
             lines.append("Notes:")
             lines.append("------")
             lines.append(paper.notes or "No notes available.")
+            lines.append("\n")
 
             return "\n".join(lines)
 
