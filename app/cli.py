@@ -1211,7 +1211,7 @@ The doctor command helps maintain database health by:
         elif self.is_filtered_view:
             mode = "FILTERED"
         else:
-            mode = "✦ PaperCLI ✦"
+            mode = f"✦ PaperCLI v{get_version()} ✦"
         selected_count = len(self.paper_list_control.selected_paper_ids)
 
         # Left side of the header (just mode)
