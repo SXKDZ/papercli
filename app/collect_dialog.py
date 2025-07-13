@@ -363,7 +363,7 @@ class CollectDialog:
         # Help text
         help_text = Window(
             content=FormattedTextControl(
-                text="Collections: Enter=Edit  Ctrl-S=Save  Esc=Cancel  A=Add  D=Delete | Navigation: Tab=Next Column  Shift+Tab=Previous"
+                text="Collections: Enter=Edit  Ctrl+S=Save  Esc=Cancel  Ctrl+A=Add  Ctrl+D=Delete | Navigation: Tab=Next Column  Shift+Tab=Previous"
             ),
             height=1,
         )
@@ -436,10 +436,13 @@ class CollectDialog:
         }
         focus_symbol = "▶"
 
-        for i, (component, frame) in enumerate(self.component_frames.items()):
+        # Get currently focused component
+        focused_component = self.focusable_components[self.current_focus_index] if self.current_focus_index < len(self.focusable_components) else None
+        
+        for component, frame in self.component_frames.items():
             base_title = base_titles[component]
 
-            if i == self.current_focus_index:
+            if component == focused_component:
                 # Focused: add symbol, make bold, set focused style
                 frame.title = f"{focus_symbol} {base_title}"
                 frame.style = "class:frame.focused bold"
@@ -506,11 +509,11 @@ class CollectDialog:
             # Close the dialog when escape is pressed
             self.cancel()
 
-        @kb.add("a", eager=True)
+        @kb.add("c-a", eager=True)  # Ctrl+A
         def add_paper_key(event):
             self.add_paper_to_collection()
 
-        @kb.add("d", eager=True)
+        @kb.add("c-d", eager=True)  # Ctrl+D  
         def remove_paper_key(event):
             self.remove_paper_from_collection()
 
@@ -588,7 +591,8 @@ class CollectDialog:
         if old_name == "+ New Collection":
             # Create new collection
             if (
-                new_name not in [c.name for c in self.all_collections]
+                new_name != "+ New Collection"  # Reject placeholder name
+                and new_name not in [c.name for c in self.all_collections]
                 and new_name not in self.new_collections
             ):
                 self.new_collections.append(new_name)
