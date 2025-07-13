@@ -277,6 +277,8 @@ Indicators (in the first column):
         self.filter_float = None
         self.sort_dialog = None
         self.sort_float = None
+        self.collect_dialog = None
+        self.collect_float = None
         self.logs = []
 
         # Load initial papers
@@ -509,7 +511,14 @@ The doctor command helps maintain database health by:
             "up",
             filter=~has_focus(self.help_control)
             & ~has_focus(self.details_control)
-            & Condition(lambda: self.edit_dialog is None or not (hasattr(get_app().layout.current_control, 'buffer') and get_app().layout.current_control.buffer in [f.buffer for f in self.edit_dialog.input_fields.values()]))
+            & Condition(
+                lambda: self.edit_dialog is None
+                or not (
+                    hasattr(get_app().layout.current_control, "buffer")
+                    and get_app().layout.current_control.buffer
+                    in [f.buffer for f in self.edit_dialog.input_fields.values()]
+                )
+            ),
         )
         def move_up(event):
             # If completion menu is open, navigate it
@@ -524,7 +533,14 @@ The doctor command helps maintain database health by:
             "down",
             filter=~has_focus(self.help_control)
             & ~has_focus(self.details_control)
-            & Condition(lambda: self.edit_dialog is None or not (hasattr(get_app().layout.current_control, 'buffer') and get_app().layout.current_control.buffer in [f.buffer for f in self.edit_dialog.input_fields.values()]))
+            & Condition(
+                lambda: self.edit_dialog is None
+                or not (
+                    hasattr(get_app().layout.current_control, "buffer")
+                    and get_app().layout.current_control.buffer
+                    in [f.buffer for f in self.edit_dialog.input_fields.values()]
+                )
+            ),
         )
         def move_down(event):
             # If completion menu is open, navigate it
@@ -536,14 +552,25 @@ The doctor command helps maintain database health by:
                 event.app.invalidate()
 
         # Selection (in select mode) - smart space key handling
-        @self.kb.add("space", filter=~(Condition(lambda: self.add_dialog is not None or self.filter_dialog is not None or self.sort_dialog is not None)))
+        @self.kb.add(
+            "space",
+            filter=~(
+                Condition(
+                    lambda: self.add_dialog is not None
+                    or self.filter_dialog is not None
+                    or self.sort_dialog is not None
+                )
+            ),
+        )
         def toggle_selection(event):
             # If edit dialog is open and a TextArea is focused, insert space into it.
             if self.edit_dialog and hasattr(event.app.layout.current_control, "buffer"):
                 current_buffer = event.app.layout.current_control.buffer
-                if current_buffer in [f.buffer for f in self.edit_dialog.input_fields.values()]:
+                if current_buffer in [
+                    f.buffer for f in self.edit_dialog.input_fields.values()
+                ]:
                     current_buffer.insert_text(" ")
-                    return # Consume the event
+                    return  # Consume the event
 
             # Check if user is actively typing a command in the main input buffer
             current_text = self.input_buffer.text
@@ -570,9 +597,13 @@ The doctor command helps maintain database health by:
             # If an edit dialog is open and a multiline TextArea is focused, insert a newline.
             if self.edit_dialog and hasattr(event.app.layout.current_control, "buffer"):
                 current_buffer = event.app.layout.current_control.buffer
-                if current_buffer in [f.buffer for f in self.edit_dialog.input_fields.values()] and current_buffer.multiline():
+                if (
+                    current_buffer
+                    in [f.buffer for f in self.edit_dialog.input_fields.values()]
+                    and current_buffer.multiline()
+                ):
                     current_buffer.insert_text("\n")
-                    return # Consume the event
+                    return  # Consume the event
 
             # If completion menu is open and a completion is selected, accept it
             if (
@@ -736,8 +767,13 @@ The doctor command helps maintain database health by:
             if hasattr(event.app.layout.current_control, "buffer"):
                 current_buffer = event.app.layout.current_control.buffer
                 # If it's a TextArea, let it handle the tab
-                if isinstance(event.app.layout.current_control, BufferControl) and current_buffer.multiline():
-                    current_buffer.insert_text("    ") # Insert 4 spaces for tab in TextArea
+                if (
+                    isinstance(event.app.layout.current_control, BufferControl)
+                    and current_buffer.multiline()
+                ):
+                    current_buffer.insert_text(
+                        "    "
+                    )  # Insert 4 spaces for tab in TextArea
                     return
 
             # Otherwise, if focused on the input buffer, trigger completion
@@ -754,11 +790,24 @@ The doctor command helps maintain database health by:
         # Shift+Tab for previous completion
         @self.kb.add("s-tab")
         def complete_previous(event):
+            # If a dialog is open, let the dialog handle the shift-tab key.
+            if (
+                self.add_dialog
+                or self.filter_dialog
+                or self.sort_dialog
+                or self.edit_dialog
+                or self.collect_dialog
+            ):
+                return
+
             # If the current focused control has a buffer, let it handle the shift-tab.
             # For TextArea, we might want to do nothing or move cursor.
             if hasattr(event.app.layout.current_control, "buffer"):
                 current_buffer = event.app.layout.current_control.buffer
-                if isinstance(event.app.layout.current_control, BufferControl) and current_buffer.multiline():
+                if (
+                    isinstance(event.app.layout.current_control, BufferControl)
+                    and current_buffer.multiline()
+                ):
                     # For TextArea, s-tab might move cursor or do nothing. Let default handle.
                     return
 
@@ -774,24 +823,31 @@ The doctor command helps maintain database health by:
             if hasattr(event.app.layout.current_control, "buffer"):
                 current_buffer = event.app.layout.current_control.buffer
                 # If it's a TextArea or the main input buffer, let it handle backspace
-                if current_buffer == self.input_buffer or \
-                   (self.edit_dialog and current_buffer in [f.buffer for f in self.edit_dialog.input_fields.values()]):
+                if current_buffer == self.input_buffer or (
+                    self.edit_dialog
+                    and current_buffer
+                    in [f.buffer for f in self.edit_dialog.input_fields.values()]
+                ):
                     current_buffer.delete_before_cursor()
                     # Force completion refresh after deletion if it's the input buffer
-                    if current_buffer == self.input_buffer and current_buffer.text.startswith("/"):
+                    if (
+                        current_buffer == self.input_buffer
+                        and current_buffer.text.startswith("/")
+                    ):
                         event.app.invalidate()
                         if current_buffer.complete_state:
                             current_buffer.cancel_completion()
+
                         def restart_completion():
                             if current_buffer.text.startswith("/"):
                                 current_buffer.start_completion(select_first=False)
+
                         event.app.loop.call_soon(restart_completion)
-                    return # Consume the event
+                    return  # Consume the event
 
             # Fallback for other cases (shouldn't be reached if focused buffer handles it)
             if event.app.current_buffer == self.input_buffer:
                 self.input_buffer.delete_before_cursor()
-
 
         # Handle delete key
         @self.kb.add("delete")
@@ -800,10 +856,13 @@ The doctor command helps maintain database health by:
             if hasattr(event.app.layout.current_control, "buffer"):
                 current_buffer = event.app.layout.current_control.buffer
                 # If it's a TextArea or the main input buffer, let it handle delete
-                if current_buffer == self.input_buffer or \
-                   (self.edit_dialog and current_buffer in [f.buffer for f in self.edit_dialog.input_fields.values()]):
+                if current_buffer == self.input_buffer or (
+                    self.edit_dialog
+                    and current_buffer
+                    in [f.buffer for f in self.edit_dialog.input_fields.values()]
+                ):
                     current_buffer.delete()
-                    return # Consume the event
+                    return  # Consume the event
 
             # Fallback for other cases
             if event.app.current_buffer == self.input_buffer:
@@ -816,15 +875,18 @@ The doctor command helps maintain database health by:
             # This allows TextArea to handle its own input.
             if hasattr(event.app.layout.current_control, "buffer"):
                 # Check if the current buffer is the input buffer or part of an edit dialog
-                if event.app.layout.current_control.buffer == self.input_buffer or \
-                   (self.edit_dialog and event.app.layout.current_control.buffer in [f.buffer for f in self.edit_dialog.input_fields.values()]):
+                if event.app.layout.current_control.buffer == self.input_buffer or (
+                    self.edit_dialog
+                    and event.app.layout.current_control.buffer
+                    in [f.buffer for f in self.edit_dialog.input_fields.values()]
+                ):
                     # Let the buffer handle the key if it's a printable character (except space which has its own handler)
                     if hasattr(event, "data") and event.data and len(event.data) == 1:
                         char = event.data
                         if char.isprintable() and char != " ":
                             event.app.layout.current_control.buffer.insert_text(char)
-                            return # Consume the event
-            
+                            return  # Consume the event
+
             # If not handled by a focused buffer, and it's a printable character, fall back to input buffer
             if hasattr(event, "data") and event.data and len(event.data) == 1:
                 char = event.data
@@ -953,7 +1015,9 @@ The doctor command helps maintain database health by:
                 Frame(body=self.paper_list_window),
                 # Shortkey bar
                 Window(
-                    content=FormattedTextControl(text=lambda: self.get_shortkey_bar_text()),
+                    content=FormattedTextControl(
+                        text=lambda: self.get_shortkey_bar_text()
+                    ),
                     height=1,
                     style="class:shortkey_bar",
                 ),
@@ -1140,26 +1204,41 @@ The doctor command helps maintain database health by:
         # Function key shortcuts with configurable spacing
         shortkey_spacing = "    "  # Adjust this to control spacing between shortcuts
         shortcuts = [
-            "F1: Help", "F2: Add", "F3: Select", "F4: Detail", "F5: Edit", "F6: Delete",
-            "F7: Collect", "F8: Filter", "F9: Sort", "F10: All", "F11: Clear", "F12: Exit", "↑↓: Nav"
+            "F1: Help",
+            "F2: Add",
+            "F3: Select",
+            "F4: Detail",
+            "F5: Edit",
+            "F6: Delete",
+            "F7: Collect",
+            "F8: Filter",
+            "F9: Sort",
+            "F10: All",
+            "F11: Clear",
+            "F12: Exit",
+            "↑↓: Nav",
         ]
         help_text = shortkey_spacing.join(shortcuts)
-        
+
         # Create formatted text parts with shortkey bar style
         parts = [("class:shortkey_bar", help_text)]
-        
+
         # Calculate padding to center the text
         text_len = len(help_text)
         if text_len < width:
             padding_len = (width - text_len) // 2
             left_padding = [("class:shortkey_bar", " " * padding_len)]
-            right_padding = [("class:shortkey_bar", " " * (width - text_len - padding_len))]
+            right_padding = [
+                ("class:shortkey_bar", " " * (width - text_len - padding_len))
+            ]
             final_parts = left_padding + parts + right_padding
         else:
             # If text is too long, truncate
-            truncated_text = help_text[:width-3] + "..." if width > 3 else help_text[:width]
+            truncated_text = (
+                help_text[: width - 3] + "..." if width > 3 else help_text[:width]
+            )
             final_parts = [("class:shortkey_bar", truncated_text)]
-        
+
         return FormattedText(final_parts)
 
     def setup_application(self):
@@ -1177,8 +1256,8 @@ The doctor command helps maintain database health by:
                 ("selected", "bold #f8f8f2 bg:#44475a"),  # Current paper row
                 (
                     "editing",
-                    "bold #ffffff bg:#50fa7b",
-                ),  # Edit mode with white text on green background
+                    "bold #ffffff bg:#bd93f9",
+                ),  # Edit mode with white text on purple background
                 ("empty", "#6272a4 italic"),
                 # Input & Prompt
                 ("prompt", "bold #50fa7b"),
@@ -1204,6 +1283,8 @@ The doctor command helps maintain database health by:
                 # Frame styles for CollectDialog
                 ("frame.focused", "bold #8be9fd"),  # Blue border for focused frame
                 ("frame.unfocused", "#6272a4"),  # Grey border for unfocused frame
+                # Styling for pending changes
+                ("italic", "italic #f8f8f2"),  # Italic text for pending changes
             ]
         )
 
@@ -1511,7 +1592,6 @@ The doctor command helps maintain database health by:
                 "Add Manual Paper Error", "Failed to add manual paper", str(e)
             )
 
-
     def handle_filter_command(self, args: List[str]):
         """Handle /filter command."""
         try:
@@ -1523,30 +1603,30 @@ The doctor command helps maintain database health by:
 
             # Parse command-line filter: /filter <field> <value>
             field = args[0].lower()
-            
+
             # Handle "all" field - search across all fields
             if field == "all":
                 if len(args) < 2:
                     self.status_bar.set_status("Usage: /filter all <query>")
                     return
-                    
+
                 query = " ".join(args[1:])
                 self.status_bar.set_status(f"🔍 Searching all fields for '{query}'")
-                
+
                 # Perform search across all fields like the old search command
                 results = self.search_service.search_papers(
                     query, ["title", "authors", "venue", "abstract"]
                 )
-                
+
                 if not results:
                     # Try fuzzy search
                     results = self.search_service.fuzzy_search_papers(query)
-                
+
                 # Update display
                 self.current_papers = results
                 self.paper_list_control = PaperListControl(self.current_papers)
                 self.is_filtered_view = True
-                
+
                 self.status_bar.set_status(
                     f"🎯 Found {len(results)} papers matching '{query}' in all fields"
                 )
@@ -1558,7 +1638,7 @@ The doctor command helps maintain database health by:
                     "Usage: /filter <field> <value>. Fields: year, author, venue, type, collection, all"
                 )
                 return
-                
+
             value = " ".join(args[1:])
 
             # Validate field
@@ -1811,6 +1891,7 @@ The doctor command helps maintain database health by:
 
     def show_add_dialog(self):
         """Show the add paper dialog."""
+
         def callback(result):
             # This callback is executed when the dialog is closed.
             if self.add_float in self.app.layout.container.floats:
@@ -1823,11 +1904,11 @@ The doctor command helps maintain database health by:
                 try:
                     source = result.get("source", "").strip()
                     path_id = result.get("path_id", "").strip()
-                    
+
                     if not source:
                         self.status_bar.set_error("Source is required")
                         return
-                    
+
                     # Determine the type of source and call appropriate add command
                     if source.lower() in ["pdf", "arxiv", "dblp", "manual", "sample"]:
                         # Handle subcommand-style addition
@@ -1838,7 +1919,7 @@ The doctor command helps maintain database health by:
                     else:
                         # Treat as manual entry with source as title
                         self.handle_add_command(["manual", source])
-                        
+
                 except Exception as e:
                     self.status_bar.set_error(f"Error adding paper: {e}")
             else:
@@ -1853,6 +1934,7 @@ The doctor command helps maintain database health by:
 
     def show_filter_dialog(self):
         """Show the filter papers dialog."""
+
         def callback(result):
             # This callback is executed when the dialog is closed.
             if self.filter_float in self.app.layout.container.floats:
@@ -1865,14 +1947,14 @@ The doctor command helps maintain database health by:
                 try:
                     field = result.get("field", "").strip()
                     value = result.get("value", "").strip()
-                    
+
                     if not field or not value:
                         self.status_bar.set_error("Both field and value are required")
                         return
-                    
+
                     # Call the filter command with the selected field and value
                     self.handle_filter_command([field, value])
-                        
+
                 except Exception as e:
                     self.status_bar.set_error(f"Error filtering papers: {e}")
             else:
@@ -1882,11 +1964,14 @@ The doctor command helps maintain database health by:
         self.filter_dialog = FilterDialog(callback)
         self.filter_float = Float(self.filter_dialog)
         self.app.layout.container.floats.append(self.filter_float)
-        self.app.layout.focus(self.filter_dialog.get_initial_focus() or self.filter_dialog)
+        self.app.layout.focus(
+            self.filter_dialog.get_initial_focus() or self.filter_dialog
+        )
         self.app.invalidate()
 
     def show_sort_dialog(self):
         """Show the sort papers dialog."""
+
         def callback(result):
             # This callback is executed when the dialog is closed.
             if self.sort_float in self.app.layout.container.floats:
@@ -1898,10 +1983,10 @@ The doctor command helps maintain database health by:
             if result:
                 try:
                     field, order = result
-                    
+
                     # Call the sort command with the selected field and order
                     self.handle_sort_command([field, order])
-                        
+
                 except Exception as e:
                     self.status_bar.set_error(f"Error sorting papers: {e}")
             else:
@@ -2358,29 +2443,87 @@ The doctor command helps maintain database health by:
             self.status_bar.set_status("No papers were removed from the collection.")
 
     def handle_collect_command(self):
-        """Handle /collect command."""
+        """Handle /collect command by showing the collection management dialog."""
+        self.show_collect_dialog()
+
+    def show_collect_dialog(self):
+        """Show the collection management dialog."""
+        import logging
+
+        debug_logger = logging.getLogger("papercli")
 
         def callback(result):
-            if self.edit_float in self.app.layout.container.floats:
-                self.app.layout.container.floats.remove(self.edit_float)
-            self.edit_dialog = None
-            self.edit_float = None
+            """Callback executed when the dialog is closed."""
+            if self.collect_float in self.app.layout.container.floats:
+                self.app.layout.container.floats.remove(self.collect_float)
+
+            self.collect_dialog = None
+            self.collect_float = None
             self.app.layout.focus(self.input_buffer)
 
+            # Restore original key bindings
+            if hasattr(self, "original_key_bindings"):
+                self.app.key_bindings = self.original_key_bindings
+                del self.original_key_bindings
+
             if result and result.get("action") == "save":
-                # Collections have been saved by the dialog
-                # Refresh the paper list to reflect any collection changes
-                self.load_papers()
+                self.load_papers()  # Reload papers to reflect changes
+                self.status_bar.set_success("Collections updated successfully.")
+            else:
+                self.status_bar.set_status("Collection management cancelled.")
 
             self.app.invalidate()
 
-        collections = self.collection_service.get_all_collections()
-        papers = self.paper_service.get_all_papers()
+        try:
+            # Store original key bindings
+            self.original_key_bindings = self.app.key_bindings
 
-        self.edit_dialog = CollectDialog(
-            collections, papers, callback, self.status_bar
-        )
-        self.edit_float = Float(self.edit_dialog)
-        self.app.layout.container.floats.append(self.edit_float)
-        self.app.layout.focus(self.edit_dialog)
-        self.app.invalidate()
+            debug_logger.debug("Fetching all collections and papers for CollectDialog")
+            all_collections = self.collection_service.get_all_collections()
+            all_papers = self.paper_service.get_all_papers()
+            debug_logger.debug(
+                f"Found {len(all_collections)} collections and {len(all_papers)} papers."
+            )
+
+            debug_logger.debug("Creating CollectDialog")
+            self.collect_dialog = CollectDialog(
+                self.collection_service.get_all_collections(),
+                self.paper_service.get_all_papers(),
+                callback,
+                self.collection_service,
+                self.paper_service,
+                self.status_bar,
+                self._add_log,
+            )
+            debug_logger.debug("CollectDialog created successfully")
+
+            self.collect_float = Float(self.collect_dialog)
+            self.app.layout.container.floats.append(self.collect_float)
+
+            initial_focus_target = self.collect_dialog.get_initial_focus()
+            debug_logger.debug(
+                f"Initial focus target from dialog: {initial_focus_target}"
+            )
+
+            if initial_focus_target:
+                self.app.layout.focus(initial_focus_target)
+                debug_logger.debug("Focus set on initial_focus_target")
+            else:
+                self.app.layout.focus(self.collect_dialog)
+                debug_logger.debug("Focus set on collect_dialog as fallback")
+
+            # Set application key bindings to dialog's key bindings
+            self.app.key_bindings = self.collect_dialog.dialog.container.key_bindings
+
+            self.app.invalidate()
+            debug_logger.debug("Application layout invalidated")
+
+        except Exception as e:
+            debug_logger.error(
+                f"Error creating or showing CollectDialog: {e}", exc_info=True
+            )
+            self.show_error_panel_with_message(
+                "Collection Dialog Error",
+                "Could not open the collection management dialog.",
+                str(e),
+            )

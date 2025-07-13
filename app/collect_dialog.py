@@ -10,7 +10,7 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.layout.dimension import Dimension
 from .models import Paper, Collection
-from .services import CollectionService
+from .services import CollectionService, PaperService
 
 
 class EditableList:
@@ -30,7 +30,11 @@ class EditableList:
             text=self._get_formatted_text,
             key_bindings=self._get_key_bindings(),
             focusable=True,
+            show_cursor=False,
         )
+
+        # Create the window once and reuse it.
+        self.window = Window(content=self.control)
 
     def set_items(self, items: List[str]):
         self.items = items[:]
@@ -65,6 +69,21 @@ class EditableList:
 
         result = []
         for i, item in enumerate(self.items):
+            # Check if this item has pending changes (needs italic styling)
+            is_pending_change = False
+            if hasattr(self, "parent_dialog"):
+                if self == self.parent_dialog.collections_list:
+                    # Check if collection name is in pending renames
+                    is_pending_change = (
+                        item in self.parent_dialog.pending_collection_renames
+                    )
+                elif (
+                    self == self.parent_dialog.papers_in_collection_list
+                    or self == self.parent_dialog.other_papers_list
+                ):
+                    # Check if paper title is in pending moves
+                    is_pending_change = item in self.parent_dialog.pending_paper_moves
+
             if i == self.selected_index:
                 if self.editing_mode:
                     # Show edit cursor with special edit styling and cursor indicator at the correct position
@@ -75,10 +94,17 @@ class EditableList:
                     padding = " " * max(0, 40 - len(display_text))
                     result.append(("class:editing", display_text + padding))
                 else:
-                    # Show selection
-                    result.append(("class:selected", f"> {item}"))
+                    # Show selection with italic if pending change
+                    if is_pending_change:
+                        result.append(("class:selected italic", f"> {item}"))
+                    else:
+                        result.append(("class:selected", f"> {item}"))
             else:
-                result.append(("", f"  {item}"))
+                # Show regular item with italic if pending change
+                if is_pending_change:
+                    result.append(("italic", f"  {item}"))
+                else:
+                    result.append(("", f"  {item}"))
             result.append(("", "\n"))
         return FormattedText(result)
 
@@ -203,7 +229,7 @@ class EditableList:
         return kb
 
     def __pt_container__(self):
-        return Window(content=self.control)
+        return self.window
 
 
 class CollectDialog:
@@ -214,14 +240,19 @@ class CollectDialog:
         collections: List[Collection],
         papers: List[Paper],
         callback,
+        collection_service: CollectionService,
+        paper_service: PaperService,
         status_bar=None,
+        log_callback=None,
     ):
         self.callback = callback
         self.status_bar = status_bar
         self.all_collections = collections
         self.all_papers = papers
         self.current_collection = None
-        self.collection_service = CollectionService()
+        self.collection_service = collection_service
+        self.paper_service = paper_service
+        self.log_callback = log_callback
 
         # Track changes for saving
         self.collection_changes = {}  # {old_name: new_name}
@@ -229,6 +260,19 @@ class CollectDialog:
             []
         )  # [(paper_id, collection_name, action)] where action is 'add' or 'remove'
         self.new_collections = []  # [collection_name]
+
+        # Track pending changes for styling
+        self.pending_collection_renames = (
+            set()
+        )  # Collection names that have been renamed
+        self.pending_paper_moves = set()  # Paper titles that have been moved
+
+        # Initialize focus tracking early
+        self.current_focus_index = 0
+
+        # Initialize buttons
+        self.save_button = Button(text="Save", handler=self.save_and_close)
+        self.close_button = Button(text="Cancel", handler=self.cancel)
 
         # Initialize lists
         collection_names = [c.name for c in collections] + ["+ New Collection"]
@@ -260,19 +304,28 @@ class CollectDialog:
             wrap_lines=True,
         )
 
+        # Select the first collection by default to populate paper lists
+        if self.collections_list.items:
+            self.collections_list.selected_index = 0
+            self.on_collection_select(self.collections_list)
+
         # Action buttons between lists
-        add_button = Button(text="←", handler=self.add_paper_to_collection)
-        remove_button = Button(text="→", handler=self.remove_paper_from_collection)
+        self.add_button = Button(
+            text="← Add", handler=self.add_paper_to_collection, width=9
+        )
+        self.remove_button = Button(
+            text="Del →", handler=self.remove_paper_from_collection, width=9
+        )
 
         button_container = HSplit(
             [
                 Window(height=2),  # More spacer
-                add_button,
+                self.add_button,
                 Window(height=2),  # More spacer
-                remove_button,
+                self.remove_button,
                 Window(height=2),  # More spacer
             ],
-            width=Dimension(min=3, preferred=3, max=3),
+            width=Dimension(min=12, preferred=14, max=14),
         )
 
         # Column 1: Collections
@@ -307,88 +360,160 @@ class CollectDialog:
         # Help text
         help_text = Window(
             content=FormattedTextControl(
-                text="Collections: Enter=Edit, Ctrl+S=Save, Esc=Cancel | Navigation: Tab=Next Column, Shift+Tab=Previous"
+                text="Collections: Enter=Edit  Ctrl-S=Save  Esc=Cancel  A=Add  D=Delete | Navigation: Tab=Next Column  Shift+Tab=Previous"
             ),
             height=1,
         )
 
         # Complete dialog layout
-        dialog_body = HSplit(
+        self.dialog_body = HSplit(
             [
                 help_text,
+                Window(height=1),  # Add spacing line after help text
                 main_body,
                 # Paper details at bottom
                 Frame(title="Paper Details", body=self.paper_details),
             ]
         )
 
+        button_row = VSplit(
+            [
+                self.save_button,
+                Window(width=2),
+                self.close_button,
+            ]
+        )
+
+        # Create dialog with key bindings
+        self.dialog = Dialog(
+            title="Collection Management",
+            body=self.dialog_body,
+            buttons=[button_row],
+            width=Dimension(min=140, preferred=160),
+            with_background=False,
+            modal=True,
+        )
+
+        # Apply key bindings directly to dialog container - simple approach
+        self.dialog.container.key_bindings = self._create_dialog_key_bindings()
+
         # Store references to focusable components and their frames for TAB navigation
         self.focusable_components = [
             self.collections_list,
             self.papers_in_collection_list,
+            self.add_button,
+            self.remove_button,
             self.other_papers_list,
+            self.save_button,
+            self.close_button,
         ]
         self.component_frames = {
             self.collections_list: self.collections_frame,
             self.papers_in_collection_list: self.papers_in_collection_frame,
             self.other_papers_list: self.other_papers_frame,
         }
-        self.current_focus_index = 0
 
-        # Set initial focus style
+        # Set initial focus style and update detail page
         self._set_focus_style()
+        self._update_detail_page_on_focus_change()
 
-        # Create dialog
-        self.dialog = Dialog(
-            title="Collection Management",
-            body=dialog_body,
-            buttons=[
-                Button(text="Save", handler=self.save_changes),
-                Button(text="Discard", handler=self.discard_changes),
-                Button(text="Close", handler=self.cancel),
-            ],
-            width=Dimension(min=140, preferred=160),
-            with_background=False,
-            modal=True,
-            key_bindings=self._create_dialog_key_bindings(),
-        )
-
-        # Initialize with first collection if available
-        if collections:
-            self.on_collection_select(self.collections_list)
+    def get_initial_focus(self):
+        """Return the initial component to be focused."""
+        return self.collections_list.__pt_container__()
 
     def _set_focus_style(self):
-        """Update the border style of frames based on current focus."""
-        for component, frame in self.component_frames.items():
-            if component == self.focusable_components[self.current_focus_index]:
-                frame.style = "class:frame.focused"
+        """Update the border style and titles of frames based on current focus."""
+        from prompt_toolkit.application import get_app
+
+        # Define base titles and focus symbols
+        base_titles = {
+            self.collections_list: "Collections",
+            self.papers_in_collection_list: "Papers in Collection", 
+            self.other_papers_list: "All Papers"
+        }
+        focus_symbol = "▶"
+
+        for i, (component, frame) in enumerate(self.component_frames.items()):
+            base_title = base_titles[component]
+            
+            if i == self.current_focus_index:
+                # Focused: add symbol, make bold, set focused style
+                frame.title = f"{focus_symbol} {base_title}"
+                frame.style = "class:frame.focused bold"
             else:
+                # Not focused: plain title, no bold, set unfocused style
+                frame.title = base_title
                 frame.style = "class:frame.unfocused"
+
+        # Invalidate the app to redraw the UI with new styles
+        app = get_app()
+        if app:
+            app.invalidate()
+
+    def _update_detail_page_on_focus_change(self):
+        """Update the detail page based on the currently focused column."""
+        if self.current_focus_index == 0:
+            # Collections column is focused - clear detail page
+            self.paper_details.text = "Select a paper to view details"
+        elif self.current_focus_index == 1:
+            # Papers in collection column is focused
+            if self.papers_in_collection_list.get_current_item():
+                self.on_paper_select(self.papers_in_collection_list)
+            else:
+                self.paper_details.text = "No papers in this collection"
+        elif self.current_focus_index == 4:
+            # Other papers column is focused
+            if self.other_papers_list.get_current_item():
+                self.on_paper_select(self.other_papers_list)
+            else:
+                self.paper_details.text = "No papers available"
+        else:
+            # Buttons are focused - keep current detail page
+            pass
 
     def _create_dialog_key_bindings(self):
         """Create key bindings for dialog navigation."""
         kb = KeyBindings()
 
-        @kb.add("tab")
+        @kb.add("tab", eager=True)
         def focus_next(event):
             self.current_focus_index = (self.current_focus_index + 1) % len(
                 self.focusable_components
             )
-            event.app.layout.focus(self.focusable_components[self.current_focus_index])
+            editable_list = self.focusable_components[self.current_focus_index]
+            focused_window = editable_list.__pt_container__()
+            event.app.layout.focus(focused_window)
             self._set_focus_style()
+            self._update_detail_page_on_focus_change()
 
-        @kb.add("s-tab")  # Shift+Tab
+        @kb.add("s-tab", eager=True)  # Shift+Tab
         def focus_previous(event):
             self.current_focus_index = (self.current_focus_index - 1) % len(
                 self.focusable_components
             )
-            event.app.layout.focus(self.focusable_components[self.current_focus_index])
-            self._set_focus_style()
 
-        @kb.add("escape")
+            editable_list = self.focusable_components[self.current_focus_index]
+            focused_window = editable_list.__pt_container__()
+            event.app.layout.focus(focused_window)
+            self._set_focus_style()
+            self._update_detail_page_on_focus_change()
+
+        @kb.add("escape", eager=True)
         def quit_dialog(event):
             # Close the dialog when escape is pressed
             self.cancel()
+
+        @kb.add("a", eager=True)
+        def add_paper_key(event):
+            self.add_paper_to_collection()
+
+        @kb.add("d", eager=True)
+        def remove_paper_key(event):
+            self.remove_paper_from_collection()
+
+        @kb.add("c-s", eager=True)  # Ctrl+S to save and close
+        def save_key(event):
+            self.save_and_close()
 
         return kb
 
@@ -408,6 +533,8 @@ class CollectDialog:
                     for p in self.all_papers
                 ]
             )
+            # Clear detail page when no collection is selected
+            self.paper_details.text = "Select a paper to view details"
             return
 
         # Find the selected collection
@@ -432,6 +559,22 @@ class CollectDialog:
         self.papers_in_collection_list.set_items(papers_in_collection)
         self.other_papers_list.set_items(other_papers)
 
+        # Update detail page based on currently focused column
+        if (
+            self.current_focus_index == 1
+            and self.papers_in_collection_list.get_current_item()
+        ):
+            # Papers in collection column is focused
+            self.on_paper_select(self.papers_in_collection_list)
+        elif (
+            self.current_focus_index == 4 and self.other_papers_list.get_current_item()
+        ):
+            # Other papers column is focused
+            self.on_paper_select(self.other_papers_list)
+        else:
+            # Collection column is focused, clear detail page
+            self.paper_details.text = "Select a paper to view details"
+
     def on_collection_edit(self, old_name: str, new_name: str):
         """Handle collection name editing."""
         if not new_name.strip():
@@ -446,6 +589,8 @@ class CollectDialog:
                 and new_name not in self.new_collections
             ):
                 self.new_collections.append(new_name)
+                # Add to pending changes for styling
+                self.pending_collection_renames.add(new_name)
                 # Update the collections list display
                 current_names = (
                     [c.name for c in self.all_collections]
@@ -462,6 +607,8 @@ class CollectDialog:
                 ] + self.new_collections
                 if new_name not in existing_names:
                     self.collection_changes[old_name] = new_name
+                    # Add to pending changes for styling
+                    self.pending_collection_renames.add(new_name)
                     # Update the collection in memory
                     collection = next(
                         (c for c in self.all_collections if c.name == old_name), None
@@ -534,21 +681,52 @@ class CollectDialog:
         ):
             return
 
-        # Find the paper ID
-        paper = None
+        # Find the paper object from all_papers
+        paper_to_add = None
         for p in self.all_papers:
             display_title = p.title[:50] + "..." if len(p.title) > 50 else p.title
             if display_title == paper_title:
-                paper = p
+                paper_to_add = p
                 break
 
-        if paper:
-            # Track the change
-            self.paper_moves.append((paper.id, collection_name, "add"))
+        if not paper_to_add:
+            self.status_bar.set_warning(f"Paper '{paper_title}' not found.")
+            return
 
-            # Move paper between lists
-            self.other_papers_list.remove_current_item()
-            self.papers_in_collection_list.add_item(paper_title)
+        # Find the collection object from all_collections
+        target_collection = None
+        for c in self.all_collections:
+            if c.name == collection_name:
+                target_collection = c
+                break
+
+        if not target_collection:
+            self.status_bar.set_warning(f"Collection '{collection_name}' not found.")
+            return
+
+        # Check if paper is already in the collection (compare by ID, not object reference)
+        paper_ids_in_collection = {p.id for p in target_collection.papers}
+        if paper_to_add.id in paper_ids_in_collection:
+            self.status_bar.set_status(
+                f"Paper '{paper_title}' is already in '{collection_name}'."
+            )
+            return
+
+        # Track the change
+        self.paper_moves.append((paper_to_add.id, collection_name, "add"))
+
+        # Add to pending changes for styling
+        self.pending_paper_moves.add(paper_title)
+
+        # Update in-memory collection for immediate UI feedback
+        target_collection.papers.append(paper_to_add)
+
+        # Move paper between lists in UI
+        self.other_papers_list.remove_current_item()
+        self.papers_in_collection_list.add_item(paper_title)
+        self.status_bar.set_status(
+            f"Added '{paper_title}' to '{collection_name}'. Press Save to confirm."
+        )
 
     def remove_paper_from_collection(self):
         """Remove selected paper from current collection."""
@@ -562,67 +740,216 @@ class CollectDialog:
         ):
             return
 
-        # Find the paper ID
-        paper = None
+        # Find the paper object from all_papers
+        paper_to_remove = None
         for p in self.all_papers:
             display_title = p.title[:50] + "..." if len(p.title) > 50 else p.title
             if display_title == paper_title:
-                paper = p
+                paper_to_remove = p
                 break
 
-        if paper:
-            # Track the change
-            self.paper_moves.append((paper.id, collection_name, "remove"))
+        if not paper_to_remove:
+            self.status_bar.set_warning(f"Paper '{paper_title}' not found.")
+            return
 
-            # Move paper between lists
-            self.papers_in_collection_list.remove_current_item()
-            self.other_papers_list.add_item(paper_title)
+        # Find the collection object from all_collections
+        target_collection = None
+        for c in self.all_collections:
+            if c.name == collection_name:
+                target_collection = c
+                break
+
+        if not target_collection:
+            self.status_bar.set_warning(f"Collection '{collection_name}' not found.")
+            return
+
+        # Check if paper is actually in the collection (compare by ID, not object reference)
+        paper_ids_in_collection = {p.id for p in target_collection.papers}
+        if paper_to_remove.id not in paper_ids_in_collection:
+            self.status_bar.set_status(
+                f"Paper '{paper_title}' is not in '{collection_name}'."
+            )
+            return
+
+        # Track the change
+        self.paper_moves.append((paper_to_remove.id, collection_name, "remove"))
+
+        # Add to pending changes for styling
+        self.pending_paper_moves.add(paper_title)
+
+        # Update in-memory collection for immediate UI feedback (find by ID, not object reference)
+        paper_to_remove_from_collection = next(
+            (p for p in target_collection.papers if p.id == paper_to_remove.id), None
+        )
+        if paper_to_remove_from_collection:
+            target_collection.papers.remove(paper_to_remove_from_collection)
+
+        # Move paper between lists in UI
+        self.papers_in_collection_list.remove_current_item()
+        self.other_papers_list.add_item(paper_title)
+        self.status_bar.set_status(
+            f"Removed '{paper_title}' from '{collection_name}'. Press Save to confirm."
+        )
 
     def save_changes(self):
         """Save changes without closing dialog."""
         try:
             saved_count = 0
             error_count = 0
+            detailed_errors = []
 
             # 1. Create new collections
             for collection_name in self.new_collections:
-                collection = self.collection_service.create_collection(collection_name)
-                if collection:
-                    self.all_collections.append(collection)
-                    saved_count += 1
-                else:
+                try:
+                    collection = self.collection_service.create_collection(
+                        collection_name
+                    )
+                    if collection:
+                        self.all_collections.append(collection)
+                        saved_count += 1
+                        # Log the creation
+                        if self.log_callback:
+                            self.log_callback(
+                                "collection",
+                                f"Created new collection '{collection_name}'",
+                            )
+                    else:
+                        error_count += 1
+                        detailed_errors.append(
+                            f"Failed to create collection '{collection_name}': Name might already exist."
+                        )
+                except Exception as e:
                     error_count += 1
+                    detailed_errors.append(
+                        f"Error creating collection '{collection_name}': {str(e)}"
+                    )
 
             # 2. Rename collections
             for old_name, new_name in self.collection_changes.items():
-                success = self.collection_service.update_collection_name(
-                    old_name, new_name
-                )
-                if success:
-                    saved_count += 1
-                else:
+                try:
+                    success = self.collection_service.update_collection_name(
+                        old_name, new_name
+                    )
+                    if success:
+                        saved_count += 1
+                        # Log the rename
+                        if self.log_callback:
+                            self.log_callback(
+                                "collection",
+                                f"Renamed collection from '{old_name}' to '{new_name}'",
+                            )
+                    else:
+                        error_count += 1
+                        detailed_errors.append(
+                            f"Failed to rename collection from '{old_name}' to '{new_name}': New name might already exist or old collection not found."
+                        )
+                except Exception as e:
                     error_count += 1
+                    detailed_errors.append(
+                        f"Error renaming collection from '{old_name}' to '{new_name}': {str(e)}"
+                    )
 
             # 3. Add/remove papers from collections
             for paper_id, collection_name, action in self.paper_moves:
-                if action == "add":
-                    success = self.collection_service.add_paper_to_collection(
-                        paper_id, collection_name
-                    )
-                else:  # remove
-                    success = self.collection_service.remove_paper_from_collection(
-                        paper_id, collection_name
-                    )
+                try:
+                    # Find paper title for logging
+                    paper_title = "Unknown"
+                    paper = next((p for p in self.all_papers if p.id == paper_id), None)
+                    if paper:
+                        paper_title = paper.title
 
-                if success:
-                    saved_count += 1
-                else:
+                    if action == "add":
+                        success = self.collection_service.add_paper_to_collection(
+                            paper_id, collection_name
+                        )
+                        if success:
+                            saved_count += 1
+                            # Log the addition
+                            if self.log_callback:
+                                self.log_callback(
+                                    "collection",
+                                    f"Added paper '{paper_title}' to collection '{collection_name}'",
+                                )
+                        else:
+                            error_count += 1
+                            detailed_errors.append(
+                                f"Failed to add paper (ID: {paper_id}) to collection '{collection_name}'."
+                            )
+                    else:  # remove
+                        success = self.collection_service.remove_paper_from_collection(
+                            paper_id, collection_name
+                        )
+                        if success:
+                            saved_count += 1
+                            # Log the removal
+                            if self.log_callback:
+                                self.log_callback(
+                                    "collection",
+                                    f"Removed paper '{paper_title}' from collection '{collection_name}'",
+                                )
+                        else:
+                            error_count += 1
+                            detailed_errors.append(
+                                f"Failed to remove paper (ID: {paper_id}) from collection '{collection_name}'."
+                            )
+                except Exception as e:
                     error_count += 1
+                    detailed_errors.append(
+                        f"Error processing paper (ID: {paper_id}) for collection '{collection_name}' ({action}): {str(e)}"
+                    )
 
             # Clear the change tracking
             self.collection_changes.clear()
             self.paper_moves.clear()
             self.new_collections.clear()
+
+            # Clear pending changes for styling
+            self.pending_collection_renames.clear()
+            self.pending_paper_moves.clear()
+
+            # Reload all collections and papers to reflect changes
+            self.all_collections = self.collection_service.get_all_collections()
+            self.all_papers = self.paper_service.get_all_papers()
+
+            # Update the collections list UI with the new collections
+            current_names = [c.name for c in self.all_collections] + [
+                "+ New Collection"
+            ]
+            self.collections_list.set_items(current_names)
+
+            # Re-select the current collection to refresh the paper lists
+            if self.current_collection:
+                # Find the reloaded version of the current collection
+                reloaded_current_collection = next(
+                    (
+                        c
+                        for c in self.all_collections
+                        if c.name == self.current_collection.name
+                    ),
+                    None,
+                )
+                if reloaded_current_collection:
+                    self.current_collection = reloaded_current_collection
+                    # Find the index of the current collection in the updated list
+                    collection_index = next(
+                        (
+                            i
+                            for i, name in enumerate(current_names)
+                            if name == self.current_collection.name
+                        ),
+                        0,
+                    )
+                    self.collections_list.selected_index = collection_index
+                    self.on_collection_select(
+                        self.collections_list
+                    )  # Re-trigger UI update
+            else:
+                # If no current collection, refresh the "other papers" list
+                all_paper_titles = [
+                    p.title[:50] + "..." if len(p.title) > 50 else p.title
+                    for p in self.all_papers
+                ]
+                self.other_papers_list.set_items(all_paper_titles)
 
             # Update status bar directly
             if self.status_bar:
@@ -634,13 +961,14 @@ class CollectDialog:
                     else:
                         self.status_bar.set_status("No changes to save")
                 else:
-                    self.status_bar.set_warning(
-                        f"Saved {saved_count} changes, {error_count} errors occurred"
-                    )
+                    error_message = f"Saved {saved_count} changes, {error_count} errors occurred. Details: {'; '.join(detailed_errors)}"
+                    self.status_bar.set_error(error_message)
 
         except Exception as e:
             if self.status_bar:
-                self.status_bar.set_error(f"Error saving changes: {str(e)}")
+                self.status_bar.set_error(
+                    f"An unexpected error occurred during save: {str(e)}"
+                )
 
     def save_and_close(self):
         """Save changes and close dialog."""
@@ -651,15 +979,8 @@ class CollectDialog:
         changes = {"collections": self.all_collections, "action": "save", "close": True}
         self.callback(changes)
 
-    def discard_changes(self):
-        """Discard all changes without saving."""
-        # Clear all pending changes
-        self.collection_changes.clear()
-        self.paper_moves.clear()
-        self.new_collections.clear()
-
-        if self.status_bar:
-            self.status_bar.set_status("Changes discarded")
+        # Refresh the UI after saving and closing
+        self.on_collection_select(self.collections_list)
 
     def cancel(self):
         """Cancel changes and close dialog."""
