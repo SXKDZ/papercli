@@ -1,0 +1,98 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "papercli"
+version = "1.0.0"
+description = "A command-line paper management system for researchers and academics"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "SXKDZ", email = "mr.sxkdz@gmail.com"},
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Text Processing",
+    "Topic :: Utilities",
+]
+keywords = [
+    "research",
+    "papers",
+    "academic",
+    "pdf",
+    "bibliography",
+    "cli",
+    "arxiv",
+    "dblp",
+    "openreview",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "prompt-toolkit>=3.0.0",
+    "SQLAlchemy>=2.0.0",
+    "alembic>=1.12.0",
+    "requests>=2.31.0",
+    "beautifulsoup4>=4.12.0",
+    "PyPDF2>=3.0.0",
+    "feedparser>=6.0.0",
+    "openai>=1.0.0",
+    "fuzzywuzzy>=0.18.0",
+    "python-Levenshtein>=0.21.0",
+    "click>=8.1.0",
+    "colorama>=0.4.6",
+    "rich",
+    "titlecase>=2.4.0",
+    "python-dotenv>=1.0.0",
+    "bibtexparser",
+    "rispy",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "black>=22.0.0",
+    "flake8>=4.0.0",
+    "mypy>=0.910",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/SXKDZ/papercli"
+"Bug Reports" = "https://github.com/SXKDZ/papercli/issues"
+"Source" = "https://github.com/SXKDZ/papercli"
+"Documentation" = "https://github.com/SXKDZ/papercli#readme"
+
+[project.scripts]
+papercli = "papercli:main"
+
+[tool.setuptools]
+packages = ["app"]
+
+[tool.setuptools.package-data]
+app = ["*.py"]
+
+[tool.black]
+line-length = 88
+target-version = ["py38", "py39", "py310", "py311", "py312"]
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]

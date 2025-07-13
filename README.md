@@ -37,12 +37,32 @@ A powerful command-line paper management system for researchers and academics. P
 - **Interactive UI**: Modern terminal interface with auto-completion
 - **Multi-selection**: Batch operations on multiple papers
 - **Real-time Search**: Filter and search as you type
+- **Version Management**: Automatic update checking and seamless upgrades
+- **Cross-platform**: Works with pipx, pip, or source installations
 
 ## Installation
 
 ### Prerequisites
 - Python 3.8 or higher
 - pip package manager
+
+### Using pipx (Recommended)
+```bash
+# Install directly from GitHub
+pipx install git+https://github.com/SXKDZ/papercli.git
+
+# Run from anywhere
+papercli
+```
+
+### Using pip
+```bash
+# Install directly from GitHub
+pip install git+https://github.com/SXKDZ/papercli.git
+
+# Run from anywhere
+papercli
+```
 
 ### Install from Source
 ```bash
@@ -52,15 +72,14 @@ pip install -r requirements.txt
 python papercli.py
 ```
 
-### Using pipx (Recommended)
-```bash
-# Coming soon - pipx install support
-```
-
 ## Quick Start
 
 1. **Launch PaperCLI**:
    ```bash
+   # If installed via pipx or pip
+   papercli
+   
+   # Or if running from source
    python papercli.py
    ```
 
@@ -218,8 +237,9 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Roadmap
 
-- [ ] Package distribution via PyPI and pipx
-- [ ] Version management and auto-updates
+- [x] Package distribution via pipx and pip
+- [x] Version management and auto-updates
+- [ ] Package distribution via PyPI
 - [ ] Plugin system for custom metadata extractors
 - [ ] Cloud synchronization support
 - [ ] Advanced citation analysis

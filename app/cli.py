@@ -7,6 +7,8 @@ import traceback
 from datetime import datetime
 from typing import List, Optional
 
+from .version import VersionManager, get_version
+
 from prompt_toolkit.application import Application, get_app
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.completion import Completer, Completion
@@ -156,6 +158,14 @@ class SmartCompleter(Completer):
                 "description": "Manage collections",
                 "subcommands": {},
             },
+            "/version": {
+                "description": "Show version information and check for updates",
+                "subcommands": {
+                    "check": "Check for available updates",
+                    "update": "Update to the latest version (if possible)",
+                    "info": "Show detailed version information",
+                },
+            },
             "/exit": {"description": "Exit the application", "subcommands": {}},
         }
 
@@ -240,6 +250,10 @@ System Commands:
   diagnose   Run full diagnostic check (default)
   clean      Clean orphaned database records and PDF files
   help       Show doctor command help
+/version     Show version info and check for updates
+  check      Check for available updates
+  update     Update to latest version (if possible)
+  info       Show detailed version information
 
 Navigation & Interaction:
 -------------------------
@@ -1430,6 +1444,8 @@ The doctor command helps maintain database health by:
                     self.handle_remove_from_command(parts[1:])
                 elif cmd == "/collect":
                     self.handle_collect_command()
+                elif cmd == "/version":
+                    self.handle_version_command(parts[1:])
             else:
                 self.status_bar.set_error(f"Unknown command: {cmd}")
 
@@ -3041,6 +3057,23 @@ The doctor command helps maintain database health by:
 
     def run(self):
         """Run the application."""
+        # Check for updates on startup (non-blocking)
+        try:
+            version_manager = VersionManager()
+            if version_manager.should_check_for_updates():
+                # Perform check in background without blocking startup
+                import threading
+                def check_updates():
+                    try:
+                        version_manager.check_and_prompt_update()
+                    except Exception:
+                        pass  # Silently ignore update check failures
+                
+                update_thread = threading.Thread(target=check_updates, daemon=True)
+                update_thread.start()
+        except Exception:
+            pass  # Silently ignore any version checking issues
+        
         self.app.run()
 
     def handle_add_to_command(self, args: List[str]):
@@ -3199,3 +3232,140 @@ The doctor command helps maintain database health by:
                 "Could not open the collection management dialog.",
                 traceback.format_exc(),
             )
+
+    def handle_version_command(self, args: List[str]):
+        """Handle /version command for version management."""
+        version_manager = VersionManager()
+        
+        if not args:
+            # Show basic version info
+            current_version = version_manager.get_current_version()
+            install_method = version_manager.get_installation_method()
+            
+            version_info = f"PaperCLI v{current_version}\n"
+            version_info += f"Installation: {install_method}\n"
+            
+            # Check for updates in background
+            try:
+                update_available, latest_version = version_manager.is_update_available()
+                if update_available:
+                    version_info += f"Update available: v{latest_version}\n"
+                    version_info += f"Run '/version update' to upgrade"
+                else:
+                    version_info += "You're running the latest version"
+            except Exception:
+                version_info += "Could not check for updates"
+            
+            self.show_help_dialog(version_info, "Version Information")
+            return
+        
+        action = args[0].lower()
+        
+        if action == "check":
+            self.status_bar.set_status("Checking for updates...")
+            try:
+                update_available, latest_version = version_manager.is_update_available()
+                current_version = version_manager.get_current_version()
+                
+                if update_available:
+                    update_info = f"Update Available!\n\n"
+                    update_info += f"Current version: v{current_version}\n"
+                    update_info += f"Latest version:  v{latest_version}\n\n"
+                    
+                    if version_manager.can_auto_update():
+                        update_info += "To update, run: /version update\n\n"
+                    else:
+                        update_info += f"To update manually, run:\n"
+                        update_info += f"{version_manager.get_update_instructions()}\n\n"
+                    
+                    # Get release notes from GitHub
+                    try:
+                        import requests
+                        url = f"https://api.github.com/repos/{version_manager.github_repo}/releases/latest"
+                        response = requests.get(url, timeout=10)
+                        if response.status_code == 200:
+                            release_data = response.json()
+                            if release_data.get("body"):
+                                update_info += f"Release Notes:\n{release_data['body']}"
+                    except Exception:
+                        pass
+                    
+                    self.show_help_dialog(update_info, "Update Available")
+                else:
+                    self.status_bar.set_success(f"You're running the latest version (v{current_version})")
+            except Exception as e:
+                self.status_bar.set_error(f"Could not check for updates: {e}")
+        
+        elif action == "update":
+            if not version_manager.can_auto_update():
+                install_method = version_manager.get_installation_method()
+                self.status_bar.set_error(f"Auto-update not supported for {install_method} installations")
+                
+                manual_info = f"Manual Update Required\n\n"
+                manual_info += f"Installation method: {install_method}\n\n"
+                manual_info += f"To update manually, run:\n"
+                manual_info += f"{version_manager.get_update_instructions()}"
+                
+                self.show_help_dialog(manual_info, "Manual Update Required")
+                return
+            
+            # Check if update is available first
+            try:
+                update_available, latest_version = version_manager.is_update_available()
+                if not update_available:
+                    current_version = version_manager.get_current_version()
+                    self.status_bar.set_success(f"Already running latest version (v{current_version})")
+                    return
+                
+                self.status_bar.set_status(f"Updating to v{latest_version}...")
+                
+                # Perform the update
+                if version_manager.perform_update():
+                    self.status_bar.set_success("Update successful! Please restart PaperCLI.")
+                    # Show restart dialog
+                    restart_info = f"Update Successful!\n\n"
+                    restart_info += f"PaperCLI has been updated to v{latest_version}.\n\n"
+                    restart_info += f"Please restart the application to use the new version.\n\n"
+                    restart_info += f"Press ESC to close this dialog and exit."
+                    
+                    self.show_help_dialog(restart_info, "Restart Required")
+                else:
+                    self.status_bar.set_error("Update failed. Please update manually.")
+                    
+            except Exception as e:
+                self.status_bar.set_error(f"Update failed: {e}")
+        
+        elif action == "info":
+            version_manager = VersionManager()
+            current_version = version_manager.get_current_version()
+            install_method = version_manager.get_installation_method()
+            config = version_manager.get_update_config()
+            
+            info = f"PaperCLI Version Information\n"
+            info += f"=" * 30 + "\n\n"
+            info += f"Version: v{current_version}\n"
+            info += f"Installation: {install_method}\n"
+            info += f"GitHub Repository: {version_manager.github_repo}\n\n"
+            
+            info += f"Update Settings:\n"
+            info += f"- Auto-check: {'Yes' if config.get('auto_check', True) else 'No'}\n"
+            info += f"- Check interval: {config.get('check_interval_days', 7)} days\n"
+            info += f"- Auto-update: {'Yes' if config.get('auto_update', False) else 'No'}\n"
+            info += f"- Can auto-update: {'Yes' if version_manager.can_auto_update() else 'No'}\n"
+            
+            if config.get('last_check'):
+                info += f"- Last check: {config['last_check'][:19]}\n"
+            else:
+                info += f"- Last check: Never\n"
+            
+            info += f"\nTo check for updates: /version check\n"
+            if version_manager.can_auto_update():
+                info += f"To update: /version update\n"
+            else:
+                info += f"To update manually:\n{version_manager.get_update_instructions()}\n"
+            
+            self.show_help_dialog(info, "Version Information")
+        
+        else:
+            self.status_bar.set_error(f"Unknown version command: {action}")
+            self.status_bar.set_status("Usage: /version [check|update|info]")

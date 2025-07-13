@@ -10,10 +10,34 @@ from dotenv import load_dotenv
 
 from app.cli import PaperCLI
 from app.database import init_database
+from app.version import get_version
 
 
 def main():
     """Main entry point for PaperCLI."""
+    # Handle command line arguments
+    if len(sys.argv) > 1:
+        if sys.argv[1] in ['--version', '-v']:
+            print(f"PaperCLI v{get_version()}")
+            sys.exit(0)
+        elif sys.argv[1] in ['--help', '-h']:
+            print(f"""
+PaperCLI v{get_version()}
+A command-line paper management system for researchers and academics
+
+Usage:
+  papercli                Start the interactive CLI
+  papercli --version      Show version information
+  papercli --help         Show this help message
+
+For more information, visit: https://github.com/SXKDZ/papercli
+            """.strip())
+            sys.exit(0)
+        else:
+            print(f"Unknown argument: {sys.argv[1]}")
+            print("Use 'papercli --help' for usage information.")
+            sys.exit(1)
+    
     load_dotenv()
     
     # Ensure data directory exists
