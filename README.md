@@ -69,7 +69,9 @@ papercli
 git clone https://github.com/SXKDZ/papercli.git
 cd papercli
 pip install -r requirements.txt
-python papercli.py
+
+# Run the application
+python -m app.papercli
 ```
 
 ## Quick Start
@@ -80,7 +82,7 @@ python papercli.py
    papercli
    
    # Or if running from source
-   python papercli.py
+   python -m app.papercli
    ```
 
 2. **Add your first paper**:
