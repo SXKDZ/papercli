@@ -2,6 +2,8 @@
 Custom dialog for editing paper metadata in a full-window form with paper type buttons.
 """
 
+import os
+import traceback
 from typing import Callable, Dict, Any, List
 
 from prompt_toolkit.layout.containers import HSplit, VSplit, Window, WindowAlign
@@ -13,8 +15,7 @@ from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
 from prompt_toolkit.application import get_app
 from titlecase import titlecase
 
-from .services import CollectionService, AuthorService, fix_broken_lines
-
+from .services import CollectionService, AuthorService, fix_broken_lines, MetadataExtractor
 
 from prompt_toolkit.widgets import TextArea
 
@@ -22,10 +23,11 @@ from prompt_toolkit.widgets import TextArea
 class EditDialog:
     """A full-window dialog for editing paper metadata with paper type buttons."""
 
-    def __init__(self, paper_data: Dict[str, Any], callback: Callable, log_callback: Callable, read_only_fields: List[str] = None):
+    def __init__(self, paper_data: Dict[str, Any], callback: Callable, log_callback: Callable, error_display_callback: Callable, read_only_fields: List[str] = None):
         self.paper_data = paper_data
         self.callback = callback
         self.log_callback = log_callback
+        self.error_display_callback = error_display_callback
         self.result = None
         self.collection_service = CollectionService()
         self.author_service = AuthorService()
@@ -172,6 +174,7 @@ class EditDialog:
         )
         
         # Create custom button row with centered buttons and right-aligned help text
+        extract_pdf_button = Button(text="Extract PDF", handler=self._handle_extract_pdf, width=17)
         save_button = Button(text="Save", handler=self._handle_save)
         cancel_button = Button(text="Cancel", handler=self._handle_cancel)
         
@@ -180,6 +183,8 @@ class EditDialog:
             # Flexible spacer
             Window(),
             # Centered buttons
+            extract_pdf_button,
+            Window(width=2),  # Small gap between buttons
             save_button,
             Window(width=2),  # Small gap between buttons
             cancel_button,
@@ -284,6 +289,68 @@ class EditDialog:
 
     def _handle_cancel(self):
         self.callback(None)
+
+    def _handle_extract_pdf(self):
+        """Handle Extract PDF button press."""
+        pdf_path = self.paper_data.get("pdf_path")
+        if not pdf_path or not os.path.exists(pdf_path):
+            self.error_display_callback("Extract PDF Error", "No PDF file available for this paper.", "Please ensure the paper has an associated PDF and the file exists.")
+            return
+            
+        try:
+            extractor = MetadataExtractor()
+            extracted_data = extractor.extract_from_pdf(pdf_path)
+            
+            # Update fields with extracted data but don't save
+            self._update_fields_with_extracted_data(extracted_data)
+            
+        except Exception as e:
+            self.error_display_callback("Extract PDF Error", "Failed to extract PDF metadata", traceback.format_exc())
+    
+    def _update_fields_with_extracted_data(self, extracted_data):
+        """Update form fields with extracted PDF data."""
+        field_mapping = {
+            'title': 'title',
+            'authors': 'author_names',
+            'abstract': 'abstract',
+            'year': 'year',
+            'venue_full': 'venue_full',
+            'venue_acronym': 'venue_acronym',
+            'doi': 'doi',
+            'url': 'url',
+            'category': 'category',
+            'paper_type': 'paper_type'
+        }
+        
+        for extracted_field, form_field in field_mapping.items():
+            if extracted_field in extracted_data and extracted_data[extracted_field]:
+                value = extracted_data[extracted_field]
+                
+                if extracted_field == 'authors' and isinstance(value, list):
+                    value = ', '.join(value)
+                elif extracted_field == 'year' and isinstance(value, int):
+                    value = str(value)
+                elif extracted_field == 'paper_type':
+                    # Update paper type and rebuild form if different
+                    if value != self.current_paper_type:
+                        self.current_paper_type = value
+                        # Preserve current field values
+                        current_values = {name: field.text for name, field in self.input_fields.items()}
+                        # Rebuild form
+                        self.body_container.children = self._build_body_components()
+                        # Restore values that weren't overwritten
+                        for field_name, field_value in current_values.items():
+                            if field_name in self.input_fields and field_name not in field_mapping.values():
+                                self.input_fields[field_name].text = field_value
+                        get_app().invalidate()
+                    continue
+                
+                # Update field if it exists in current form
+                if form_field in self.input_fields:
+                    self.input_fields[form_field].text = str(value) if value else ""
+        
+        # Refresh the display
+        get_app().invalidate()
 
     def _set_initial_focus(self):
         """Sets the initial focus to the first editable field."""

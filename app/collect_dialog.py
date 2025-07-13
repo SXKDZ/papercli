@@ -2,6 +2,7 @@
 Advanced collection management dialog with three-column layout.
 """
 
+import traceback
 from typing import List, Optional
 from prompt_toolkit.layout.containers import HSplit, VSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
@@ -244,6 +245,7 @@ class CollectDialog:
         paper_service: PaperService,
         status_bar=None,
         log_callback=None,
+        error_display_callback=None,
     ):
         self.callback = callback
         self.status_bar = status_bar
@@ -253,6 +255,7 @@ class CollectDialog:
         self.collection_service = collection_service
         self.paper_service = paper_service
         self.log_callback = log_callback
+        self.error_display_callback = error_display_callback
 
         # Track changes for saving
         self.collection_changes = {}  # {old_name: new_name}
@@ -428,14 +431,14 @@ class CollectDialog:
         # Define base titles and focus symbols
         base_titles = {
             self.collections_list: "Collections",
-            self.papers_in_collection_list: "Papers in Collection", 
-            self.other_papers_list: "All Papers"
+            self.papers_in_collection_list: "Papers in Collection",
+            self.other_papers_list: "All Papers",
         }
         focus_symbol = "▶"
 
         for i, (component, frame) in enumerate(self.component_frames.items()):
             base_title = base_titles[component]
-            
+
             if i == self.current_focus_index:
                 # Focused: add symbol, make bold, set focused style
                 frame.title = f"{focus_symbol} {base_title}"
@@ -795,8 +798,6 @@ class CollectDialog:
         """Save changes without closing dialog."""
         try:
             saved_count = 0
-            error_count = 0
-            detailed_errors = []
 
             # 1. Create new collections
             for collection_name in self.new_collections:
@@ -814,14 +815,16 @@ class CollectDialog:
                                 f"Created new collection '{collection_name}'",
                             )
                     else:
-                        error_count += 1
-                        detailed_errors.append(
-                            f"Failed to create collection '{collection_name}': Name might already exist."
+                        self.error_display_callback(
+                            "Collection Creation Error",
+                            f"Failed to create collection '{collection_name}'.",
+                            "Name might already exist.",
                         )
                 except Exception as e:
-                    error_count += 1
-                    detailed_errors.append(
-                        f"Error creating collection '{collection_name}': {str(e)}"
+                    self.error_display_callback(
+                        "Collection Creation Error",
+                        f"Failed to create collection '{collection_name}'",
+                        traceback.format_exc(),
                     )
 
             # 2. Rename collections
@@ -839,14 +842,16 @@ class CollectDialog:
                                 f"Renamed collection from '{old_name}' to '{new_name}'",
                             )
                     else:
-                        error_count += 1
-                        detailed_errors.append(
-                            f"Failed to rename collection from '{old_name}' to '{new_name}': New name might already exist or old collection not found."
+                        self.error_display_callback(
+                            "Collection Rename Error",
+                            f"Failed to rename collection from '{old_name}' to '{new_name}'.",
+                            f"New name '{new_name}' might already exist or old collection '{old_name}' not found.",
                         )
                 except Exception as e:
-                    error_count += 1
-                    detailed_errors.append(
-                        f"Error renaming collection from '{old_name}' to '{new_name}': {str(e)}"
+                    self.error_display_callback(
+                        "Collection Rename Error",
+                        f"Failed to rename collection from '{old_name}' to '{new_name}'",
+                        traceback.format_exc(),
                     )
 
             # 3. Add/remove papers from collections
@@ -871,9 +876,10 @@ class CollectDialog:
                                     f"Added paper '{paper_title}' to collection '{collection_name}'",
                                 )
                         else:
-                            error_count += 1
-                            detailed_errors.append(
-                                f"Failed to add paper (ID: {paper_id}) to collection '{collection_name}'."
+                            self.error_display_callback(
+                                "Add Paper to Collection Error",
+                                f"Failed to add paper (ID: {paper_id}) to collection '{collection_name}'.",
+                                f"Paper '{paper_title}' might already be in collection or collection '{collection_name}' not found.",
                             )
                     else:  # remove
                         success = self.collection_service.remove_paper_from_collection(
@@ -888,14 +894,16 @@ class CollectDialog:
                                     f"Removed paper '{paper_title}' from collection '{collection_name}'",
                                 )
                         else:
-                            error_count += 1
-                            detailed_errors.append(
-                                f"Failed to remove paper (ID: {paper_id}) from collection '{collection_name}'."
+                            self.error_display_callback(
+                                "Remove Paper from Collection Error",
+                                f"Failed to remove paper (ID: {paper_id}) from collection '{collection_name}'.",
+                                f"Paper '{paper_title}' might not be in collection or collection '{collection_name}' not found.",
                             )
                 except Exception as e:
-                    error_count += 1
-                    detailed_errors.append(
-                        f"Error processing paper (ID: {paper_id}) for collection '{collection_name}' ({action}): {str(e)}"
+                    self.error_display_callback(
+                        "Collection Paper Processing Error",
+                        f"Failed to process paper (ID: {paper_id}) for collection '{collection_name}' ({action})",
+                        traceback.format_exc(),
                     )
 
             # Clear the change tracking
@@ -953,21 +961,23 @@ class CollectDialog:
 
             # Update status bar directly
             if self.status_bar:
-                if error_count == 0:
-                    if saved_count > 0:
-                        self.status_bar.set_success(
-                            f"Successfully saved {saved_count} changes to collections"
-                        )
-                    else:
-                        self.status_bar.set_status("No changes to save")
+                if saved_count > 0:
+                    self.status_bar.set_success(
+                        f"Successfully saved {saved_count} changes to collections"
+                    )
                 else:
-                    error_message = f"Saved {saved_count} changes, {error_count} errors occurred. Details: {'; '.join(detailed_errors)}"
-                    self.status_bar.set_error(error_message)
+                    self.status_bar.set_status("No changes to save")
 
         except Exception as e:
             if self.status_bar:
                 self.status_bar.set_error(
                     f"An unexpected error occurred during save: {str(e)}"
+                )
+            if self.error_display_callback:
+                self.error_display_callback(
+                    "Collection Save Error",
+                    "Failed to save collection changes",
+                    traceback.format_exc(),
                 )
 
     def save_and_close(self):

@@ -6,8 +6,11 @@ import os
 import re
 import requests
 import json
+import PyPDF2
+from openai import OpenAI
 import subprocess
 import webbrowser
+import traceback
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 from sqlalchemy import or_, and_
@@ -15,7 +18,7 @@ from fuzzywuzzy import fuzz
 from titlecase import titlecase
 
 from .database import get_db_session
-from .models import Paper, Author, Collection
+from .models import Paper, Author, Collection, PaperAuthor
 
 
 def fix_broken_lines(text: str) -> str:
@@ -40,14 +43,17 @@ class PaperService:
             # Eagerly load relationships to avoid detached instance errors
             papers = (
                 session.query(Paper)
-                .options(joinedload(Paper.authors), joinedload(Paper.collections))
+                .options(
+                    joinedload(Paper.paper_authors).joinedload(PaperAuthor.author),
+                    joinedload(Paper.collections),
+                )
                 .order_by(Paper.added_date.desc())
                 .all()
             )
 
             # Force load all relationships while in session
             for paper in papers:
-                _ = paper.authors  # Force load authors
+                _ = paper.paper_authors  # Force load paper_authors
                 _ = paper.collections  # Force load collections
 
             # Expunge all objects to make them detached but accessible
@@ -62,14 +68,17 @@ class PaperService:
 
             paper = (
                 session.query(Paper)
-                .options(joinedload(Paper.authors), joinedload(Paper.collections))
+                .options(
+                    joinedload(Paper.paper_authors).joinedload(PaperAuthor.author),
+                    joinedload(Paper.collections),
+                )
                 .filter(Paper.id == paper_id)
                 .first()
             )
 
             if paper:
                 # Force load relationships while in session
-                _ = paper.authors
+                _ = paper.paper_authors
                 _ = paper.collections
 
                 # Expunge to make detached but accessible
@@ -112,8 +121,8 @@ class PaperService:
                     current_paper_data = {
                         "title": paper_data.get("title", paper.title),
                         "authors": (
-                            [author.full_name for author in paper.authors]
-                            if paper.authors
+                            [author.full_name for author in paper.get_ordered_authors()]
+                            if paper.paper_authors
                             else []
                         ),
                         "year": paper_data.get("year", paper.year),
@@ -134,7 +143,19 @@ class PaperService:
                 # into the current session. This avoids primary key conflicts.
                 if "authors" in paper_data:
                     authors = paper_data.pop("authors")
-                    paper.authors = [session.merge(author) for author in authors]
+                    # Delete existing paper_authors manually to avoid cascade issues
+                    session.query(PaperAuthor).filter(
+                        PaperAuthor.paper_id == paper.id
+                    ).delete()
+                    session.flush()  # Ensure deletions are committed before adding new ones
+
+                    # Add authors in order with position tracking
+                    for position, author in enumerate(authors):
+                        merged_author = session.merge(author)
+                        paper_author = PaperAuthor(
+                            paper_id=paper.id, author=merged_author, position=position
+                        )
+                        session.add(paper_author)
 
                 if "collections" in paper_data:
                     collections = paper_data.pop("collections")
@@ -150,6 +171,13 @@ class PaperService:
                 paper.modified_date = datetime.utcnow()
                 session.commit()
                 session.refresh(paper)
+
+                # Force load relationships before expunging
+                _ = paper.paper_authors  # Force load paper_authors
+                for pa in paper.paper_authors:
+                    _ = pa.author  # Force load each author
+                    _ = pa.position  # Force load position
+                _ = paper.collections  # Force load collections
 
                 # Expunge to follow the detached object pattern used elsewhere in the app
                 session.expunge(paper)
@@ -234,8 +262,8 @@ class PaperService:
             session.add(paper)
             session.flush()  # Get the paper ID without committing
 
-            # Add authors
-            for author_name in authors:
+            # Add authors with position tracking
+            for position, author_name in enumerate(authors):
                 author = (
                     session.query(Author)
                     .filter(Author.full_name == author_name)
@@ -244,7 +272,12 @@ class PaperService:
                 if not author:
                     author = Author(full_name=author_name)
                     session.add(author)
-                paper.authors.append(author)
+                    session.flush()  # Ensure author has an ID
+
+                paper_author = PaperAuthor(
+                    paper=paper, author=author, position=position
+                )
+                session.add(paper_author)
 
             # Add collections
             if collections:
@@ -278,13 +311,16 @@ class PaperService:
             # Create a new query with eager loading to get a properly attached instance
             paper_with_relationships = (
                 session.query(Paper)
-                .options(joinedload(Paper.authors), joinedload(Paper.collections))
+                .options(
+                    joinedload(Paper.paper_authors).joinedload(PaperAuthor.author),
+                    joinedload(Paper.collections),
+                )
                 .filter(Paper.id == paper.id)
                 .first()
             )
 
             # Force load all relationships while still in session
-            _ = paper_with_relationships.authors
+            _ = paper_with_relationships.paper_authors
             _ = paper_with_relationships.collections
 
             # Expunge to make detached but accessible
@@ -335,7 +371,7 @@ class CollectionService:
                 # Also force load paper details to prevent lazy loading issues
                 for paper in collection.papers:
                     _ = paper.title
-                    _ = paper.authors  # Force load authors too
+                    _ = paper.paper_authors  # Force load paper_authors too
             session.expunge_all()
             return collections
 
@@ -538,7 +574,8 @@ class SearchService:
             if "authors" in fields:
                 papers_by_author = (
                     session.query(Paper)
-                    .join(Paper.authors)
+                    .join(Paper.paper_authors)
+                    .join(PaperAuthor.author)
                     .filter(Author.full_name.ilike(f"%{query}%"))
                     .all()
                 )
@@ -552,7 +589,10 @@ class SearchService:
 
                 papers = (
                     session.query(Paper)
-                    .options(joinedload(Paper.authors), joinedload(Paper.collections))
+                    .options(
+                        joinedload(Paper.paper_authors).joinedload(PaperAuthor.author),
+                        joinedload(Paper.collections),
+                    )
                     .filter(or_(*conditions))
                     .order_by(Paper.added_date.desc())
                     .all()
@@ -560,7 +600,7 @@ class SearchService:
 
                 # Force load relationships
                 for paper in papers:
-                    _ = paper.authors
+                    _ = paper.paper_authors
                     _ = paper.collections
 
                 # Expunge to make detached but accessible
@@ -576,7 +616,10 @@ class SearchService:
             # Eagerly load all papers with relationships
             all_papers = (
                 session.query(Paper)
-                .options(joinedload(Paper.authors), joinedload(Paper.collections))
+                .options(
+                    joinedload(Paper.paper_authors).joinedload(PaperAuthor.author),
+                    joinedload(Paper.collections),
+                )
                 .all()
             )
 
@@ -584,15 +627,16 @@ class SearchService:
 
             for paper in all_papers:
                 # Force load relationships while in session
-                _ = paper.authors
+                _ = paper.paper_authors
                 _ = paper.collections
 
                 # Calculate fuzzy match scores
                 title_score = fuzz.partial_ratio(query.lower(), paper.title.lower())
+                ordered_authors = paper.get_ordered_authors()
                 author_score = max(
                     [
                         fuzz.partial_ratio(query.lower(), author.full_name.lower())
-                        for author in paper.authors
+                        for author in ordered_authors
                     ]
                     or [0]
                 )
@@ -632,7 +676,8 @@ class SearchService:
             from sqlalchemy.orm import joinedload
 
             query = session.query(Paper).options(
-                joinedload(Paper.authors), joinedload(Paper.collections)
+                joinedload(Paper.paper_authors).joinedload(PaperAuthor.author),
+                joinedload(Paper.collections),
             )
 
             if "year" in filters:
@@ -659,15 +704,17 @@ class SearchService:
                 )
 
             if "author" in filters:
-                query = query.join(Paper.authors).filter(
-                    Author.full_name.ilike(f'%{filters["author"]}%')
+                query = (
+                    query.join(Paper.paper_authors)
+                    .join(PaperAuthor.author)
+                    .filter(Author.full_name.ilike(f'%{filters["author"]}%'))
                 )
 
             papers = query.order_by(Paper.added_date.desc()).all()
 
             # Force load relationships while in session
             for paper in papers:
-                _ = paper.authors
+                _ = paper.paper_authors
                 _ = paper.collections
 
             # Expunge to make detached but accessible
@@ -883,15 +930,7 @@ class MetadataExtractor:
             return {"venue_full": "", "venue_acronym": ""}
 
         # Initialize chat service if not available
-        if not hasattr(self, "_chat_service"):
-            self._chat_service = ChatService()
-
-        if not self._chat_service.openai_client:
-            # Fallback without LLM
-            return {
-                "venue_full": venue_field,
-                "venue_acronym": self._extract_acronym_fallback(venue_field),
-            }
+        client = OpenAI()
 
         try:
             prompt = f"""Given this conference/journal venue field from a DBLP BibTeX entry: "{venue_field}"
@@ -907,7 +946,7 @@ Please extract:
 Respond in this exact JSON format:
 {{"venue_full": "...", "venue_acronym": "..."}}"""
 
-            response = self._chat_service.openai_client.chat.completions.create(
+            response = client.chat.completions.create(
                 model="gpt-4o",
                 messages=[
                     {
@@ -1154,8 +1193,6 @@ Respond in this exact JSON format:
     def extract_from_pdf(self, pdf_path: str) -> Dict[str, Any]:
         """Extract metadata from PDF file using LLM analysis of first two pages."""
         try:
-            import PyPDF2
-            from openai import OpenAI
 
             # Extract text from first two pages
             with open(pdf_path, "rb") as file:
@@ -1193,7 +1230,7 @@ Respond in this exact JSON format:
               * For conferences: Use common name (e.g., "NeurIPS" for Conference on Neural Information Processing Systems, not "NIPS")
             - paper_type: One of "conference", "journal", "workshop", "preprint", "other"
             - doi: DOI (if available)
-            - url: URL of the paper mentioned (if available)
+            - url: URL of the PDF to the paper itself mentioned (if available, not the link to the supplementary material or the code repository)
             - category: Subject category like "cs.LG" (if available)
             
             If any field is not available, use null for that field.
@@ -1429,8 +1466,11 @@ class ExportService:
 
         for paper in papers:
             # Generate BibTeX key
+            ordered_authors = paper.get_ordered_authors()
             first_author = (
-                paper.authors[0].full_name.split()[-1] if paper.authors else "Unknown"
+                ordered_authors[0].full_name.split()[-1]
+                if ordered_authors
+                else "Unknown"
             )
             year = paper.year or "Unknown"
             key = f"{first_author}{year}"
@@ -1441,8 +1481,9 @@ class ExportService:
             entry = f"@{entry_type}{{{key},\n"
             entry += f"  title = {{{paper.title}}},\n"
 
-            if paper.authors:
-                authors = " and ".join([author.full_name for author in paper.authors])
+            ordered_authors = paper.get_ordered_authors()
+            if ordered_authors:
+                authors = " and ".join([author.full_name for author in ordered_authors])
                 entry += f"  author = {{{authors}}},\n"
 
             if paper.venue_full:
@@ -1472,8 +1513,9 @@ class ExportService:
         for paper in papers:
             content += f"## {paper.title}\n\n"
 
-            if paper.authors:
-                authors = ", ".join([author.full_name for author in paper.authors])
+            ordered_authors = paper.get_ordered_authors()
+            if ordered_authors:
+                authors = ", ".join([author.full_name for author in ordered_authors])
                 content += f"**Authors:** {authors}\n\n"
 
             if paper.venue_display:
@@ -1516,8 +1558,9 @@ class ExportService:
             html += f'    <div class="paper">\n'
             html += f'        <div class="title">{paper.title}</div>\n'
 
-            if paper.authors:
-                authors = ", ".join([author.full_name for author in paper.authors])
+            ordered_authors = paper.get_ordered_authors()
+            if ordered_authors:
+                authors = ", ".join([author.full_name for author in ordered_authors])
                 html += f'        <div class="authors">{authors}</div>\n'
 
             if paper.venue_display and paper.year:
@@ -1541,9 +1584,10 @@ class ExportService:
         paper_list = []
 
         for paper in papers:
+            ordered_authors = paper.get_ordered_authors()
             paper_dict = {
                 "title": paper.title,
-                "authors": [author.full_name for author in paper.authors],
+                "authors": [author.full_name for author in ordered_authors],
                 "year": paper.year,
                 "venue_full": paper.venue_full,
                 "venue_acronym": paper.venue_acronym,
@@ -1608,7 +1652,7 @@ class ChatService:
                         failed_files.append(error_msg)
                         if self.log_callback:
                             self.log_callback(
-                                "chat_pdf_error", f"Failed to open PDF: {error_msg}"
+                                "chat_pdf_error", f"Failed to open PDF for {paper.title}: {traceback.format_exc()}"
                             )
 
             # Prepare result message

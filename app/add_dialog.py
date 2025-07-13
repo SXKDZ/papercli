@@ -4,7 +4,13 @@ Add dialog for adding new papers with source and path/ID input.
 
 from typing import Callable, Dict, Any
 
-from prompt_toolkit.layout.containers import HSplit, VSplit, Window, WindowAlign, ConditionalContainer
+from prompt_toolkit.layout.containers import (
+    HSplit,
+    VSplit,
+    Window,
+    WindowAlign,
+    ConditionalContainer,
+)
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.widgets import Button, Dialog, TextArea, RadioList
 from prompt_toolkit.layout.dimension import Dimension
@@ -53,7 +59,7 @@ class AddDialog:
             focusable=True,
             style="class:textarea",
         )
-        
+
         # Dynamic label for input field
         def get_input_label():
             source = self.source_list.current_value
@@ -71,8 +77,10 @@ class AddDialog:
                 return "RIS Path:"
             else:
                 return "Path/ID/URL:"
-        
-        self.input_label_control = FormattedTextControl(get_input_label, focusable=False)
+
+        self.input_label_control = FormattedTextControl(
+            get_input_label, focusable=False
+        )
 
         # Create condition to show path input only when not manual
         def show_path_input():

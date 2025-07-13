@@ -3,6 +3,8 @@ Main CLI application for PaperCLI.
 """
 
 import os
+import traceback
+from datetime import datetime
 from typing import List, Optional
 
 from prompt_toolkit.application import Application, get_app
@@ -96,6 +98,7 @@ class SmartCompleter(Completer):
             "/edit": {
                 "description": "Open edit dialog, or quick-edit a field (e.g., /edit title ...)",
                 "subcommands": {
+                    "extract-pdf": "Extract metadata from PDF and update paper",
                     "title": "Edit the title",
                     "abstract": "Edit the abstract",
                     "notes": "Edit your personal notes",
@@ -293,7 +296,6 @@ Indicators (in the first column):
 
     def _add_log(self, action: str, details: str):
         """Add a log entry."""
-        from datetime import datetime
 
         self.logs.append(
             {"timestamp": datetime.now(), "action": action, "details": details}
@@ -377,7 +379,7 @@ The doctor command helps maintain database health by:
             self.show_error_panel_with_message(
                 "PaperCLI Doctor - Error",
                 f"Failed to run doctor command: {str(e)}",
-                f"Action: {action if 'action' in locals() else 'unknown'}\nError details: {str(e)}",
+                f"Action: {action if 'action' in locals() else 'unknown'}\nError details: {traceback.format_exc()}",
             )
 
     def _show_doctor_report(self, report: dict):
@@ -1384,7 +1386,9 @@ The doctor command helps maintain database health by:
         except Exception as e:
             # Show detailed error in error panel instead of just status bar
             self.show_error_panel_with_message(
-                "Command Error", f"Failed to execute command: {command}", str(e)
+                "Command Error",
+                f"Failed to execute command: {command}",
+                traceback.format_exc(),
             )
 
     def handle_all_command(self):
@@ -1488,7 +1492,7 @@ The doctor command helps maintain database health by:
             self.show_error_panel_with_message(
                 "Add arXiv Paper Error",
                 f"Failed to add arXiv paper: {arxiv_id}",
-                str(e),
+                traceback.format_exc(),
             )
 
     def _quick_add_dblp(self, dblp_url: str):
@@ -1530,7 +1534,7 @@ The doctor command helps maintain database health by:
             self.show_error_panel_with_message(
                 "Add DBLP Paper Error",
                 f"Failed to add DBLP paper: {dblp_url}",
-                str(e),
+                traceback.format_exc(),
             )
 
     def _quick_add_openreview(self, openreview_id: str):
@@ -1580,15 +1584,24 @@ The doctor command helps maintain database health by:
                     paper.id, {"pdf_path": pdf_path}
                 )
                 if error:
-                    self.status_bar.set_error(f"Failed to update PDF path: {error}")
-                    self._add_log("add_openreview", f"Database update failed: {error}")
+                    self.status_bar.set_error(
+                        f"Failed to update PDF path for '{paper.title}': {error}"
+                    )
+                    self.show_error_panel_with_message(
+                        "Database Update Error",
+                        f"Failed to update PDF path for '{paper.title}'",
+                        str(error),
+                    )
                 else:
                     self._add_log(
                         "add_openreview", f"Database updated with PDF path: {pdf_path}"
                     )
             else:
-                self._add_log(
-                    "add_openreview", f"PDF download failed for '{paper.title}'"
+                self.status_bar.set_error(f"Failed to update PDF path: {error}")
+                self.show_error_panel_with_message(
+                    "PDF Download Error",
+                    f"PDF download failed for '{paper.title}'",
+                    "Please check the network connection or the paper's availability.",
                 )
 
             # Refresh display
@@ -1597,10 +1610,12 @@ The doctor command helps maintain database health by:
             self.status_bar.set_success(f"Added: {paper.title[:50]}...")
 
         except Exception as e:
+            import traceback
+
             self.show_error_panel_with_message(
                 "Add OpenReview Paper Error",
                 f"Failed to add OpenReview paper: {openreview_id}",
-                str(e),
+                traceback.format_exc(),
             )
 
     def _quick_add_pdf(self, pdf_path: str):
@@ -1676,7 +1691,7 @@ The doctor command helps maintain database health by:
             self.show_error_panel_with_message(
                 "Add PDF Paper Error",
                 f"Failed to add PDF paper: {pdf_path}",
-                str(e),
+                traceback.format_exc(),
             )
 
     def _quick_add_bib(self, bib_path: str):
@@ -1737,9 +1752,10 @@ The doctor command helps maintain database health by:
                     added_count += 1
                     self._add_log("add_bib", f"Added paper '{paper.title}' from BibTeX")
                 except Exception as e:
-                    self._add_log(
-                        "add_bib",
-                        f"Failed to add paper '{metadata.get('title', 'Unknown')}': {e}",
+                    self.show_error_panel_with_message(
+                        "Add BibTeX Paper Error",
+                        f"Failed to add paper '{metadata.get('title', 'Unknown')}' from BibTeX",
+                        traceback.format_exc(),
                     )
 
             # Refresh display
@@ -1750,7 +1766,7 @@ The doctor command helps maintain database health by:
             self.show_error_panel_with_message(
                 "Add BibTeX Papers Error",
                 f"Failed to add papers from BibTeX file: {bib_path}",
-                str(e),
+                traceback.format_exc(),
             )
 
     def _quick_add_ris(self, ris_path: str):
@@ -1811,9 +1827,10 @@ The doctor command helps maintain database health by:
                     added_count += 1
                     self._add_log("add_ris", f"Added paper '{paper.title}' from RIS")
                 except Exception as e:
-                    self._add_log(
-                        "add_ris",
-                        f"Failed to add paper '{metadata.get('title', 'Unknown')}': {e}",
+                    self.show_error_panel_with_message(
+                        "Add RIS Paper Error",
+                        f"Failed to add paper '{metadata.get('title', 'Unknown')}' from RIS",
+                        traceback.format_exc(),
                     )
 
             # Refresh display
@@ -1824,7 +1841,7 @@ The doctor command helps maintain database health by:
             self.show_error_panel_with_message(
                 "Add RIS Papers Error",
                 f"Failed to add papers from RIS file: {ris_path}",
-                str(e),
+                traceback.format_exc(),
             )
 
     def _add_manual_paper(self):
@@ -1862,7 +1879,9 @@ The doctor command helps maintain database health by:
 
         except Exception as e:
             self.show_error_panel_with_message(
-                "Add Manual Paper Error", "Failed to add manual paper", str(e)
+                "Add Manual Paper Error",
+                "Failed to add manual paper",
+                traceback.format_exc(),
             )
 
     def handle_filter_command(self, args: List[str]):
@@ -1973,9 +1992,10 @@ The doctor command helps maintain database health by:
         except Exception as e:
             import traceback
 
-            self._add_log(
-                "filter_error",
-                f"Error filtering papers: {e}\nTraceback: {traceback.format_exc()}",
+            self.show_error_panel_with_message(
+                "Filter Error",
+                f"Error filtering papers: {e}",
+                f"Traceback: {traceback.format_exc()}",
             )
             self.status_bar.set_error(f"Error filtering papers: {e}")
 
@@ -2004,15 +2024,10 @@ The doctor command helps maintain database health by:
                     # Errors are now logged by the service itself
                 else:
                     self.status_bar.set_error(result["message"])
-                    self._add_log("chat_error", result["message"])
-            else:
-                # Backward compatibility for string return
-                if isinstance(result, str) and result.startswith("Error"):
-                    self.status_bar.set_error(result)
-                    self._add_log("chat_error", result)
-                else:
-                    self.status_bar.set_success(
-                        f"Chat interface opened for {len(papers_to_chat)} paper(s)"
+                    self.show_error_panel_with_message(
+                        "Chat Error",
+                        result["message"],
+                        "Failed to open chat interface.",
                     )
 
         except Exception as e:
@@ -2025,6 +2040,11 @@ The doctor command helps maintain database health by:
             return
 
         try:
+            # Handle extract-pdf subcommand
+            if args and len(args) == 1 and args[0].lower() == "extract-pdf":
+                self._handle_extract_pdf_command(papers_to_update)
+                return
+
             # Parse command line arguments for quick update
             if args and len(args) >= 2:
                 # Quick update: /edit field value
@@ -2100,7 +2120,7 @@ The doctor command helps maintain database health by:
 
         except Exception as e:
             self.show_error_panel_with_message(
-                "Update Error", f"Failed to update papers", str(e)
+                "Update Error", f"Failed to update papers", traceback.format_exc()
             )
 
     def _show_edit_dialog(self, papers):
@@ -2136,7 +2156,9 @@ The doctor command helps maintain database health by:
                         )
                 except Exception as e:
                     self.show_error_panel_with_message(
-                        "Update Error", "Failed to update paper(s)", str(e)
+                        "Update Error",
+                        "Failed to update paper(s)",
+                        traceback.format_exc(),
                     )
             else:
                 self.status_bar.set_status("Update cancelled.")
@@ -2150,7 +2172,7 @@ The doctor command helps maintain database health by:
                 field.name: getattr(paper, field.name)
                 for field in paper.__table__.columns
             }
-            initial_data["authors"] = paper.authors
+            initial_data["authors"] = paper.get_ordered_authors()
             initial_data["collections"] = paper.collections
         else:
             # For multiple papers, show common values or indicate multiple values
@@ -2180,12 +2202,170 @@ The doctor command helps maintain database health by:
             read_only_fields = ["title", "abstract", "author_names", "collections"]
 
         self.edit_dialog = EditDialog(
-            initial_data, callback, self._add_log, read_only_fields=read_only_fields
+            initial_data,
+            callback,
+            self._add_log,
+            self.show_error_panel_with_message,
+            read_only_fields=read_only_fields,
         )
         self.edit_float = Float(self.edit_dialog)
         self.app.layout.container.floats.append(self.edit_float)
         self.app.layout.focus(self.edit_dialog.get_initial_focus() or self.edit_dialog)
         self.app.invalidate()
+
+    def _handle_extract_pdf_command(self, papers):
+        """Handle /edit extract-pdf command with confirmation dialog."""
+        if not isinstance(papers, list):
+            papers = [papers]
+
+        if len(papers) > 1:
+            self.status_bar.set_error("PDF extraction works with one paper at a time")
+            return
+
+        paper = papers[0]
+        pdf_path = paper.pdf_path
+
+        if not pdf_path or not os.path.exists(pdf_path):
+            self.status_bar.set_error("No PDF file available for this paper")
+            return
+
+        try:
+            extracted_data = self.metadata_extractor.extract_from_pdf(pdf_path)
+
+            # Prepare changes summary
+            changes = []
+            field_mapping = {
+                "title": "title",
+                "authors": "authors",
+                "abstract": "abstract",
+                "year": "year",
+                "venue_full": "venue_full",
+                "venue_acronym": "venue_acronym",
+                "doi": "doi",
+                "url": "url",
+                "category": "category",
+                "paper_type": "paper_type",
+            }
+
+            for extracted_field, paper_field in field_mapping.items():
+                if (
+                    extracted_field in extracted_data
+                    and extracted_data[extracted_field]
+                ):
+                    new_value = extracted_data[extracted_field]
+
+                    # Get current value
+                    if paper_field == "authors":
+                        ordered_authors = paper.get_ordered_authors()
+                        current_value = (
+                            ", ".join([a.full_name for a in ordered_authors])
+                            if ordered_authors
+                            else ""
+                        )
+                        new_value = (
+                            ", ".join(new_value)
+                            if isinstance(new_value, list)
+                            else str(new_value)
+                        )
+                    else:
+                        current_value = (
+                            str(getattr(paper, paper_field, ""))
+                            if getattr(paper, paper_field, None)
+                            else ""
+                        )
+                        new_value = str(new_value) if new_value else ""
+
+                    if current_value != new_value:
+                        changes.append(
+                            f"{paper_field}: '{current_value}' → '{new_value}'"
+                        )
+
+            if not changes:
+                self.status_bar.set_status("No changes detected from PDF extraction")
+                return
+
+            # Show confirmation dialog
+            changes_text = "The following changes will be applied:\n\n" + "\n".join(
+                changes
+            )
+
+            from prompt_toolkit.widgets import Label
+            from prompt_toolkit.layout.containers import Float
+
+            def confirm_apply():
+                if hasattr(self, "confirmation_float"):
+                    self.app.layout.container.floats.remove(self.confirmation_float)
+                self.app.layout.focus(self.input_buffer)
+
+                # Apply changes
+                try:
+                    updates = {}
+
+                    for extracted_field, paper_field in field_mapping.items():
+                        if (
+                            extracted_field in extracted_data
+                            and extracted_data[extracted_field]
+                        ):
+                            value = extracted_data[extracted_field]
+
+                            if paper_field == "authors":
+                                from .services import AuthorService
+
+                                author_service = AuthorService()
+                                if isinstance(value, list):
+                                    updates["authors"] = [
+                                        author_service.get_or_create_author(name)
+                                        for name in value
+                                    ]
+                            elif paper_field == "year" and isinstance(value, int):
+                                updates["year"] = value
+                            else:
+                                updates[paper_field] = value
+
+                    updated_paper, error = self.paper_service.update_paper(
+                        paper.id, updates
+                    )
+                    if error:
+                        self.status_bar.set_error(f"Update error: {error}")
+                    else:
+                        self.load_papers()
+                        self.status_bar.set_success("Paper updated with PDF metadata")
+                        self._add_log(
+                            "pdf_extract",
+                            f"Extracted and applied PDF metadata for '{paper.title}'",
+                        )
+
+                except Exception as e:
+                    self.status_bar.set_error(f"Error applying changes: {e}")
+
+            def confirm_cancel():
+                if hasattr(self, "confirmation_float"):
+                    self.app.layout.container.floats.remove(self.confirmation_float)
+                self.app.layout.focus(self.input_buffer)
+                self.status_bar.set_status("PDF extraction cancelled")
+
+            from prompt_toolkit.widgets import Dialog, Button
+
+            confirmation_dialog = Dialog(
+                title="Confirm PDF Metadata Extraction",
+                body=Label(text=changes_text, dont_extend_height=True),
+                buttons=[
+                    Button(text="Yes", handler=confirm_apply),
+                    Button(text="No", handler=confirm_cancel),
+                ],
+                with_background=False,
+            )
+
+            self.confirmation_float = Float(content=confirmation_dialog)
+            self.app.layout.container.floats.append(self.confirmation_float)
+            self.app.layout.focus(confirmation_dialog)
+
+        except Exception as e:
+            self.show_error_panel_with_message(
+                "PDF Extraction Error",
+                f"Failed to extract metadata from PDF: {pdf_path}",
+                traceback.format_exc(),
+            )
 
     def show_add_dialog(self):
         """Show the add paper dialog."""
@@ -2598,7 +2778,7 @@ The doctor command helps maintain database health by:
 
         if len(papers) == 1:
             paper = papers[0]
-            authors = ", ".join([a.full_name for a in paper.authors])
+            authors = ", ".join([a.full_name for a in paper.get_ordered_authors()])
             collections = ", ".join([c.name for c in paper.collections])
             # Format timestamps
             added_date_str = (
@@ -2833,6 +3013,7 @@ The doctor command helps maintain database health by:
                 self.paper_service,
                 self.status_bar,
                 self._add_log,
+                self.show_error_panel_with_message,
             )
             debug_logger.debug("CollectDialog created successfully")
 
@@ -2864,5 +3045,5 @@ The doctor command helps maintain database health by:
             self.show_error_panel_with_message(
                 "Collection Dialog Error",
                 "Could not open the collection management dialog.",
-                str(e),
+                traceback.format_exc(),
             )

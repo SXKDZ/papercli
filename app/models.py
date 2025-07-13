@@ -20,13 +20,19 @@ from sqlalchemy.orm import relationship, Mapped, mapped_column
 Base = declarative_base()
 
 
-# Association table for many-to-many relationship between papers and authors
-paper_authors = Table(
-    "paper_authors",
-    Base.metadata,
-    Column("paper_id", Integer, ForeignKey("papers.id"), primary_key=True),
-    Column("author_id", Integer, ForeignKey("authors.id"), primary_key=True),
-)
+# Association object for many-to-many relationship between papers and authors with ordering
+class PaperAuthor(Base):
+    """Association object for paper-author relationship with ordering."""
+    
+    __tablename__ = "paper_authors"
+    
+    paper_id: Mapped[int] = mapped_column(Integer, ForeignKey("papers.id", ondelete="CASCADE"), primary_key=True)
+    author_id: Mapped[int] = mapped_column(Integer, ForeignKey("authors.id", ondelete="CASCADE"), primary_key=True)
+    position: Mapped[int] = mapped_column(Integer, primary_key=True)  # Author order position
+    
+    # Relationships to actual objects
+    paper: Mapped["Paper"] = relationship("Paper", back_populates="paper_authors")
+    author: Mapped["Author"] = relationship("Author", back_populates="paper_authors")
 
 # Association table for many-to-many relationship between papers and collections
 paper_collections = Table(
@@ -50,8 +56,11 @@ class Author(Base):
     affiliation: Mapped[Optional[str]] = mapped_column(String(255))
 
     # Relationships
+    paper_authors: Mapped[List["PaperAuthor"]] = relationship(
+        "PaperAuthor", back_populates="author"
+    )
     papers: Mapped[List["Paper"]] = relationship(
-        "Paper", secondary=paper_authors, back_populates="authors"
+        "Paper", secondary="paper_authors", back_populates="authors", viewonly=True
     )
 
     def __repr__(self):
@@ -118,8 +127,11 @@ class Paper(Base):
     )
 
     # Relationships
+    paper_authors: Mapped[List[PaperAuthor]] = relationship(
+        "PaperAuthor", back_populates="paper", order_by="PaperAuthor.position", cascade="all, delete-orphan"
+    )
     authors: Mapped[List[Author]] = relationship(
-        "Author", secondary=paper_authors, back_populates="papers"
+        "Author", secondary="paper_authors", back_populates="papers", viewonly=True
     )
     collections: Mapped[List[Collection]] = relationship(
         "Collection", secondary=paper_collections, back_populates="papers"
@@ -130,8 +142,14 @@ class Paper(Base):
 
     @property
     def author_names(self) -> str:
-        """Return formatted author names."""
-        return ", ".join([author.full_name for author in self.authors])
+        """Return formatted author names in correct order."""
+        # Get authors in order using the paper_authors relationship
+        ordered_authors = [pa.author for pa in sorted(self.paper_authors, key=lambda x: x.position)]
+        return ", ".join([author.full_name for author in ordered_authors])
+    
+    def get_ordered_authors(self) -> List[Author]:
+        """Get authors in their correct order."""
+        return [pa.author for pa in sorted(self.paper_authors, key=lambda x: x.position)]
 
     @property
     def venue_display(self) -> str:
