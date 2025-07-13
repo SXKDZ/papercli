@@ -25,31 +25,45 @@ class DatabaseManager:
         )
 
     def create_tables(self):
-        """Create all database tables using Alembic."""
-        # Try to find alembic.ini in the current directory first (for development)
-        alembic_ini_path = "alembic.ini"
-        alembic_dir = "alembic"
-        
-        if not os.path.exists(alembic_ini_path):
-            # Look for it relative to this file (installed package)
-            import app
-            app_path = Path(app.__file__).parent.parent
-            alembic_ini_path = app_path / "alembic.ini"
-            alembic_dir = app_path / "alembic"
+        """Create all database tables using Alembic or fallback to direct creation."""
+        # First try to use Alembic if available
+        if self._try_alembic_upgrade():
+            return
             
-            if not alembic_ini_path.exists():
-                raise Exception("Alembic config not found")
+        # Fallback: Create tables directly using SQLAlchemy
+        print("Alembic not available, creating tables directly...")
+        Base.metadata.create_all(bind=self.engine)
+    
+    def _try_alembic_upgrade(self):
+        """Try to upgrade using Alembic. Returns True if successful."""
+        try:
+            # Try to find alembic.ini in the current directory first (for development)
+            alembic_ini_path = "alembic.ini"
+            alembic_dir = "alembic"
             
-            alembic_ini_path = str(alembic_ini_path)
-            alembic_dir = str(alembic_dir)
-        
-        alembic_cfg = Config(alembic_ini_path)
-        alembic_cfg.set_main_option(
-            "sqlalchemy.url", f"sqlite:///{self.db_path}"
-        )
-        alembic_cfg.set_main_option("script_location", alembic_dir)
-        
-        command.upgrade(alembic_cfg, "head")
+            if not os.path.exists(alembic_ini_path):
+                # Look for it relative to this file (installed package)
+                import app
+                app_path = Path(app.__file__).parent.parent
+                alembic_ini_path = app_path / "alembic.ini"
+                alembic_dir = app_path / "alembic"
+                
+                if not alembic_ini_path.exists():
+                    return False
+                
+                alembic_ini_path = str(alembic_ini_path)
+                alembic_dir = str(alembic_dir)
+            
+            alembic_cfg = Config(alembic_ini_path)
+            alembic_cfg.set_main_option(
+                "sqlalchemy.url", f"sqlite:///{self.db_path}"
+            )
+            alembic_cfg.set_main_option("script_location", alembic_dir)
+            
+            command.upgrade(alembic_cfg, "head")
+            return True
+        except Exception:
+            return False
 
     @contextmanager
     def get_session(self) -> Generator[Session, None, None]:

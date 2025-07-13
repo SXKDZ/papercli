@@ -76,7 +76,13 @@ python -m app.papercli
 
 ## Quick Start
 
-1. **Launch PaperCLI**:
+1. **Set up OpenAI API key** (required for AI features):
+   ```bash
+   # Create a .env file in your working directory
+   echo "OPENAI_API_KEY=your_openai_api_key_here" > .env
+   ```
+
+2. **Launch PaperCLI**:
    ```bash
    # If installed via pipx or pip
    papercli
@@ -85,17 +91,17 @@ python -m app.papercli
    python -m app.papercli
    ```
 
-2. **Add your first paper**:
+3. **Add your first paper**:
    ```
    /add arxiv 2307.10635
    ```
 
-3. **Search and filter**:
+4. **Search and filter**:
    ```
    /filter all machine learning
    ```
 
-4. **Export your library**:
+5. **Export your library**:
    ```
    /export bibtex
    ```
@@ -152,7 +158,7 @@ Work on the paper under the cursor ► or selected papers ✓:
 Create a `.env` file in your project directory:
 
 ```env
-# OpenAI API key for LLM features (optional)
+# OpenAI API key for LLM features (required for AI features)
 OPENAI_API_KEY=your_openai_api_key_here
 
 # Data directory for database and PDFs (optional, defaults to ~/.papercli)

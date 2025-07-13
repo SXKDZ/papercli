@@ -1988,6 +1988,11 @@ class PDFManager:
             if is_local_file:
                 # Copy local file to PDF directory
                 import shutil
+                
+                # Check if source and destination are the same file
+                if os.path.abspath(pdf_input) == os.path.abspath(target_path):
+                    # File is already in the right place, no need to copy
+                    return target_path, ""
 
                 shutil.copy2(pdf_input, target_path)
                 
