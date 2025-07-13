@@ -55,8 +55,9 @@ class SmartCompleter(Completer):
                 "description": "Add a new paper",
                 "subcommands": {
                     "pdf": "Add from a local PDF file",
-                    "arxiv": "Add from an arXiv ID (e.g., 2106.09685)",
+                    "arxiv": "Add from an arXiv ID (e.g., 2307.10635)",
                     "dblp": "Add from a DBLP URL",
+                    "openreview": "Add from an OpenReview ID (e.g., bq1JEgioLr)",
                     "manual": "Add a paper with manual entry",
                 },
             },
@@ -102,8 +103,8 @@ class SmartCompleter(Completer):
                     "paper_type": "Edit the paper type (e.g., journal, conference)",
                     "doi": "Edit the DOI",
                     "pages": "Edit the page numbers",
-                    "arxiv_id": "Edit the arXiv ID",
-                    "dblp_url": "Edit the DBLP URL",
+                    "preprint_id": "Edit the preprint ID (e.g., arXiv 2505.15134)",
+                    "url": "Edit the paper URL",
                 },
             },
             "/export": {
@@ -645,8 +646,8 @@ The doctor command helps maintain database health by:
             self.show_add_dialog()
 
         @self.kb.add("f3")
-        def toggle_select_mode(event):
-            self.handle_select_command()
+        def open_paper(event):
+            self.handle_open_command()
 
         @self.kb.add("f4")
         def show_detail(event):
@@ -669,20 +670,20 @@ The doctor command helps maintain database health by:
             self.show_filter_dialog()
 
         @self.kb.add("f9")
-        def sort_papers(event):
-            self.show_sort_dialog()
-
-        @self.kb.add("f10")
         def show_all_papers(event):
             self.handle_all_command()
 
+        @self.kb.add("f10")
+        def sort_papers(event):
+            self.show_sort_dialog()
+
         @self.kb.add("f11")
-        def clear_selection(event):
-            self.handle_clear_command()
+        def toggle_select_mode(event):
+            self.handle_select_command()
 
         @self.kb.add("f12")
-        def exit_app(event):
-            event.app.exit()
+        def clear_selection(event):
+            self.handle_clear_command()
 
         # Exit selection mode
         @self.kb.add("escape")
@@ -1205,16 +1206,16 @@ The doctor command helps maintain database health by:
         shortcuts = [
             "F1: Help",
             "F2: Add",
-            "F3: Select",
+            "F3: Open",
             "F4: Detail",
             "F5: Edit",
             "F6: Delete",
             "F7: Collect",
             "F8: Filter",
-            "F9: Sort",
-            "F10: All",
-            "F11: Clear",
-            "F12: Exit",
+            "F9: All",
+            "F10: Sort",
+            "F11: Select",
+            "F12: Clear",
             "↑↓: Nav",
         ]
         help_text = shortkey_spacing.join(shortcuts)
@@ -1420,15 +1421,17 @@ The doctor command helps maintain database health by:
                     self._quick_add_dblp(
                         " ".join(args[1:])
                     )  # Support URLs with parameters
+                elif args[0] == "openreview" and len(args) > 1:
+                    self._quick_add_openreview(args[1])
                 elif args[0] == "manual":
                     self._add_manual_paper()
                 else:
                     self.status_bar.set_status(
-                        "📝 Usage: /add [arxiv <id>|dblp <url>|manual]"
+                        "📝 Usage: /add [arxiv <id>|dblp <url>|openreview <id>|manual]"
                     )
             else:
                 self.status_bar.set_status(
-                    "📝 Usage: /add [arxiv <id>|dblp <url>|manual]"
+                    "📝 Usage: /add [arxiv <id>|dblp <url>|openreview <id>|manual]"
                 )
 
         except Exception as e:
@@ -1444,7 +1447,7 @@ The doctor command helps maintain database health by:
 
             # Download PDF
             pdf_dir = os.path.join(os.path.expanduser("~"), ".papercli", "pdfs")
-            pdf_path = self.system_service.download_arxiv_pdf(arxiv_id, pdf_dir)
+            pdf_path = self.system_service.download_pdf("arxiv", arxiv_id, pdf_dir)
 
             # Prepare paper data
             paper_data = {
@@ -1454,9 +1457,10 @@ The doctor command helps maintain database health by:
                 "venue_full": metadata.get("venue_full", ""),
                 "venue_acronym": metadata.get("venue_acronym", ""),
                 "paper_type": metadata.get("paper_type", "preprint"),
-                "arxiv_id": metadata.get("arxiv_id"),
+                "preprint_id": metadata.get("arxiv_id"),
                 "doi": metadata.get("doi"),
                 "pdf_path": pdf_path,
+                "url": f"https://arxiv.org/pdf/{arxiv_id}.pdf",
             }
 
             # Add to database
@@ -1498,7 +1502,7 @@ The doctor command helps maintain database health by:
                 "venue_acronym": metadata.get("venue_acronym", ""),
                 "paper_type": metadata.get("paper_type", "conference"),
                 "doi": metadata.get("doi"),
-                "dblp_url": dblp_url,
+                "url": metadata.get("url", dblp_url),
             }
 
             # Add to database
@@ -1518,6 +1522,64 @@ The doctor command helps maintain database health by:
             self.show_error_panel_with_message(
                 "Add DBLP Paper Error",
                 f"Failed to add DBLP paper: {dblp_url}",
+                str(e),
+            )
+
+    def _quick_add_openreview(self, openreview_id: str):
+        """Quickly add a paper from OpenReview."""
+        try:
+            self.status_bar.set_status(f"🔬 Fetching OpenReview paper {openreview_id}...")
+
+            # Extract metadata from OpenReview
+            metadata = self.metadata_extractor.extract_from_openreview(openreview_id)
+
+            # Prepare paper data
+            paper_data = {
+                "title": metadata.get("title", "Unknown Title"),
+                "abstract": metadata.get("abstract", ""),
+                "year": metadata.get("year"),
+                "venue_full": metadata.get("venue_full", ""),
+                "venue_acronym": metadata.get("venue_acronym", ""),
+                "paper_type": metadata.get("paper_type", "conference"),
+                "category": metadata.get("category"),
+                "url": metadata.get("url", f"https://openreview.net/forum?id={openreview_id}"),
+                "pdf_path": metadata.get("pdf_path"),
+            }
+
+            # Add to database
+            authors = metadata.get("authors", [])
+            collections = []
+
+            paper = self.paper_service.add_paper_from_metadata(
+                paper_data, authors, collections
+            )
+
+            # Download PDF
+            pdf_dir = os.path.join(os.path.expanduser("~"), ".papercli", "pdfs")
+            self._add_log("add_openreview", f"Attempting to download PDF to {pdf_dir}")
+            pdf_path = self.system_service.download_pdf("openreview", openreview_id, pdf_dir, paper_data)
+            
+            if pdf_path:
+                self._add_log("add_openreview", f"PDF download successful: {pdf_path}")
+                # Update paper with local PDF path
+                updated_paper, error = self.paper_service.update_paper(paper.id, {"pdf_path": pdf_path})
+                if error:
+                    self.status_bar.set_error(f"Failed to update PDF path: {error}")
+                    self._add_log("add_openreview", f"Database update failed: {error}")
+                else:
+                    self._add_log("add_openreview", f"Database updated with PDF path: {pdf_path}")
+            else:
+                self._add_log("add_openreview", f"PDF download failed for '{paper.title}'")
+
+            # Refresh display
+            self.load_papers()
+            self._add_log("add_openreview", f"Added OpenReview paper '{paper.title}'")
+            self.status_bar.set_success(f"Added: {paper.title[:50]}...")
+
+        except Exception as e:
+            self.show_error_panel_with_message(
+                "Add OpenReview Paper Error",
+                f"Failed to add OpenReview paper: {openreview_id}",
                 str(e),
             )
 
@@ -1725,8 +1787,9 @@ The doctor command helps maintain database health by:
                     "paper_type",
                     "doi",
                     "pages",
-                    "arxiv_id",
-                    "dblp_url",
+                    "preprint_id",
+                    "url",
+                    "category",
                 ]
                 if field not in valid_fields:
                     self.status_bar.set_error(
@@ -1753,7 +1816,10 @@ The doctor command helps maintain database health by:
                     try:
                         # Log before and after
                         old_value = getattr(paper, field)
-                        self.paper_service.update_paper(paper.id, updates)
+                        updated_paper, error = self.paper_service.update_paper(paper.id, updates)
+                        if error:
+                            self.status_bar.set_error(f"Update error: {error}")
+                            continue
                         self._add_log(
                             "edit",
                             f"Updated '{field}' for paper '{paper.title}'. From '{old_value}' to '{value}'",
@@ -1798,11 +1864,15 @@ The doctor command helps maintain database health by:
                     for paper in papers:
                         # The result from EditDialog now contains proper model objects for relationships
                         # and can be passed directly to the update service.
-                        self.paper_service.update_paper(paper.id, result)
-                        updated_count += 1
+                        updated_paper, error = self.paper_service.update_paper(paper.id, result)
+                        if error:
+                            self.status_bar.set_error(f"Update error: {error}")
+                        else:
+                            updated_count += 1
 
                     self.load_papers()
-                    self.status_bar.set_success(f"✓ Updated {updated_count} paper(s).")
+                    if updated_count > 0:
+                        self.status_bar.set_success(f"Updated {updated_count} paper(s).")
                 except Exception as e:
                     self.show_error_panel_with_message(
                         "Update Error", "Failed to update paper(s)", str(e)
@@ -1837,9 +1907,9 @@ The doctor command helps maintain database health by:
                 "issue": get_common_value("issue"),
                 "pages": get_common_value("pages"),
                 "doi": get_common_value("doi"),
-                "arxiv_id": get_common_value("arxiv_id"),
-                "dblp_url": get_common_value("dblp_url"),
-                "google_scholar_url": get_common_value("google_scholar_url"),
+                "preprint_id": get_common_value("preprint_id"),
+                "category": get_common_value("category"),
+                "url": get_common_value("url"),
                 "pdf_path": get_common_value("pdf_path"),
                 "paper_type": get_common_value("paper_type") or "conference",
                 "notes": get_common_value("notes"),
@@ -1877,7 +1947,7 @@ The doctor command helps maintain database health by:
                         return
 
                     # Determine the type of source and call appropriate add command
-                    if source.lower() in ["pdf", "arxiv", "dblp", "manual"]:
+                    if source.lower() in ["pdf", "arxiv", "dblp", "openreview", "manual"]:
                         # Handle subcommand-style addition
                         if path_id:
                             self.handle_add_command([source, path_id])

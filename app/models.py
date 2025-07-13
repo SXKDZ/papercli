@@ -137,7 +137,7 @@ class Paper(Base):
     def venue_display(self) -> str:
         """Return formatted venue display."""
         if self.venue_acronym and self.venue_full:
-            return f"{self.venue_acronym} ({self.venue_full})"
+            return f"{self.venue_full} ({self.venue_acronym})"
         return self.venue_full or self.venue_acronym or "Unknown"
 
     @property

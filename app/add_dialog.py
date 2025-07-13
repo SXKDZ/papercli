@@ -23,8 +23,9 @@ class AddDialog:
         # Available sources
         self.source_options = [
             ("pdf", "PDF File - Add from a local PDF file"),
-            ("arxiv", "arXiv - Add from an arXiv ID (e.g., 2106.09685)"),
+            ("arxiv", "arXiv - Add from an arXiv ID (e.g., 2307.10635)"),
             ("dblp", "DBLP - Add from a DBLP URL"),
+            ("openreview", "OpenReview - Add from an OpenReview ID (e.g., bq1JEgioLr)"),
             ("manual", "Manual - Add with manual entry"),
         ]
 
@@ -60,6 +61,8 @@ class AddDialog:
                 return "arXiv ID:"
             elif source == "dblp":
                 return "URL:"
+            elif source == "openreview":
+                return "OpenReview ID:"
             else:
                 return "Path/ID/URL:"
         
