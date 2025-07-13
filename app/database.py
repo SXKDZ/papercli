@@ -3,12 +3,14 @@ Database initialization and connection management.
 """
 
 import os
+from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
 from contextlib import contextmanager
 from typing import Generator
 from alembic import command
 from alembic.config import Config
+import pkg_resources
 
 from .models import Base
 
@@ -25,13 +27,38 @@ class DatabaseManager:
 
     def create_tables(self):
         """Create all database tables using Alembic."""
-        if not os.path.exists("alembic.ini"):
-            raise Exception("Alembic config not found")
+        # Try to find alembic.ini in the current directory first (for development)
+        alembic_ini_path = "alembic.ini"
         
-        alembic_cfg = Config("alembic.ini")
+        if not os.path.exists(alembic_ini_path):
+            # If not found, try to get it from the package
+            try:
+                alembic_ini_path = pkg_resources.resource_filename('papercli', 'alembic.ini')
+            except:
+                # Fallback: look for it relative to this file
+                current_dir = Path(__file__).parent.parent
+                alembic_ini_path = current_dir / "alembic.ini"
+                if not alembic_ini_path.exists():
+                    raise Exception("Alembic config not found")
+                alembic_ini_path = str(alembic_ini_path)
+        
+        alembic_cfg = Config(alembic_ini_path)
         alembic_cfg.set_main_option(
             "sqlalchemy.url", f"sqlite:///{self.db_path}"
         )
+        
+        # Set the script location to the alembic directory
+        if not os.path.exists("alembic"):
+            try:
+                alembic_dir = pkg_resources.resource_filename('alembic', '')
+                alembic_cfg.set_main_option("script_location", alembic_dir)
+            except:
+                # Fallback: look for it relative to this file
+                current_dir = Path(__file__).parent.parent
+                alembic_dir = current_dir / "alembic"
+                if alembic_dir.exists():
+                    alembic_cfg.set_main_option("script_location", str(alembic_dir))
+        
         command.upgrade(alembic_cfg, "head")
 
     @contextmanager
