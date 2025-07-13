@@ -316,12 +316,14 @@ class CollectionService:
             if not collection:
                 collection = Collection(name=collection_name)
                 session.add(collection)
+                session.flush()  # Ensure new collection has an ID before use
 
             if collection not in paper.collections:
                 paper.collections.append(collection)
                 session.commit()
                 return True
-            return False
+            else:
+                return False
 
     def add_papers_to_collection(
         self, paper_ids: List[int], collection_name: str
