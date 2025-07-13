@@ -92,7 +92,7 @@ class EditDialog:
                     text=value,
                     multiline=is_multiline,
                     read_only=is_read_only,
-                    width=Dimension(min=60, preferred=100), # Make input fields wider
+                    width=Dimension(min=80, preferred=120), # Make input fields wider
                     style="class:textarea" if not is_read_only else "class:textarea.readonly",
                     focusable=not is_read_only, # Explicitly set focusable
                 )
@@ -150,7 +150,7 @@ class EditDialog:
             content=fields_content, 
             show_scrollbar=True, 
             keep_cursor_visible=True,
-            width=Dimension(min=100, preferred=120)  # Ensure content fits within dialog
+            width=Dimension(min=120, preferred=140)  # Ensure content fits within dialog
         )
         
         # Put "Paper Type:" label and buttons on the same line
@@ -170,7 +170,7 @@ class EditDialog:
         self.body_container = HSplit(
             body_components, 
             padding=2,  # Increase padding to 2 for exactly 2 lines of spacing
-            width=Dimension(min=110, preferred=130)  # Ensure body fits within dialog frame
+            width=Dimension(min=130, preferred=150)  # Ensure body fits within dialog frame
         )
         
         # Create custom button row with centered buttons and right-aligned help text
@@ -203,7 +203,7 @@ class EditDialog:
             body=self.body_container,
             buttons=[button_row],
             with_background=False, modal=True,  # Remove shadow by setting with_background=False
-            width=Dimension(min=120, preferred=140),  # Make dialog wider
+            width=Dimension(min=140, preferred=160),  # Make dialog wider
         )
         self._set_initial_focus()
 

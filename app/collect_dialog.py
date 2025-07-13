@@ -336,19 +336,19 @@ class CollectDialog:
         self.collections_frame = Frame(
             title="Collections",
             body=self.collections_list,
-            width=Dimension(min=30, preferred=35),
+            width=Dimension(min=35, preferred=40),
         )
         # Column 2: Papers in selected collection
         self.papers_in_collection_frame = Frame(
             title="Papers in Collection",
             body=self.papers_in_collection_list,
-            width=Dimension(min=35, preferred=45),
+            width=Dimension(min=45, preferred=55),
         )
         # Column 3: All other papers
         self.other_papers_frame = Frame(
             title="All Papers",
             body=self.other_papers_list,
-            width=Dimension(min=35, preferred=45),
+            width=Dimension(min=45, preferred=55),
         )
 
         # Main layout with three columns
@@ -395,7 +395,7 @@ class CollectDialog:
             title="Collection Management",
             body=self.dialog_body,
             buttons=[button_row],
-            width=Dimension(min=140, preferred=160),
+            width=Dimension(min=180, preferred=200),
             with_background=False,
             modal=True,
         )
