@@ -45,7 +45,20 @@ class StatusMessages:
         stripped = message.strip()
         if any(stripped.startswith(icon) for icon in cls.ICONS.values()) or any(
             stripped.startswith(sym)
-            for sym in ["📜", "📖", "📚", "←", "→", "↑", "↓", "🔄", "💻", "🖥️", "📊", "📝"]
+            for sym in [
+                "📜",
+                "📖",
+                "📚",
+                "←",
+                "→",
+                "↑",
+                "↓",
+                "🔄",
+                "💻",
+                "🖥️",
+                "📊",
+                "📝",
+            ]
         ):
             return message
 

@@ -13,7 +13,7 @@ from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
 from prompt_toolkit.application import get_app
 from titlecase import titlecase
 
-from .services import CollectionService, AuthorService
+from .services import CollectionService, AuthorService, fix_broken_lines
 
 
 from prompt_toolkit.widgets import TextArea
@@ -37,12 +37,12 @@ class EditDialog:
         }
         
         self.fields_by_type = {
-            "conference": ["title", "author_names", "venue_full", "venue_acronym", "year", "pages", "doi", "dblp_url", "pdf_path", "collections", "abstract", "notes"],
+            "conference": ["title", "author_names", "venue_full", "venue_acronym", "year", "pages", "doi", "url", "pdf_path", "collections", "abstract", "notes"],
             "journal": ["title", "author_names", "venue_full", "year", "volume", "issue", "pages", "doi", "pdf_path", "collections", "abstract", "notes"],
-            "workshop": ["title", "author_names", "venue_full", "venue_acronym", "year", "pages", "doi", "dblp_url", "pdf_path", "collections", "abstract", "notes"],
-            "preprint": ["title", "author_names", "venue_full", "year", "arxiv_id", "doi", "pdf_path", "collections", "abstract", "notes"],
-            "website": ["title", "author_names", "year", "google_scholar_url", "pdf_path", "collections", "abstract", "notes"],
-            "other": ["title", "author_names", "venue_full", "venue_acronym", "year", "volume", "issue", "pages", "doi", "arxiv_id", "dblp_url", "google_scholar_url", "pdf_path", "collections", "abstract", "notes"]
+            "workshop": ["title", "author_names", "venue_full", "venue_acronym", "year", "pages", "doi", "url", "pdf_path", "collections", "abstract", "notes"],
+            "preprint": ["title", "author_names", "venue_full", "year", "preprint_id", "category", "doi", "url", "pdf_path", "collections", "abstract", "notes"],
+            "website": ["title", "author_names", "year", "url", "pdf_path", "collections", "abstract", "notes"],
+            "other": ["title", "author_names", "venue_full", "venue_acronym", "year", "volume", "issue", "pages", "doi", "preprint_id", "category", "url", "pdf_path", "collections", "abstract", "notes"]
         }
         
         self.current_paper_type = paper_data.get("paper_type", "conference")
@@ -72,8 +72,8 @@ class EditDialog:
             "venue_full": self.paper_data.get("venue_full", ""), "venue_acronym": self.paper_data.get("venue_acronym", ""),
             "year": str(self.paper_data.get("year", "")), "volume": self.paper_data.get("volume", ""),
             "issue": self.paper_data.get("issue", ""), "pages": self.paper_data.get("pages", ""),
-            "doi": self.paper_data.get("doi", ""), "arxiv_id": self.paper_data.get("arxiv_id", ""),
-            "dblp_url": self.paper_data.get("dblp_url", ""), "google_scholar_url": self.paper_data.get("google_scholar_url", ""),
+            "doi": self.paper_data.get("doi", ""), "preprint_id": self.paper_data.get("preprint_id", ""),
+            "category": self.paper_data.get("category", ""), "url": self.paper_data.get("url", ""),
             "pdf_path": self.paper_data.get("pdf_path", ""), "collections": collection_names,
             "abstract": self.paper_data.get("abstract", ""), "notes": self.paper_data.get("notes", ""),
         }
@@ -122,7 +122,15 @@ class EditDialog:
         visible_fields = self.fields_by_type.get(self.current_paper_type, self.fields_by_type["other"])
         for field_name in visible_fields:
             if field_name in self.input_fields:
-                label_text = field_name.replace("_", " ").title()
+                # Custom label mappings for better display
+                label_mappings = {
+                    "doi": "DOI",
+                    "pdf_path": "PDF Path",
+                    "preprint_id": "ID" if self.current_paper_type == "preprint" else "Preprint ID",
+                    "url": "URL",
+                    "venue_full": "Website" if self.current_paper_type == "preprint" else "Venue Full",
+                }
+                label_text = label_mappings.get(field_name, field_name.replace("_", " ").title())
                 label_window = Window(
                     content=FormattedTextControl(f"{label_text}:", focusable=False), 
                     width=18,  # Fixed width for consistent alignment
@@ -246,6 +254,11 @@ class EditDialog:
             if field_name == "title":
                 new_value = titlecase(new_value)
                 normalized_new_value = new_value # Update normalized value after titlecase
+            
+            # Special handling for abstract to fix broken lines
+            if field_name == "abstract":
+                new_value = fix_broken_lines(new_value)
+                normalized_new_value = new_value
 
             if normalized_old_value != normalized_new_value:
                 changes_made.append(f"{field_name} from '{old_value}' to '{new_value}'")

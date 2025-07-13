@@ -12,9 +12,21 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime
 from sqlalchemy import or_, and_
 from fuzzywuzzy import fuzz
+from titlecase import titlecase
 
 from .database import get_db_session
 from .models import Paper, Author, Collection
+
+
+def fix_broken_lines(text: str) -> str:
+    """Fix broken lines in text - join lines that are not proper sentence endings."""
+    if not text:
+        return text
+    # Join lines unless next line starts with capital letter
+    text = re.sub(r'\n(?![A-Z])', ' ', text)
+    # Normalize multiple spaces
+    text = re.sub(r'\s+', ' ', text)
+    return text.strip()
 
 
 class PaperService:
@@ -147,12 +159,12 @@ class PaperService:
         with get_db_session() as session:
             from sqlalchemy.orm import joinedload
 
-            # Check for existing paper by arXiv ID, DOI, or title
+            # Check for existing paper by preprint ID, DOI, or title
             existing_paper = None
-            if paper_data.get("arxiv_id"):
+            if paper_data.get("preprint_id"):
                 existing_paper = (
                     session.query(Paper)
-                    .filter(Paper.arxiv_id == paper_data["arxiv_id"])
+                    .filter(Paper.preprint_id == paper_data["preprint_id"])
                     .first()
                 )
             elif paper_data.get("doi"):
@@ -653,10 +665,14 @@ class MetadataExtractor:
             title = (
                 title_elem.text.strip() if title_elem is not None else "Unknown Title"
             )
+            # Apply titlecase to arXiv titles
+            title = titlecase(title)
 
             # Extract abstract
             summary_elem = entry.find("atom:summary", ns)
             abstract = summary_elem.text.strip() if summary_elem is not None else ""
+            # Fix broken lines in abstract
+            abstract = fix_broken_lines(abstract)
 
             # Extract authors
             authors = []
@@ -673,6 +689,12 @@ class MetadataExtractor:
                 year_match = re.search(r"(\d{4})", published_date)
                 if year_match:
                     year = int(year_match.group(1))
+            
+            # Extract arXiv category
+            category = None
+            category_elem = entry.find("atom:category", ns)
+            if category_elem is not None:
+                category = category_elem.get("term")
 
             # Extract DOI if available
             doi = None
@@ -687,11 +709,12 @@ class MetadataExtractor:
                 "abstract": abstract,
                 "authors": authors,
                 "year": year,
-                "arxiv_id": arxiv_id,
+                "preprint_id": f"arXiv {arxiv_id}",  # Store as "arXiv 2505.15134"
+                "category": category,
                 "doi": doi,
                 "paper_type": "preprint",
                 "venue_full": "arXiv",
-                "venue_acronym": "arXiv",
+                "venue_acronym": None,  # No acronym for arXiv papers
             }
 
         except requests.RequestException as e:
@@ -716,6 +739,8 @@ class MetadataExtractor:
                     if metadata
                     else "Unknown Title"
                 )
+                # Apply titlecase to PDF titles
+                title = titlecase(title)
 
                 # Extract author from metadata
                 author = metadata.get("/Author", "") if metadata else ""
@@ -771,6 +796,10 @@ class MetadataExtractor:
                     # Clean up common DBLP title formatting
                     title = re.sub(r"\s+", " ", title)
                     title = title.replace("\n", " ").strip()
+                    # Remove double quotes that wrap titles
+                    title = title.strip('"')
+                    # Apply titlecase to DBLP titles
+                    title = titlecase(title)
                     break
 
             # Extract authors (simplified)
@@ -819,7 +848,7 @@ class MetadataExtractor:
                 "venue_full": venue_full,
                 "venue_acronym": venue_full[:20] if venue_full else "",
                 "paper_type": paper_type,
-                "dblp_url": dblp_url,
+                "url": dblp_url,  # Use generic URL field
             }
 
         except requests.RequestException as e:
@@ -965,8 +994,9 @@ class ExportService:
                 "abstract": paper.abstract,
                 "notes": paper.notes,
                 "doi": paper.doi,
-                "arxiv_id": paper.arxiv_id,
-                "dblp_url": paper.dblp_url,
+                "preprint_id": paper.preprint_id,
+                "category": paper.category,
+                "url": paper.url,
                 "collections": [collection.name for collection in paper.collections],
                 "added_date": (
                     paper.added_date.isoformat() if paper.added_date else None

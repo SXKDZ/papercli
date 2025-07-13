@@ -101,9 +101,9 @@ class Paper(Base):
 
     # External identifiers
     doi: Mapped[Optional[str]] = mapped_column(String(255))
-    arxiv_id: Mapped[Optional[str]] = mapped_column(String(50))
-    dblp_url: Mapped[Optional[str]] = mapped_column(String(500))
-    google_scholar_url: Mapped[Optional[str]] = mapped_column(String(500))
+    preprint_id: Mapped[Optional[str]] = mapped_column(String(100))  # e.g., "arXiv 2505.15134"
+    category: Mapped[Optional[str]] = mapped_column(String(50))  # e.g., "cs.LG"
+    url: Mapped[Optional[str]] = mapped_column(String(500))  # General URL field
 
     # File information
     pdf_path: Mapped[Optional[str]] = mapped_column(String(500))

@@ -23,7 +23,7 @@ class AddDialog:
         # Available sources
         self.source_options = [
             ("pdf", "PDF File - Add from a local PDF file"),
-            ("arxiv", "ArXiv - Add from an ArXiv ID (e.g., 2106.09685)"),
+            ("arxiv", "arXiv - Add from an arXiv ID (e.g., 2106.09685)"),
             ("dblp", "DBLP - Add from a DBLP URL"),
             ("manual", "Manual - Add with manual entry"),
         ]
@@ -50,6 +50,20 @@ class AddDialog:
             focusable=True,
             style="class:textarea",
         )
+        
+        # Dynamic label for input field
+        def get_input_label():
+            source = self.source_list.current_value
+            if source == "pdf":
+                return "Path:"
+            elif source == "arxiv":
+                return "arXiv ID:"
+            elif source == "dblp":
+                return "URL:"
+            else:
+                return "Path/ID/URL:"
+        
+        self.input_label_control = FormattedTextControl(get_input_label, focusable=False)
 
         # Create condition to show path input only when not manual
         def show_path_input():
@@ -71,9 +85,7 @@ class AddDialog:
                     content=VSplit(
                         [
                             Window(
-                                content=FormattedTextControl(
-                                    "Path/ID/URL:", focusable=False
-                                ),
+                                content=self.input_label_control,
                                 width=15,
                                 style="class:dialog.label",
                             ),
@@ -118,10 +130,6 @@ class AddDialog:
         """Handles the Add button press."""
         source = self.source_list.current_value
         path_id = self.path_input.text.strip()
-
-        if not source:
-            # TODO: Show validation error
-            return
 
         self.result = {"source": source, "path_id": path_id}
         self.callback(self.result)

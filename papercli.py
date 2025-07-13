@@ -6,6 +6,7 @@ PaperCLI - A command-line paper management system
 import sys
 import os
 from pathlib import Path
+from dotenv import load_dotenv
 
 from app.cli import PaperCLI
 from app.database import init_database
@@ -13,6 +14,8 @@ from app.database import init_database
 
 def main():
     """Main entry point for PaperCLI."""
+    load_dotenv()
+    
     # Ensure data directory exists
     data_dir = Path.home() / ".papercli"
     data_dir.mkdir(exist_ok=True)

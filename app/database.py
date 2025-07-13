@@ -24,21 +24,15 @@ class DatabaseManager:
         )
 
     def create_tables(self):
-        """Create all database tables using Alembic or fallback to SQLAlchemy."""
-        try:
-            # Try using Alembic first
-            if os.path.exists("alembic.ini"):
-                alembic_cfg = Config("alembic.ini")
-                alembic_cfg.set_main_option(
-                    "sqlalchemy.url", f"sqlite:///{self.db_path}"
-                )
-                command.upgrade(alembic_cfg, "head")
-            else:
-                raise Exception("Alembic config not found")
-        except Exception:
-            # Fallback to direct SQLAlchemy table creation
-            print("Using direct SQLAlchemy table creation...")
-            Base.metadata.create_all(bind=self.engine)
+        """Create all database tables using Alembic."""
+        if not os.path.exists("alembic.ini"):
+            raise Exception("Alembic config not found")
+        
+        alembic_cfg = Config("alembic.ini")
+        alembic_cfg.set_main_option(
+            "sqlalchemy.url", f"sqlite:///{self.db_path}"
+        )
+        command.upgrade(alembic_cfg, "head")
 
     @contextmanager
     def get_session(self) -> Generator[Session, None, None]:

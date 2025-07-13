@@ -1,8 +1,8 @@
-"""Create all tables
+"""Initial schema with updated paper model
 
-Revision ID: 5e98a3a7b313
+Revision ID: 9eb6f7209d15
 Revises: 
-Create Date: 2025-07-09 22:31:58.934579
+Create Date: 2025-07-13 01:04:23.845206
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = '5e98a3a7b313'
+revision: str = '9eb6f7209d15'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -50,9 +50,9 @@ def upgrade() -> None:
     sa.Column('pages', sa.String(length=50), nullable=True),
     sa.Column('paper_type', sa.String(length=50), nullable=True),
     sa.Column('doi', sa.String(length=255), nullable=True),
-    sa.Column('arxiv_id', sa.String(length=50), nullable=True),
-    sa.Column('dblp_url', sa.String(length=500), nullable=True),
-    sa.Column('google_scholar_url', sa.String(length=500), nullable=True),
+    sa.Column('preprint_id', sa.String(length=100), nullable=True),
+    sa.Column('category', sa.String(length=50), nullable=True),
+    sa.Column('url', sa.String(length=500), nullable=True),
     sa.Column('pdf_path', sa.String(length=500), nullable=True),
     sa.Column('notes', sa.Text(), nullable=True),
     sa.Column('added_date', sa.DateTime(), nullable=False),

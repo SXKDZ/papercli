@@ -1461,7 +1461,7 @@ The doctor command helps maintain database health by:
 
             # Add to database
             authors = metadata.get("authors", [])
-            collections = ["arXiv Papers"]  # Default collection
+            collections = []
 
             paper = self.paper_service.add_paper_from_metadata(
                 paper_data, authors, collections
@@ -1478,7 +1478,6 @@ The doctor command helps maintain database health by:
                 f"Failed to add arXiv paper: {arxiv_id}",
                 str(e),
             )
-
 
     def _quick_add_dblp(self, dblp_url: str):
         """Quickly add a paper from DBLP URL."""
@@ -1504,7 +1503,7 @@ The doctor command helps maintain database health by:
 
             # Add to database
             authors = metadata.get("authors", [])
-            collections = ["DBLP Papers"]  # Default collection
+            collections = []
 
             paper = self.paper_service.add_paper_from_metadata(
                 paper_data, authors, collections
@@ -1542,7 +1541,7 @@ The doctor command helps maintain database health by:
             }
 
             authors = ["Manual User"]
-            collections = ["Manual Papers"]
+            collections = []
 
             paper = self.paper_service.add_paper_from_metadata(
                 paper_data, authors, collections
@@ -2264,17 +2263,35 @@ The doctor command helps maintain database health by:
             paper = papers[0]
             authors = ", ".join([a.full_name for a in paper.authors])
             collections = ", ".join([c.name for c in paper.collections])
+            # Format timestamps
+            added_date_str = (
+                paper.added_date.strftime("%Y-%m-%d %H:%M:%S")
+                if paper.added_date
+                else "N/A"
+            )
+            modified_date_str = (
+                paper.modified_date.strftime("%Y-%m-%d %H:%M:%S")
+                if paper.modified_date
+                else "N/A"
+            )
+
+            # Choose appropriate label for venue field
+            venue_label = "Website:" if paper.paper_type == "preprint" else "Venue:"
+
             return (
-                f"Title:       {paper.title}\n"
-                f"Authors:     {authors}\n"
-                f"Year:        {paper.year or 'N/A'}\n"
-                f"Venue:       {paper.venue_display}\n"
-                f"Type:        {paper.paper_type or 'N/A'}\n"
-                f"Collections: {collections or 'N/A'}\n"
-                f"DOI:         {paper.doi or 'N/A'}\n"
-                f"ArXiv ID:    {paper.arxiv_id or 'N/A'}\n"
-                f"DBLP URL:    {paper.dblp_url or 'N/A'}\n"
-                f"PDF Path:    {paper.pdf_path or 'N/A'}\n\n"
+                f"Title:        {paper.title}\n"
+                f"Authors:      {authors}\n"
+                f"Year:         {paper.year or 'N/A'}\n"
+                f"{venue_label:<13} {paper.venue_display}\n"
+                f"Type:         {paper.paper_type or 'N/A'}\n"
+                f"Collections:  {collections or 'N/A'}\n"
+                f"DOI:          {paper.doi or 'N/A'}\n"
+                f"Preprint ID:  {paper.preprint_id or 'N/A'}\n"
+                f"Category:     {paper.category or 'N/A'}\n"
+                f"URL:          {paper.url or 'N/A'}\n"
+                f"PDF Path:     {paper.pdf_path or 'N/A'}\n"
+                f"Added:        {added_date_str}\n"
+                f"Modified:     {modified_date_str}\n\n"
                 f"Abstract:\n"
                 f"---------\n"
                 f"{paper.abstract or 'No abstract available.'}\n\n"

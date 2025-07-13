@@ -1,3 +1,4 @@
+import os
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config
@@ -38,6 +39,10 @@ def run_migrations_offline() -> None:
 
     """
     url = config.get_main_option("sqlalchemy.url")
+    # Expand ~ in SQLite URLs
+    if url and url.startswith("sqlite:///~/"):
+        expanded_path = os.path.expanduser(url.replace("sqlite:///~/", "~/"))
+        url = f"sqlite:///{expanded_path}"
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -56,8 +61,14 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
+    # Get config section and expand ~ in database URLs
+    config_section = config.get_section(config.config_ini_section, {})
+    if "sqlalchemy.url" in config_section and config_section["sqlalchemy.url"].startswith("sqlite:///~/"):
+        expanded_path = os.path.expanduser(config_section["sqlalchemy.url"].replace("sqlite:///~/", "~/"))
+        config_section["sqlalchemy.url"] = f"sqlite:///{expanded_path}"
+    
     connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
+        config_section,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
