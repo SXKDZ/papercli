@@ -1,0 +1,585 @@
+"""
+Chat dialog for interacting with LLMs about selected papers.
+"""
+
+import os
+import threading
+from typing import Callable, Dict, Any, List
+
+from prompt_toolkit.layout.containers import HSplit, VSplit, Window
+from prompt_toolkit.widgets import Button, Dialog, TextArea
+from prompt_toolkit.layout.dimension import Dimension
+from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
+from prompt_toolkit.application import get_app
+
+from .services import PaperService, MetadataExtractor
+from openai import OpenAI
+import PyPDF2
+
+
+class ChatDialog:
+    """A dialog for chatting with LLMs about papers."""
+
+    def __init__(
+        self,
+        papers: List[Dict[str, Any]],
+        llm_provider: str,
+        callback: Callable,
+        log_callback: Callable,
+        status_bar=None,
+    ):
+        self.papers = papers
+        self.llm_provider = llm_provider  # 'claude', 'openai', or 'gemini'
+        self.callback = callback
+        self.log_callback = log_callback
+        self.status_bar = status_bar
+        self.result = None
+        self.paper_service = PaperService()
+
+        # Initialize OpenAI client
+        self.openai_client = OpenAI()
+        self.model_name = os.getenv("OPENAI_MODEL", "gpt-4o")
+
+        # Chat history
+        self.chat_history = []
+
+        # Input history for Up/Down navigation
+        self.input_history = []
+        self.history_index = -1
+
+        # Initialize the chat with paper details
+        self._initialize_chat()
+
+        # Create UI components
+        self._create_ui_components()
+        self._setup_key_bindings()
+
+    def _initialize_chat(self):
+        """Initialize the chat with paper details."""
+        if not self.papers:
+            self.chat_history.append(
+                {"role": "system", "content": "No papers selected for chat."}
+            )
+            return
+
+        # Get paper details from Notes section or generate summary
+        paper_details = []
+        for i, paper in enumerate(self.papers, 1):
+            title = getattr(paper, "title", "Unknown Title")
+            notes = getattr(paper, "notes", "") or ""
+            notes = notes.strip()
+
+            if notes:
+                paper_info = f"**Paper {i}: {title}**\n{notes}"
+            else:
+                # If no notes, try to generate summary from PDF
+                pdf_path = getattr(paper, "pdf_path", "")
+                if pdf_path and os.path.exists(pdf_path):
+                    if self.status_bar:
+                        self.status_bar.set_status(
+                            f"Generating summary for '{title}'...", "llm"
+                        )
+                        get_app().invalidate()
+
+                    # Generate summary in background thread
+                    def generate_summary_background():
+                        try:
+                            extractor = MetadataExtractor(
+                                log_callback=self.log_callback
+                            )
+                            summary = extractor.generate_paper_summary(pdf_path)
+
+                            def update_status_success():
+                                if summary:
+                                    paper.notes = summary
+                                    self.paper_service.update_paper(
+                                        paper.id, {"notes": summary}
+                                    )
+
+                                    if self.log_callback:
+                                        self.log_callback(
+                                            "chat_auto_summarize",
+                                            f"Auto-generated and saved summary for '{title}'",
+                                        )
+
+                                    if self.status_bar:
+                                        self.status_bar.set_success(
+                                            f"Summary generated and saved for '{title}'"
+                                        )
+                                else:
+                                    if self.status_bar:
+                                        self.status_bar.set_warning(
+                                            f"Could not generate summary for '{title}'"
+                                        )
+                                get_app().invalidate()
+
+                            get_app().loop.call_soon_threadsafe(update_status_success)
+
+                        except Exception as e:
+                            if self.log_callback:
+                                self.log_callback(
+                                    "chat_auto_summarize_error",
+                                    f"Failed to generate summary for '{title}': {e}",
+                                )
+
+                            def update_status_error():
+                                if self.status_bar:
+                                    self.status_bar.set_error(
+                                        f"Failed to generate summary for '{title}'"
+                                    )
+                                get_app().invalidate()
+
+                            get_app().loop.call_soon_threadsafe(update_status_error)
+
+                    # Start background thread for summarization
+                    summary_thread = threading.Thread(
+                        target=generate_summary_background, daemon=True
+                    )
+                    summary_thread.start()
+
+                    # For now, use basic info and summary will be added later
+                    authors = getattr(paper, "author_names", "Unknown Authors")
+                    venue = getattr(paper, "venue_full", "Unknown Venue")
+                    year = getattr(paper, "year", "Unknown Year")
+                    abstract = getattr(paper, "abstract", "") or ""
+
+                    paper_info = f"**Paper {i}: {title}**\nAuthors: {authors}\nVenue: {venue} ({year})"
+                    if abstract:
+                        paper_info += f"\n\nAbstract: {abstract}"
+                    paper_info += f"\n\n(Summary being generated in background...)"
+                else:
+                    # No PDF available, show basic paper info
+                    authors = getattr(paper, "author_names", "Unknown Authors")
+                    venue = getattr(paper, "venue_full", "Unknown Venue")
+                    year = getattr(paper, "year", "Unknown Year")
+                    abstract = getattr(paper, "abstract", "") or ""
+
+                    paper_info = f"**Paper {i}: {title}**\nAuthors: {authors}\nVenue: {venue} ({year})"
+                    if abstract:
+                        paper_info += f"\n\nAbstract: {abstract}"
+
+            paper_details.append(paper_info)
+
+        # Add initial system message with paper details
+        if len(self.papers) == 1:
+            initial_content = (
+                "Here is the selected paper for discussion:\n\n" + paper_details[0]
+            )
+        else:
+            initial_content = (
+                f"Here are the {len(self.papers)} selected papers for discussion:\n\n"
+                + "\n\n---\n\n".join(paper_details)
+            )
+            initial_content += f"\n\n(You can refer to papers by their numbers, e.g., 'Paper 1', 'Paper 2', etc.)"
+
+        self.chat_history.append({"role": "assistant", "content": initial_content})
+
+    def _create_ui_components(self):
+        """Create the UI components for the chat dialog."""
+        # Chat display area (scrollable) with fixed height
+        self.chat_display = TextArea(
+            text=self._format_chat_history(),
+            read_only=True,
+            wrap_lines=True,
+            scrollbar=True,
+            height=Dimension(
+                min=25, preferred=35, max=40
+            ),  # Longer height for better viewing
+        )
+
+        # User input area
+        self.user_input = TextArea(
+            text="",
+            multiline=True,
+            wrap_lines=True,
+        )
+
+        # Buttons
+        self.send_button = Button(
+            text="Send",
+            handler=self._handle_send,
+        )
+
+        self.close_button = Button(
+            text="Close",
+            handler=self._handle_close,
+        )
+
+        # Button layout (vertical)
+        button_container = HSplit(
+            [
+                self.send_button,
+                Window(height=Dimension.exact(1)),  # Spacer
+                self.close_button,
+            ]
+        )
+
+        # Input area layout
+        input_container = VSplit(
+            [
+                self.user_input,
+                Window(width=Dimension.exact(2)),  # Spacer
+                button_container,
+            ]
+        )
+
+        # Main layout with fixed dimensions
+        self.container = HSplit(
+            [
+                # Chat display
+                self.chat_display,
+                Window(height=Dimension.exact(1)),  # Spacer
+                # Input area
+                input_container,
+            ]
+        )
+
+        # Create dialog with wider dimensions
+        self.dialog = Dialog(
+            title=f"Chat with ChatGPT ({self.model_name})",
+            body=self.container,
+            with_background=False,
+            modal=True,
+            width=Dimension(min=160, preferred=180),
+        )
+
+    def _setup_key_bindings(self):
+        """Setup key bindings for the dialog."""
+        kb = KeyBindings()
+
+        @kb.add("c-s")
+        def _(event):
+            self._handle_send()
+
+        @kb.add("enter")
+        def _(event):
+            # Only send if in the input field, otherwise default behavior
+            if event.app.layout.current_window == self.user_input.window:
+                self._handle_send()
+
+        @kb.add("c-j")
+        def _(event):
+            # Add newline in input field
+            if event.app.layout.current_window == self.user_input.window:
+                current_control = event.app.layout.current_control
+                if hasattr(current_control, "buffer"):
+                    current_control.buffer.insert_text("\n")
+
+        @kb.add("escape")
+        def _(event):
+            self._handle_close()
+
+        # Add backspace and delete handling for text input
+        @kb.add("backspace")
+        def _(event):
+            current_control = event.app.layout.current_control
+            if hasattr(current_control, "buffer"):
+                current_control.buffer.delete_before_cursor()
+
+        @kb.add("delete")
+        def _(event):
+            current_control = event.app.layout.current_control
+            if hasattr(current_control, "buffer"):
+                current_control.buffer.delete()
+
+        @kb.add("up")
+        def _(event):
+            # Navigate input history backward when in input field, otherwise scroll chat
+            if event.app.layout.current_window == self.user_input.window:
+                if (
+                    self.input_history
+                    and self.history_index < len(self.input_history) - 1
+                ):
+                    self.history_index += 1
+                    self.user_input.text = self.input_history[-(self.history_index + 1)]
+                    self.user_input.buffer.cursor_position = len(self.user_input.text)
+            else:
+                # Scroll chat display up
+                self.chat_display.buffer.cursor_up(count=1)
+
+        @kb.add("down")
+        def _(event):
+            # Navigate input history forward when in input field, otherwise scroll chat
+            if event.app.layout.current_window == self.user_input.window:
+                if self.history_index > 0:
+                    self.history_index -= 1
+                    self.user_input.text = self.input_history[-(self.history_index + 1)]
+                    self.user_input.buffer.cursor_position = len(self.user_input.text)
+                elif self.history_index == 0:
+                    self.history_index = -1
+                    self.user_input.text = ""
+            else:
+                # Scroll chat display down
+                self.chat_display.buffer.cursor_down(count=1)
+
+        @kb.add("pageup")
+        def _(event):
+            # Scroll chat display up
+            if event.app.layout.current_window == self.chat_display.window:
+                self.chat_display.buffer.cursor_up(count=10)
+
+        @kb.add("pagedown")
+        def _(event):
+            # Scroll chat display down
+            if event.app.layout.current_window == self.chat_display.window:
+                self.chat_display.buffer.cursor_down(count=10)
+
+        @kb.add("space")
+        def _(event):
+            # Handle space key specifically
+            current_control = event.app.layout.current_control
+            if hasattr(current_control, "buffer"):
+                current_control.buffer.insert_text(" ")
+
+        @kb.add("<any>")
+        def _(event):
+            # Handle all character input to prevent it from reaching main app
+            if event.data and len(event.data) == 1 and event.data.isprintable():
+                current_control = event.app.layout.current_control
+                if hasattr(current_control, "buffer"):
+                    current_control.buffer.insert_text(event.data)
+
+        # Apply key bindings to the container
+        self.container.key_bindings = merge_key_bindings(
+            [
+                self.container.key_bindings or KeyBindings(),
+                kb,
+            ]
+        )
+
+    def _format_chat_history(self) -> str:
+        """Format the chat history for display."""
+        formatted = []
+        for entry in self.chat_history:
+            role = entry["role"]
+            content = entry["content"]
+
+            if role == "user":
+                formatted.append(f"You: {content}")
+            elif role == "assistant":
+                # Use visual formatting for ChatGPT responses
+                provider_name = self._get_provider_display_name()
+                # Add indentation and different styling for ChatGPT responses
+                lines = content.split("\n")
+                formatted.append(f"{provider_name}:")
+                for line in lines:
+                    formatted.append(f"  {line}")  # Indent ChatGPT responses
+            elif role == "system":
+                formatted.append(f"System: {content}")
+
+            formatted.append("")  # Add empty line between messages
+
+        return "\n".join(formatted)
+
+    def _get_provider_display_name(self) -> str:
+        """Get the display name for ChatGPT with model info."""
+        return f"ChatGPT ({self.model_name})"
+
+    def _handle_send(self):
+        """Handle sending a message."""
+        user_message = self.user_input.text.strip()
+        if not user_message:
+            return
+
+        # Add to input history for Up/Down navigation
+        if user_message not in self.input_history:
+            self.input_history.append(user_message)
+        self.history_index = -1
+
+        # Add user message to history
+        self.chat_history.append({"role": "user", "content": user_message})
+
+        # Clear input
+        self.user_input.text = ""
+
+        # Update display
+        self.chat_display.text = self._format_chat_history()
+
+        # Show status that we're working on the response
+        if self.status_bar:
+            self.status_bar.set_status(
+                f"Generating response from {self._get_provider_display_name()}...",
+                "llm",
+            )
+            get_app().invalidate()
+
+        # Run LLM response generation in background thread to allow UI updates
+        def get_response_background():
+            try:
+                assistant_response = self._get_llm_response(user_message)
+
+                # Schedule UI update in main thread
+                def schedule_ui_update():
+                    self.chat_history.append(
+                        {"role": "assistant", "content": assistant_response}
+                    )
+                    self.chat_display.text = self._format_chat_history()
+
+                    if self.status_bar:
+                        self.status_bar.set_success(
+                            f"Response received from {self._get_provider_display_name()}"
+                        )
+
+                    # Scroll to bottom
+                    self.chat_display.buffer.cursor_position = len(
+                        self.chat_display.text
+                    )
+                    get_app().invalidate()
+
+                # Use call_from_executor to safely update UI from background thread
+                get_app().loop.call_soon_threadsafe(schedule_ui_update)
+
+            except Exception as e:
+
+                def schedule_ui_error():
+                    if self.status_bar:
+                        self.status_bar.set_error(f"Failed to get response: {str(e)}")
+                    self.chat_history.append(
+                        {
+                            "role": "assistant",
+                            "content": f"Sorry, I encountered an error: {str(e)}",
+                        }
+                    )
+                    self.chat_display.text = self._format_chat_history()
+                    get_app().invalidate()
+
+                get_app().loop.call_soon_threadsafe(schedule_ui_error)
+
+        # Start background thread
+        thread = threading.Thread(target=get_response_background, daemon=True)
+        thread.start()
+
+        # Scroll to bottom
+        self.chat_display.buffer.cursor_position = len(self.chat_display.text)
+
+    def _get_llm_response(self, user_message: str) -> str:
+        """Get response from ChatGPT."""
+        try:
+            # Prepare messages for API call
+            messages = []
+
+            # Add system message with paper context
+            paper_context = self._build_paper_context()
+            messages.append(
+                {
+                    "role": "system",
+                    "content": f"""You are an AI assistant helping to discuss and analyze academic papers. 
+
+{paper_context}
+
+IMPORTANT: Only provide information that is explicitly present in the paper information provided above. Do not hallucinate or make up information. If you cannot answer a question based on the provided information, say "I don't know" or "This information is not available in the provided paper content." You can reference papers by their numbers (e.g., "Paper 1", "Paper 2").""",
+                }
+            )
+
+            # Add conversation history (last 6 messages to stay within token limits)
+            recent_history = (
+                self.chat_history[-6:]
+                if len(self.chat_history) > 6
+                else self.chat_history
+            )
+            for entry in recent_history:
+                if entry["role"] in ["user", "assistant"]:
+                    messages.append(
+                        {"role": entry["role"], "content": entry["content"]}
+                    )
+
+            # Add current user message
+            messages.append({"role": "user", "content": user_message})
+
+            # Call OpenAI API directly
+            response = self.openai_client.chat.completions.create(
+                model=self.model_name,
+                messages=messages,
+                max_tokens=4000,
+                temperature=0.7,
+            )
+            return response.choices[0].message.content.strip()
+
+        except Exception as e:
+            if self.log_callback:
+                self.log_callback(
+                    "openai_error", f"Error getting ChatGPT response: {e}"
+                )
+            return f"Error: Failed to get response from ChatGPT. {str(e)}"
+
+    def _build_paper_context(self) -> str:
+        """Build context string about the papers for the LLM."""
+        if not self.papers:
+            return "No papers are currently selected for discussion."
+
+        context_parts = []
+        for i, paper in enumerate(self.papers, 1):
+            title = getattr(paper, "title", "Unknown Title")
+            authors = getattr(paper, "author_names", "Unknown Authors")
+            venue = getattr(paper, "venue_full", "Unknown Venue")
+            year = getattr(paper, "year", "Unknown Year")
+            abstract = getattr(paper, "abstract", "") or ""
+            notes = getattr(paper, "notes", "") or ""
+            notes = notes.strip()
+            pdf_path = getattr(paper, "pdf_path", "")
+
+            paper_context = f"Paper {i}: {title}\n"
+            paper_context += f"Authors: {authors}\n"
+            paper_context += f"Venue: {venue} ({year})\n"
+
+            if abstract:
+                paper_context += f"Abstract: {abstract}\n"
+
+            if notes:
+                paper_context += f"Notes: {notes}\n"
+
+            # Extract first 10 pages from PDF if available
+            if pdf_path and os.path.exists(pdf_path):
+                try:
+                    pdf_text = self._extract_first_pages(pdf_path, max_pages=10)
+                    if pdf_text:
+                        paper_context += (
+                            f"First 10 pages attached to this chat:\n{pdf_text}\n"
+                        )
+                except Exception as e:
+                    if self.log_callback:
+                        self.log_callback(
+                            "pdf_extract_error",
+                            f"Failed to extract PDF pages for '{title}': {e}",
+                        )
+
+            context_parts.append(paper_context)
+
+        return "Papers for discussion:\n\n" + "\n".join(context_parts)
+
+    def _extract_first_pages(self, pdf_path: str, max_pages: int = 10) -> str:
+        """Extract text from the first N pages of a PDF."""
+        try:
+            with open(pdf_path, "rb") as file:
+                pdf_reader = PyPDF2.PdfReader(file)
+
+                text_parts = []
+                pages_to_extract = min(len(pdf_reader.pages), max_pages)
+
+                for page_num in range(pages_to_extract):
+                    page = pdf_reader.pages[page_num]
+                    page_text = page.extract_text()
+                    if page_text.strip():
+                        text_parts.append(f"Page {page_num + 1}:\n{page_text.strip()}")
+
+                return "\n\n".join(text_parts)
+        except Exception as e:
+            if self.log_callback:
+                self.log_callback(
+                    "pdf_extract_error", f"Failed to extract PDF text: {e}"
+                )
+            return ""
+
+    def _handle_close(self):
+        """Handle closing the dialog."""
+        self.result = None
+        if self.callback:
+            self.callback(self.result)
+
+    def show(self):
+        """Show the chat dialog."""
+        return self.dialog
+
+    def get_initial_focus(self):
+        """Return the control that should receive initial focus."""
+        return self.user_input

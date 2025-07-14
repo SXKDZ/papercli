@@ -1679,14 +1679,21 @@ class ChatService:
     def __init__(self, log_callback=None):
         self.log_callback = log_callback
 
-    def open_chat_interface(self, papers: List[Paper]):
-        """Open Claude and show PDF files in Finder/File Explorer."""
+    def open_chat_interface(self, papers: List[Paper], provider: str = "claude"):
+        """Open specified LLM provider in browser and show PDF files in Finder/File Explorer."""
         try:
             import platform
             import subprocess
 
-            # Open Claude in browser
-            webbrowser.open("https://claude.ai")
+            # Open provider-specific homepage in browser
+            provider_urls = {
+                "claude": "https://claude.ai",
+                "chatgpt": "https://chat.openai.com",
+                "gemini": "https://gemini.google.com"
+            }
+            
+            url = provider_urls.get(provider, "https://claude.ai")
+            webbrowser.open(url)
 
             # Open PDF files in Finder/File Explorer
             system = platform.system()
@@ -1719,12 +1726,13 @@ class ChatService:
 
             # Prepare result message
             result_parts = []
+            provider_name = provider.title()
             if opened_files:
                 result_parts.append(
-                    f"Opened Claude and {len(opened_files)} PDF file(s)"
+                    f"Opened {provider_name} and {len(opened_files)} PDF file(s)"
                 )
             else:
-                result_parts.append("Opened Claude (no local PDF files found)")
+                result_parts.append(f"Opened {provider_name} (no local PDF files found)")
 
             if failed_files:
                 result_parts.append(f"Failed to open {len(failed_files)} file(s)")

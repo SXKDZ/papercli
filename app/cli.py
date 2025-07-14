@@ -47,6 +47,7 @@ from .filter_dialog import FilterDialog
 from .sort_dialog import SortDialog
 from .ui_components import ErrorPanel, PaperListControl, StatusBar
 from .edit_dialog import EditDialog
+from .chat_dialog import ChatDialog
 from .collect_dialog import CollectDialog
 from .status_messages import StatusMessages
 
@@ -95,8 +96,12 @@ class SmartCompleter(Completer):
             },
             "/clear": {"description": "Clear all selected papers", "subcommands": {}},
             "/chat": {
-                "description": "Chat with an LLM about the selected paper(s)",
-                "subcommands": {},
+                "description": "Open chat interface (local OpenAI window or browser)",
+                "subcommands": {
+                    "claude": "Open Claude AI in browser",
+                    "chatgpt": "Open ChatGPT in browser",
+                    "gemini": "Open Google Gemini in browser",
+                },
             },
             "/edit": {
                 "description": "Open edit dialog or edit field directly (e.g., /edit title ...)",
@@ -228,13 +233,17 @@ Core Commands:
 /all      Show all papers in the database
 /select   Enter multi-selection mode to act on multiple papers
 /clear    Clear all selected papers
-/help     Show this help panel (or press F1)
+/help     Show this help panel
 /log      Show the error log panel
 /exit     Exit the application (or press Ctrl+C)
 
 Paper Operations (work on the paper under the cursor ► or selected papers ✓):
 -----------------------------------------------------------------------------
-/chat     Chat with an LLM about the paper(s)
+/chat             Open chat window with ChatGPT (local interface)
+/chat [provider]  Open browser-based chat interface
+  claude        Open Claude AI in browser
+  chatgpt       Open ChatGPT in browser  
+  gemini        Open Google Gemini in browser
 /edit     Open edit dialog or edit field directly (e.g., /edit title ...)
 /open     Open the PDF for the paper(s)
 /detail   Show detailed metadata for the paper(s)
@@ -267,6 +276,16 @@ Space     Toggle selection for a paper (only in /select mode)
 Enter     Execute a command from the input bar
 ESC       Close panels (Help, Error), exit selection mode, or clear input
 Tab       Trigger and cycle through auto-completions
+
+Chat Interface Shortcuts (when using /chat):
+--------------------------------------------
+Enter     Send message
+Ctrl+J    Insert newline in message
+Ctrl+S    Send message (alternative)
+↑/↓       Navigate input history (when focused on input)
+↑/↓       Scroll chat display (when focused on chat)
+PageUp/↓  Scroll chat display by page
+ESC       Close chat interface
 
 Indicators (in the first column):
 ---------------------------------
@@ -675,20 +694,20 @@ The doctor command helps maintain database health by:
 
         # Function key bindings
         @self.kb.add("f1")
-        def show_help(event):
-            self.show_help_dialog(self.HELP_TEXT, "PaperCLI Help")
-
-        @self.kb.add("f2")
         def add_paper(event):
             self.show_add_dialog()
 
-        @self.kb.add("f3")
+        @self.kb.add("f2")
         def open_paper(event):
             self.handle_open_command()
 
-        @self.kb.add("f4")
+        @self.kb.add("f3")
         def show_detail(event):
             self.handle_detail_command()
+
+        @self.kb.add("f4")
+        def chat_paper(event):
+            self.handle_chat_command()
 
         @self.kb.add("f5")
         def edit_paper(event):
@@ -1134,7 +1153,7 @@ The doctor command helps maintain database health by:
     def _get_details_key_bindings(self):
         """Key bindings for the details dialog for intuitive scrolling."""
         kb = KeyBindings()
-        
+
         @kb.add("up")
         def _(event):
             if hasattr(event.app.layout, "current_control") and hasattr(
@@ -1142,7 +1161,7 @@ The doctor command helps maintain database health by:
             ):
                 buffer = event.app.layout.current_control.buffer
                 buffer.cursor_up()
-        
+
         @kb.add("down")
         def _(event):
             if hasattr(event.app.layout, "current_control") and hasattr(
@@ -1150,20 +1169,20 @@ The doctor command helps maintain database health by:
             ):
                 buffer = event.app.layout.current_control.buffer
                 buffer.cursor_down()
-        
+
         @kb.add("pageup")
         def _(event):
             scroll.scroll_page_up(event)
-        
+
         @kb.add("pagedown")
         def _(event):
             scroll.scroll_page_down(event)
-        
+
         @kb.add("<any>")
         def _(event):
             # Swallow any other key presses to prevent them from reaching the input buffer.
             pass
-        
+
         return kb
 
     def _get_error_key_bindings(self):
@@ -1276,10 +1295,10 @@ The doctor command helps maintain database health by:
         # Function key shortcuts with configurable spacing
         shortkey_spacing = "    "  # Adjust this to control spacing between shortcuts
         shortcuts = [
-            "F1: Help",
-            "F2: Add",
-            "F3: Open",
-            "F4: Detail",
+            "F1: Add",
+            "F2: Open",
+            "F3: Detail",
+            "F4: Chat",
             "F5: Edit",
             "F6: Delete",
             "F7: Collect",
@@ -1425,7 +1444,8 @@ The doctor command helps maintain database health by:
                 elif cmd == "/doctor":
                     self.handle_doctor_command(parts[1:])
                 elif cmd == "/chat":
-                    self.handle_chat_command()
+                    provider = parts[1] if len(parts) > 1 else None
+                    self.handle_chat_command(provider)
                 elif cmd == "/edit":
                     self.handle_edit_command(parts[1:])
                 elif cmd == "/export":
@@ -1550,7 +1570,9 @@ The doctor command helps maintain database health by:
             # Download PDF
             pdf_dir = get_pdf_directory()
             self.status_bar.set_status(f"📡 Downloading PDF for {arxiv_id}...")
-            pdf_path, pdf_error = self.system_service.download_pdf("arxiv", arxiv_id, pdf_dir, paper_data)
+            pdf_path, pdf_error = self.system_service.download_pdf(
+                "arxiv", arxiv_id, pdf_dir, paper_data
+            )
 
             if pdf_path:
                 self._add_log("add_arxiv", f"PDF download successful: {pdf_path}")
@@ -1577,7 +1599,8 @@ The doctor command helps maintain database health by:
                 self.show_error_panel_with_message(
                     "PDF Download Warning",
                     f"Could not download PDF for arXiv paper: {arxiv_id}",
-                    pdf_error or "The paper metadata will still be added, but without the PDF file.",
+                    pdf_error
+                    or "The paper metadata will still be added, but without the PDF file.",
                 )
 
             # Refresh display
@@ -1697,7 +1720,8 @@ The doctor command helps maintain database health by:
                 self.show_error_panel_with_message(
                     "PDF Download Error",
                     f"PDF download failed for '{paper.title}'",
-                    pdf_error or "Please check the network connection or the paper's availability.",
+                    pdf_error
+                    or "Please check the network connection or the paper's availability.",
                 )
 
             # Refresh display
@@ -2098,33 +2122,72 @@ The doctor command helps maintain database health by:
         self.paper_list_control.in_select_mode = True
         self.status_bar.set_status(StatusMessages.selection_mode_entered())
 
-    def handle_chat_command(self):
-        """Handle /chat command."""
+    def handle_chat_command(self, provider: str = None):
+        """Handle /chat command with optional provider."""
         papers_to_chat = self._get_target_papers()
         if not papers_to_chat:
             return
 
         try:
-            self.status_bar.set_status(f"💬 Opening chat interface...")
+            if provider is None:
+                # /chat only - show chat window with OpenAI
+                self.status_bar.set_status(f"💬 Opening chat window...")
 
-            # Open chat interface in browser
-            result = self.chat_service.open_chat_interface(papers_to_chat)
+                # Show chat dialog with OpenAI
+                chat_dialog = ChatDialog(
+                    papers=papers_to_chat,
+                    llm_provider="openai",
+                    callback=self._on_chat_complete,
+                    log_callback=self._add_log,
+                    status_bar=self.status_bar,
+                )
 
-            # Handle new return format
-            if isinstance(result, dict):
-                if result["success"]:
-                    self.status_bar.set_success(result["message"])
-                    # Errors are now logged by the service itself
-                else:
-                    self.status_bar.set_error(result["message"])
-                    self.show_error_panel_with_message(
-                        "Chat Error",
-                        result["message"],
-                        "Failed to open chat interface.",
+                self.chat_dialog = chat_dialog.show()
+                self.chat_float = Float(self.chat_dialog)
+                self.app.layout.container.floats.append(self.chat_float)
+                self.app.layout.focus(
+                    chat_dialog.get_initial_focus() or self.chat_dialog
+                )
+                self.app.invalidate()
+            else:
+                # /chat provider - open browser interface
+                valid_providers = ["claude", "chatgpt", "gemini"]
+                if provider not in valid_providers:
+                    self.status_bar.set_error(
+                        f"Invalid chat provider: {provider}. Use: {', '.join(valid_providers)}"
                     )
+                    return
+
+                self.status_bar.set_status(
+                    f"💬 Opening {provider.title()} in browser..."
+                )
+
+                # Open browser interface with provider-specific behavior
+                result = self.chat_service.open_chat_interface(papers_to_chat, provider)
+
+                # Handle result
+                if isinstance(result, dict):
+                    if result["success"]:
+                        self.status_bar.set_success(result["message"])
+                    else:
+                        self.status_bar.set_error(result["message"])
+                        self.show_error_panel_with_message(
+                            "Chat Error",
+                            result["message"],
+                            "Failed to open chat interface.",
+                        )
 
         except Exception as e:
             self.status_bar.set_error(f"Error opening chat: {e}")
+
+    def _on_chat_complete(self, result):
+        """Callback for when chat dialog is closed."""
+        try:
+            if self.chat_float in self.app.layout.container.floats:
+                self.app.layout.container.floats.remove(self.chat_float)
+            self.status_bar.set_status("← Chat closed")
+        except Exception as e:
+            self._add_log("chat_error", f"Error closing chat dialog: {e}")
 
     def handle_edit_command(self, args: List[str] = None):
         """Handle /edit command."""
@@ -2312,6 +2375,7 @@ The doctor command helps maintain database health by:
             self._add_log,
             self.show_error_panel_with_message,
             read_only_fields=read_only_fields,
+            status_bar=self.status_bar,
         )
         self.edit_float = Float(self.edit_dialog)
         self.app.layout.container.floats.append(self.edit_float)
@@ -2490,29 +2554,43 @@ The doctor command helps maintain database health by:
                 continue
 
             try:
-                self.status_bar.set_status(f"🤖 Generating summary for '{paper.title}'...")
-                self._add_log("summarize", f"Generating LLM summary for '{paper.title}'")
-                
+                self.status_bar.set_status(
+                    f"Generating summary for '{paper.title}'...", "llm"
+                )
+                self._add_log(
+                    "summarize", f"Generating LLM summary for '{paper.title}'"
+                )
+
                 # Generate summary using LLM
                 summary = self.metadata_extractor.generate_paper_summary(pdf_path)
-                
+
                 if summary:
                     # Update paper with the generated summary
                     updated_paper, error = self.paper_service.update_paper(
                         paper.id, {"notes": summary}
                     )
-                    
+
                     if error:
-                        failed_papers.append(f"'{paper.title}': Database update failed - {error}")
+                        failed_papers.append(
+                            f"'{paper.title}': Database update failed - {error}"
+                        )
                     else:
                         successful_count += 1
-                        self._add_log("summarize", f"Successfully generated summary for '{paper.title}'")
+                        self._add_log(
+                            "summarize",
+                            f"Successfully generated summary for '{paper.title}'",
+                        )
                 else:
-                    failed_papers.append(f"'{paper.title}': LLM summary generation failed")
+                    failed_papers.append(
+                        f"'{paper.title}': LLM summary generation failed"
+                    )
 
             except Exception as e:
                 failed_papers.append(f"'{paper.title}': {str(e)}")
-                self._add_log("summarize_error", f"Error summarizing '{paper.title}': {traceback.format_exc()}")
+                self._add_log(
+                    "summarize_error",
+                    f"Error summarizing '{paper.title}': {traceback.format_exc()}",
+                )
 
         # Update display and show results
         if successful_count > 0:
@@ -2520,22 +2598,28 @@ The doctor command helps maintain database health by:
 
         # Prepare result message
         if successful_count > 0 and not failed_papers:
-            self.status_bar.set_success(f"Generated summaries for {successful_count} paper(s)")
+            self.status_bar.set_success(
+                f"Generated summaries for {successful_count} paper(s)"
+            )
         elif successful_count > 0 and failed_papers:
-            self.status_bar.set_success(f"Generated summaries for {successful_count} paper(s), {len(failed_papers)} failed")
+            self.status_bar.set_success(
+                f"Generated summaries for {successful_count} paper(s), {len(failed_papers)} failed"
+            )
             # Show details about failures
             self.show_error_panel_with_message(
                 "Partial Summary Success",
                 f"Successfully summarized {successful_count} papers, but {len(failed_papers)} failed:",
-                "\n".join(failed_papers)
+                "\n".join(failed_papers),
             )
         else:
-            self.status_bar.set_error(f"Failed to generate summaries for all {len(failed_papers)} paper(s)")
+            self.status_bar.set_error(
+                f"Failed to generate summaries for all {len(failed_papers)} paper(s)"
+            )
             if failed_papers:
                 self.show_error_panel_with_message(
                     "Summary Generation Failed",
                     "Failed to generate summaries:",
-                    "\n".join(failed_papers)
+                    "\n".join(failed_papers),
                 )
 
     def show_add_dialog(self):
@@ -3066,20 +3150,25 @@ The doctor command helps maintain database health by:
             version_manager = VersionManager()
             # Perform silent check in background without blocking startup
             import threading
+
             def check_updates():
                 try:
-                    update_available, latest_version = version_manager.check_for_updates_silently()
+                    update_available, latest_version = (
+                        version_manager.check_for_updates_silently()
+                    )
                     if update_available:
                         # Log to activity log instead of interfering with UI
-                        self._add_log("version_check", f"Update available: v{latest_version}")
+                        self._add_log(
+                            "version_check", f"Update available: v{latest_version}"
+                        )
                 except Exception:
                     pass  # Silently ignore update check failures
-            
+
             update_thread = threading.Thread(target=check_updates, daemon=True)
             update_thread.start()
         except Exception:
             pass  # Silently ignore any version checking issues
-        
+
         self.app.run()
 
     def handle_add_to_command(self, args: List[str]):
@@ -3161,27 +3250,34 @@ The doctor command helps maintain database health by:
             # Purge empty collections
             self.handle_collect_purge_command()
         else:
-            self.status_bar.set_error(f"Unknown collect subcommand '{args[0]}'. Usage: /collect [purge]")
+            self.status_bar.set_error(
+                f"Unknown collect subcommand '{args[0]}'. Usage: /collect [purge]"
+            )
 
     def handle_collect_purge_command(self):
-        """Handle /collect purge command to delete empty collections."""        
+        """Handle /collect purge command to delete empty collections."""
         try:
             collection_service = CollectionService()
             deleted_count = collection_service.purge_empty_collections()
-            
+
             if deleted_count == 0:
                 self.status_bar.set_status("No empty collections found to purge.")
                 self._add_log("Collection Purge", "No empty collections found")
             else:
-                self.status_bar.set_success(f"Purged {deleted_count} empty collection{'s' if deleted_count != 1 else ''}.")
-                self._add_log("Collection Purge", f"Successfully deleted {deleted_count} empty collection{'s' if deleted_count != 1 else ''}")
+                self.status_bar.set_success(
+                    f"Purged {deleted_count} empty collection{'s' if deleted_count != 1 else ''}."
+                )
+                self._add_log(
+                    "Collection Purge",
+                    f"Successfully deleted {deleted_count} empty collection{'s' if deleted_count != 1 else ''}",
+                )
                 # Refresh the display if we're showing papers
                 self.refresh_display()
         except Exception as e:
             self.show_error_panel_with_message(
                 "Collection Purge Error",
                 f"Failed to purge empty collections: {e}",
-                traceback.format_exc()
+                traceback.format_exc(),
             )
 
     def show_collect_dialog(self):
@@ -3270,15 +3366,15 @@ The doctor command helps maintain database health by:
     def handle_version_command(self, args: List[str]):
         """Handle /version command for version management."""
         version_manager = VersionManager()
-        
+
         if not args:
             # Show basic version info
             current_version = version_manager.get_current_version()
             install_method = version_manager.get_installation_method()
-            
+
             version_info = f"PaperCLI v{current_version}\n"
             version_info += f"Installation: {install_method}\n"
-            
+
             # Check for updates in background
             try:
                 update_available, latest_version = version_manager.is_update_available()
@@ -3289,32 +3385,35 @@ The doctor command helps maintain database health by:
                     version_info += "You're running the latest version"
             except Exception:
                 version_info += "Could not check for updates"
-            
+
             self.show_help_dialog(version_info, "Version Information")
             return
-        
+
         action = args[0].lower()
-        
+
         if action == "check":
             self.status_bar.set_status("Checking for updates...")
             try:
                 update_available, latest_version = version_manager.is_update_available()
                 current_version = version_manager.get_current_version()
-                
+
                 if update_available:
                     update_info = f"Update Available!\n\n"
                     update_info += f"Current version: v{current_version}\n"
                     update_info += f"Latest version:  v{latest_version}\n\n"
-                    
+
                     if version_manager.can_auto_update():
                         update_info += "To update, run: /version update\n\n"
                     else:
                         update_info += f"To update manually, run:\n"
-                        update_info += f"{version_manager.get_update_instructions()}\n\n"
-                    
+                        update_info += (
+                            f"{version_manager.get_update_instructions()}\n\n"
+                        )
+
                     # Get release notes from GitHub
                     try:
                         import requests
+
                         url = f"https://api.github.com/repos/{version_manager.github_repo}/releases/latest"
                         response = requests.get(url, timeout=10)
                         if response.status_code == 200:
@@ -3323,83 +3422,97 @@ The doctor command helps maintain database health by:
                                 update_info += f"Release Notes:\n{release_data['body']}"
                     except Exception:
                         pass
-                    
+
                     self.show_help_dialog(update_info, "Update Available")
                 else:
-                    self.status_bar.set_success(f"You're running the latest version (v{current_version})")
+                    self.status_bar.set_success(
+                        f"You're running the latest version (v{current_version})"
+                    )
             except Exception as e:
                 self.status_bar.set_error(f"Could not check for updates: {e}")
-        
+
         elif action == "update":
             if not version_manager.can_auto_update():
                 install_method = version_manager.get_installation_method()
-                self.status_bar.set_error(f"Auto-update not supported for {install_method} installations")
-                
+                self.status_bar.set_error(
+                    f"Auto-update not supported for {install_method} installations"
+                )
+
                 manual_info = f"Manual Update Required\n\n"
                 manual_info += f"Installation method: {install_method}\n\n"
                 manual_info += f"To update manually, run:\n"
                 manual_info += f"{version_manager.get_update_instructions()}"
-                
+
                 self.show_help_dialog(manual_info, "Manual Update Required")
                 return
-            
+
             # Check if update is available first
             try:
                 update_available, latest_version = version_manager.is_update_available()
                 if not update_available:
                     current_version = version_manager.get_current_version()
-                    self.status_bar.set_success(f"Already running latest version (v{current_version})")
+                    self.status_bar.set_success(
+                        f"Already running latest version (v{current_version})"
+                    )
                     return
-                
+
                 self.status_bar.set_status(f"Updating to v{latest_version}...")
-                
+
                 # Perform the update
                 if version_manager.perform_update():
-                    self.status_bar.set_success("Update successful! Please restart PaperCLI.")
+                    self.status_bar.set_success(
+                        "Update successful! Please restart PaperCLI."
+                    )
                     # Show restart dialog
                     restart_info = f"Update Successful!\n\n"
-                    restart_info += f"PaperCLI has been updated to v{latest_version}.\n\n"
-                    restart_info += f"Please restart the application to use the new version.\n\n"
+                    restart_info += (
+                        f"PaperCLI has been updated to v{latest_version}.\n\n"
+                    )
+                    restart_info += (
+                        f"Please restart the application to use the new version.\n\n"
+                    )
                     restart_info += f"Press ESC to close this dialog and exit."
-                    
+
                     self.show_help_dialog(restart_info, "Restart Required")
                 else:
                     self.status_bar.set_error("Update failed. Please update manually.")
-                    
+
             except Exception as e:
                 self.status_bar.set_error(f"Update failed: {e}")
-        
+
         elif action == "info":
             version_manager = VersionManager()
             current_version = version_manager.get_current_version()
             install_method = version_manager.get_installation_method()
             config = version_manager.get_update_config()
-            
+
             info = f"PaperCLI Version Information\n"
             info += f"=" * 30 + "\n\n"
             info += f"Version: v{current_version}\n"
             info += f"Installation: {install_method}\n"
             info += f"GitHub Repository: {version_manager.github_repo}\n\n"
-            
+
             info += f"Update Settings:\n"
-            info += f"- Auto-check: {'Yes' if config.get('auto_check', True) else 'No'}\n"
+            info += (
+                f"- Auto-check: {'Yes' if config.get('auto_check', True) else 'No'}\n"
+            )
             info += f"- Check interval: {config.get('check_interval_days', 7)} days\n"
             info += f"- Auto-update: {'Yes' if config.get('auto_update', False) else 'No'}\n"
             info += f"- Can auto-update: {'Yes' if version_manager.can_auto_update() else 'No'}\n"
-            
-            if config.get('last_check'):
+
+            if config.get("last_check"):
                 info += f"- Last check: {config['last_check'][:19]}\n"
             else:
                 info += f"- Last check: Never\n"
-            
+
             info += f"\nTo check for updates: /version check\n"
             if version_manager.can_auto_update():
                 info += f"To update: /version update\n"
             else:
                 info += f"To update manually:\n{version_manager.get_update_instructions()}\n"
-            
+
             self.show_help_dialog(info, "Version Information")
-        
+
         else:
             self.status_bar.set_error(f"Unknown version command: {action}")
             self.status_bar.set_status("Usage: /version [check|update|info]")

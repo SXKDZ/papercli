@@ -441,8 +441,12 @@ class CollectDialog:
         focus_symbol = "▶"
 
         # Get currently focused component
-        focused_component = self.focusable_components[self.current_focus_index] if self.current_focus_index < len(self.focusable_components) else None
-        
+        focused_component = (
+            self.focusable_components[self.current_focus_index]
+            if self.current_focus_index < len(self.focusable_components)
+            else None
+        )
+
         for component, frame in self.component_frames.items():
             base_title = base_titles[component]
 
@@ -517,7 +521,7 @@ class CollectDialog:
         def add_paper_key(event):
             self.add_paper_to_collection()
 
-        @kb.add("c-d", eager=True)  # Ctrl+D  
+        @kb.add("c-d", eager=True)  # Ctrl+D
         def remove_paper_key(event):
             self.remove_paper_from_collection()
 
@@ -1007,11 +1011,11 @@ class CollectDialog:
     def purge_empty_collections(self):
         """Purge all empty collections."""
         from .services import CollectionService
-        
+
         try:
             collection_service = CollectionService()
             deleted_count = collection_service.purge_empty_collections()
-            
+
             if deleted_count == 0:
                 # Set status message - no collections to purge
                 if self.status_bar:
@@ -1019,8 +1023,10 @@ class CollectDialog:
             else:
                 # Collections were purged, refresh the dialog
                 if self.status_bar:
-                    self.status_bar.set_success(f"Purged {deleted_count} empty collection{'s' if deleted_count != 1 else ''}.")
-                
+                    self.status_bar.set_success(
+                        f"Purged {deleted_count} empty collection{'s' if deleted_count != 1 else ''}."
+                    )
+
                 # Refresh collections list
                 collection_service = CollectionService()
                 self.all_collections = collection_service.get_all_collections()
@@ -1033,14 +1039,15 @@ class CollectDialog:
                 # Reset selection to first item
                 self.collections_list.current_index = 0
                 self.on_collection_select(self.collections_list)
-                
+
         except Exception as e:
             import traceback
+
             if self.error_display_callback:
                 self.error_display_callback(
                     "Collection Purge Error",
                     f"Failed to purge empty collections: {e}",
-                    traceback.format_exc()
+                    traceback.format_exc(),
                 )
 
     def __pt_container__(self):

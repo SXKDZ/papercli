@@ -2,9 +2,9 @@
 Filter dialog for filtering papers by various criteria.
 """
 
-from typing import Callable, Optional, Dict, Any
+from typing import Callable
 
-from prompt_toolkit.layout.containers import HSplit, VSplit, Window, WindowAlign
+from prompt_toolkit.layout.containers import HSplit, VSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.widgets import Button, Dialog, RadioList, TextArea
 from prompt_toolkit.layout.dimension import Dimension

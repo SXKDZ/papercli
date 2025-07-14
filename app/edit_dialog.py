@@ -4,6 +4,7 @@ Custom dialog for editing paper metadata in a full-window form with paper type b
 
 import os
 import traceback
+import threading
 from typing import Callable, Dict, Any, List
 
 from prompt_toolkit.layout.containers import HSplit, VSplit, Window, WindowAlign
@@ -15,7 +16,12 @@ from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
 from prompt_toolkit.application import get_app
 from titlecase import titlecase
 
-from .services import CollectionService, AuthorService, fix_broken_lines, MetadataExtractor
+from .services import (
+    CollectionService,
+    AuthorService,
+    fix_broken_lines,
+    MetadataExtractor,
+)
 
 from prompt_toolkit.widgets import TextArea
 
@@ -23,30 +29,121 @@ from prompt_toolkit.widgets import TextArea
 class EditDialog:
     """A full-window dialog for editing paper metadata with paper type buttons."""
 
-    def __init__(self, paper_data: Dict[str, Any], callback: Callable, log_callback: Callable, error_display_callback: Callable, read_only_fields: List[str] = None):
+    def __init__(
+        self,
+        paper_data: Dict[str, Any],
+        callback: Callable,
+        log_callback: Callable,
+        error_display_callback: Callable,
+        read_only_fields: List[str] = None,
+        status_bar=None,
+    ):
         self.paper_data = paper_data
         self.callback = callback
         self.log_callback = log_callback
         self.error_display_callback = error_display_callback
+        self.status_bar = status_bar
         self.result = None
         self.collection_service = CollectionService()
         self.author_service = AuthorService()
         self.read_only_fields = read_only_fields or []
-        
+
         self.paper_types = {
-            "Conference": "conference", "Journal": "journal", "Workshop": "workshop",
-            "Preprint": "preprint", "Website": "website", "Other": "other"
+            "Conference": "conference",
+            "Journal": "journal",
+            "Workshop": "workshop",
+            "Preprint": "preprint",
+            "Website": "website",
+            "Other": "other",
         }
-        
+
         self.fields_by_type = {
-            "conference": ["title", "author_names", "venue_full", "venue_acronym", "year", "pages", "doi", "url", "pdf_path", "collections", "abstract", "notes"],
-            "journal": ["title", "author_names", "venue_full", "year", "volume", "issue", "pages", "doi", "pdf_path", "collections", "abstract", "notes"],
-            "workshop": ["title", "author_names", "venue_full", "venue_acronym", "year", "pages", "doi", "url", "pdf_path", "collections", "abstract", "notes"],
-            "preprint": ["title", "author_names", "venue_full", "year", "preprint_id", "category", "doi", "url", "pdf_path", "collections", "abstract", "notes"],
-            "website": ["title", "author_names", "year", "url", "pdf_path", "collections", "abstract", "notes"],
-            "other": ["title", "author_names", "venue_full", "venue_acronym", "year", "volume", "issue", "pages", "doi", "preprint_id", "category", "url", "pdf_path", "collections", "abstract", "notes"]
+            "conference": [
+                "title",
+                "author_names",
+                "venue_full",
+                "venue_acronym",
+                "year",
+                "pages",
+                "doi",
+                "url",
+                "pdf_path",
+                "collections",
+                "abstract",
+                "notes",
+            ],
+            "journal": [
+                "title",
+                "author_names",
+                "venue_full",
+                "year",
+                "volume",
+                "issue",
+                "pages",
+                "doi",
+                "pdf_path",
+                "collections",
+                "abstract",
+                "notes",
+            ],
+            "workshop": [
+                "title",
+                "author_names",
+                "venue_full",
+                "venue_acronym",
+                "year",
+                "pages",
+                "doi",
+                "url",
+                "pdf_path",
+                "collections",
+                "abstract",
+                "notes",
+            ],
+            "preprint": [
+                "title",
+                "author_names",
+                "venue_full",
+                "year",
+                "preprint_id",
+                "category",
+                "doi",
+                "url",
+                "pdf_path",
+                "collections",
+                "abstract",
+                "notes",
+            ],
+            "website": [
+                "title",
+                "author_names",
+                "year",
+                "url",
+                "pdf_path",
+                "collections",
+                "abstract",
+                "notes",
+            ],
+            "other": [
+                "title",
+                "author_names",
+                "venue_full",
+                "venue_acronym",
+                "year",
+                "volume",
+                "issue",
+                "pages",
+                "doi",
+                "preprint_id",
+                "category",
+                "url",
+                "pdf_path",
+                "collections",
+                "abstract",
+                "notes",
+            ],
         }
-        
+
         self.current_paper_type = paper_data.get("paper_type", "conference")
         self.input_fields = {}
         self._create_layout()
@@ -54,49 +151,70 @@ class EditDialog:
 
     def _create_input_fields(self):
         """Create input fields for fields visible in the current paper type."""
-        visible_fields = self.fields_by_type.get(self.current_paper_type, self.fields_by_type["other"])
+        visible_fields = self.fields_by_type.get(
+            self.current_paper_type, self.fields_by_type["other"]
+        )
         self.input_fields = {}
 
         authors = self.paper_data.get("authors", [])
         if isinstance(authors, list):
-            author_names = ", ".join([getattr(a, 'full_name', str(a)) for a in authors])
+            author_names = ", ".join([getattr(a, "full_name", str(a)) for a in authors])
         else:
             author_names = str(authors) if authors else ""
 
         collections = self.paper_data.get("collections", [])
         if isinstance(collections, list):
-            collection_names = ", ".join([getattr(c, 'name', str(c)) for c in collections])
+            collection_names = ", ".join(
+                [getattr(c, "name", str(c)) for c in collections]
+            )
         else:
             collection_names = str(collections) if collections else ""
 
         all_field_values = {
-            "title": self.paper_data.get("title", ""), "author_names": author_names,
-            "venue_full": self.paper_data.get("venue_full", ""), "venue_acronym": self.paper_data.get("venue_acronym", ""),
-            "year": str(self.paper_data.get("year", "")), "volume": self.paper_data.get("volume", ""),
-            "issue": self.paper_data.get("issue", ""), "pages": self.paper_data.get("pages", ""),
-            "doi": self.paper_data.get("doi", ""), "preprint_id": self.paper_data.get("preprint_id", ""),
-            "category": self.paper_data.get("category", ""), "url": self.paper_data.get("url", ""),
-            "pdf_path": self.paper_data.get("pdf_path", ""), "collections": collection_names,
-            "abstract": self.paper_data.get("abstract", ""), "notes": self.paper_data.get("notes", ""),
+            "title": self.paper_data.get("title", ""),
+            "author_names": author_names,
+            "venue_full": self.paper_data.get("venue_full", ""),
+            "venue_acronym": self.paper_data.get("venue_acronym", ""),
+            "year": str(self.paper_data.get("year", "")),
+            "volume": self.paper_data.get("volume", ""),
+            "issue": self.paper_data.get("issue", ""),
+            "pages": self.paper_data.get("pages", ""),
+            "doi": self.paper_data.get("doi", ""),
+            "preprint_id": self.paper_data.get("preprint_id", ""),
+            "category": self.paper_data.get("category", ""),
+            "url": self.paper_data.get("url", ""),
+            "pdf_path": self.paper_data.get("pdf_path", ""),
+            "collections": collection_names,
+            "abstract": self.paper_data.get("abstract", ""),
+            "notes": self.paper_data.get("notes", ""),
         }
 
         for field_name in visible_fields:
             if field_name in all_field_values:
                 value = str(all_field_values[field_name] or "")
                 is_read_only = field_name in self.read_only_fields
-                
+
                 # Make title, author_names, abstract, and notes multiline
-                is_multiline = field_name in ["title", "author_names", "abstract", "notes"]
-                
+                is_multiline = field_name in [
+                    "title",
+                    "author_names",
+                    "abstract",
+                    "notes",
+                ]
+
                 input_field = TextArea(
                     text=value,
                     multiline=is_multiline,
                     read_only=is_read_only,
-                    width=Dimension(min=80, preferred=120), # Make input fields wider
-                    style="class:textarea" if not is_read_only else "class:textarea.readonly",
-                    focusable=not is_read_only, # Explicitly set focusable
+                    width=Dimension(min=80, preferred=120),  # Make input fields wider
+                    style=(
+                        "class:textarea"
+                        if not is_read_only
+                        else "class:textarea.readonly"
+                    ),
+                    focusable=not is_read_only,  # Explicitly set focusable
                 )
-                
+
                 # Set height for multiline fields
                 if field_name in ["title", "author_names"]:
                     input_field.window.height = Dimension(preferred=2, max=3)
@@ -104,7 +222,7 @@ class EditDialog:
                     input_field.window.height = Dimension(preferred=4, max=6)
                 else:
                     input_field.window.height = Dimension(preferred=1, max=1)
-                
+
                 self.input_fields[field_name] = input_field
 
     def _build_body_components(self):
@@ -115,50 +233,76 @@ class EditDialog:
         for display_name, type_value in self.paper_types.items():
             is_selected = self.current_paper_type == type_value
             style = "class:button.focused" if is_selected else "class:button"
-            button = Button(text=display_name, handler=lambda t=type_value: self._set_paper_type(t), width=len(display_name) + 4)
+            button = Button(
+                text=display_name,
+                handler=lambda t=type_value: self._set_paper_type(t),
+                width=len(display_name) + 4,
+            )
             button.window.style = style
             type_buttons.append(button)
         type_buttons_row = VSplit(type_buttons, padding=1, style="class:button-row")
 
         all_field_containers = []
-        visible_fields = self.fields_by_type.get(self.current_paper_type, self.fields_by_type["other"])
+        visible_fields = self.fields_by_type.get(
+            self.current_paper_type, self.fields_by_type["other"]
+        )
         for field_name in visible_fields:
             if field_name in self.input_fields:
                 # Custom label mappings for better display
                 label_mappings = {
                     "doi": "DOI",
                     "pdf_path": "PDF Path",
-                    "preprint_id": "ID" if self.current_paper_type == "preprint" else "Preprint ID",
+                    "preprint_id": (
+                        "ID" if self.current_paper_type == "preprint" else "Preprint ID"
+                    ),
                     "url": "URL",
-                    "venue_full": "Website" if self.current_paper_type == "preprint" else "Venue Full",
+                    "venue_full": (
+                        "Website"
+                        if self.current_paper_type == "preprint"
+                        else "Venue Full"
+                    ),
                 }
-                label_text = label_mappings.get(field_name, field_name.replace("_", " ").title())
-                label_window = Window(
-                    content=FormattedTextControl(f"{label_text}:", focusable=False), 
-                    width=18,  # Fixed width for consistent alignment
-                    style="class:dialog.label"
+                label_text = label_mappings.get(
+                    field_name, field_name.replace("_", " ").title()
                 )
-                
-                field_container = VSplit([
-                    label_window,
-                    self.input_fields[field_name].window  # This will expand to fill remaining space
-                ])
+                label_window = Window(
+                    content=FormattedTextControl(f"{label_text}:", focusable=False),
+                    width=18,  # Fixed width for consistent alignment
+                    style="class:dialog.label",
+                )
+
+                field_container = VSplit(
+                    [
+                        label_window,
+                        self.input_fields[
+                            field_name
+                        ].window,  # This will expand to fill remaining space
+                    ]
+                )
                 all_field_containers.append(field_container)
-        
+
         fields_content = HSplit(all_field_containers, padding=1)
         fields_layout = ScrollablePane(
-            content=fields_content, 
-            show_scrollbar=True, 
+            content=fields_content,
+            show_scrollbar=True,
             keep_cursor_visible=True,
-            width=Dimension(min=120, preferred=140)  # Ensure content fits within dialog
+            width=Dimension(
+                min=120, preferred=140
+            ),  # Ensure content fits within dialog
         )
-        
+
         # Put "Paper Type:" label and buttons on the same line
-        paper_type_row = VSplit([
-            Window(content=FormattedTextControl("Paper Type:"), width=18, style="class:dialog.label"),
-            type_buttons_row
-        ])
-        
+        paper_type_row = VSplit(
+            [
+                Window(
+                    content=FormattedTextControl("Paper Type:"),
+                    width=18,
+                    style="class:dialog.label",
+                ),
+                type_buttons_row,
+            ]
+        )
+
         return [
             paper_type_row,
             fields_layout,
@@ -168,41 +312,52 @@ class EditDialog:
         """Creates the dialog layout upon initialization."""
         body_components = self._build_body_components()
         self.body_container = HSplit(
-            body_components, 
+            body_components,
             padding=2,  # Increase padding to 2 for exactly 2 lines of spacing
-            width=Dimension(min=130, preferred=150)  # Ensure body fits within dialog frame
+            width=Dimension(
+                min=130, preferred=150
+            ),  # Ensure body fits within dialog frame
         )
-        
+
         # Create custom button row with centered buttons and right-aligned help text
-        extract_pdf_button = Button(text="Extract PDF", handler=self._handle_extract_pdf, width=17)
-        summarize_button = Button(text="Summarize", handler=self._handle_summarize, width=15)
+        extract_pdf_button = Button(
+            text="Extract PDF", handler=self._handle_extract_pdf, width=17
+        )
+        summarize_button = Button(
+            text="Summarize", handler=self._handle_summarize, width=15
+        )
         save_button = Button(text="Save", handler=self._handle_save)
         cancel_button = Button(text="Cancel", handler=self._handle_cancel)
-        
+
         # Create button row layout
-        button_row = VSplit([
-            # Flexible spacer
-            Window(),
-            # Centered buttons
-            extract_pdf_button,
-            Window(width=2),  # Small gap between buttons
-            summarize_button,
-            Window(width=2),  # Small gap between buttons
-            save_button,
-            Window(width=2),  # Small gap between buttons
-            cancel_button,
-            # Flexible spacer with right-aligned help text
-            Window(
-                content=FormattedTextControl("Ctrl-S: Save  Ctrl-E: Extract  Ctrl-L: Summarize  Esc: Cancel"),
-                align=WindowAlign.RIGHT
-            )
-        ])
-        
+        button_row = VSplit(
+            [
+                # Flexible spacer
+                Window(),
+                # Centered buttons
+                extract_pdf_button,
+                Window(width=2),  # Small gap between buttons
+                summarize_button,
+                Window(width=2),  # Small gap between buttons
+                save_button,
+                Window(width=2),  # Small gap between buttons
+                cancel_button,
+                # Flexible spacer with right-aligned help text
+                Window(
+                    content=FormattedTextControl(
+                        "Ctrl-S: Save  Ctrl-E: Extract  Ctrl-L: Summarize  Esc: Cancel"
+                    ),
+                    align=WindowAlign.RIGHT,
+                ),
+            ]
+        )
+
         self.dialog = Dialog(
             title="Edit Paper Metadata",
             body=self.body_container,
             buttons=[button_row],
-            with_background=False, modal=True,  # Remove shadow by setting with_background=False
+            with_background=False,
+            modal=True,  # Remove shadow by setting with_background=False
             width=Dimension(min=140, preferred=160),  # Make dialog wider
         )
         self._set_initial_focus()
@@ -214,12 +369,14 @@ class EditDialog:
 
         for field_name, value in current_values.items():
             if field_name in ["author_names", "collections"]:
-                self.paper_data[field_name.replace("_names", "")] = [name.strip() for name in value.split(",") if name.strip()]
+                self.paper_data[field_name.replace("_names", "")] = [
+                    name.strip() for name in value.split(",") if name.strip()
+                ]
             elif field_name == "year":
                 self.paper_data["year"] = int(value) if value.isdigit() else None
             else:
                 self.paper_data[field_name] = value
-        
+
         self.body_container.children = self._build_body_components()
         self._set_initial_focus()
         get_app().invalidate()
@@ -229,24 +386,28 @@ class EditDialog:
         """Handles the save button press."""
         result = {"paper_type": self.current_paper_type}
         changes_made = []
-        
+
         for field_name, input_field in self.input_fields.items():
             if field_name in self.read_only_fields:
                 continue
-            
+
             new_value = input_field.text.strip()
-            
+
             # Get the original value. For authors and collections, we need to format them as a string.
             if field_name == "author_names":
                 authors = self.paper_data.get("authors", [])
                 if isinstance(authors, list):
-                    old_value = ", ".join([getattr(a, 'full_name', str(a)) for a in authors])
+                    old_value = ", ".join(
+                        [getattr(a, "full_name", str(a)) for a in authors]
+                    )
                 else:
                     old_value = str(authors) if authors else ""
             elif field_name == "collections":
                 collections = self.paper_data.get("collections", [])
                 if isinstance(collections, list):
-                    old_value = ", ".join([getattr(c, 'name', str(c)) for c in collections])
+                    old_value = ", ".join(
+                        [getattr(c, "name", str(c)) for c in collections]
+                    )
                 else:
                     old_value = str(collections) if collections else ""
             else:
@@ -261,8 +422,10 @@ class EditDialog:
             # Special handling for title to apply smart title case
             if field_name == "title":
                 new_value = titlecase(new_value)
-                normalized_new_value = new_value # Update normalized value after titlecase
-            
+                normalized_new_value = (
+                    new_value  # Update normalized value after titlecase
+                )
+
             # Special handling for abstract to fix broken lines
             if field_name == "abstract":
                 new_value = fix_broken_lines(new_value)
@@ -273,21 +436,26 @@ class EditDialog:
 
             if field_name == "author_names":
                 names = [name.strip() for name in new_value.split(",") if name.strip()]
-                result["authors"] = [self.author_service.get_or_create_author(name) for name in names]
+                result["authors"] = [
+                    self.author_service.get_or_create_author(name) for name in names
+                ]
             elif field_name == "collections":
                 names = [name.strip() for name in new_value.split(",") if name.strip()]
-                result["collections"] = [self.collection_service.get_or_create_collection(name) for name in names]
+                result["collections"] = [
+                    self.collection_service.get_or_create_collection(name)
+                    for name in names
+                ]
             elif field_name == "year":
                 result["year"] = int(new_value) if new_value.isdigit() else None
             else:
                 result[field_name] = new_value if new_value else None
-        
+
         if changes_made:
-            paper_id = self.paper_data.get('id', 'New Paper')
-            changes_text = '  \n'.join(changes_made)
+            paper_id = self.paper_data.get("id", "New Paper")
+            changes_text = "  \n".join(changes_made)
             log_message = f"Paper '{self.paper_data.get('title')}' (ID: {paper_id}) updated: \n{changes_text}"
             self.log_callback("edit", log_message)
-        
+
         self.result = result
         self.callback(self.result)
 
@@ -298,61 +466,75 @@ class EditDialog:
         """Handle Extract PDF button press."""
         pdf_path = self.paper_data.get("pdf_path")
         if not pdf_path or not os.path.exists(pdf_path):
-            self.error_display_callback("Extract PDF Error", "No PDF file available for this paper.", "Please ensure the paper has an associated PDF and the file exists.")
+            self.error_display_callback(
+                "Extract PDF Error",
+                "No PDF file available for this paper.",
+                "Please ensure the paper has an associated PDF and the file exists.",
+            )
             return
-            
+
         try:
             extractor = MetadataExtractor()
             extracted_data = extractor.extract_from_pdf(pdf_path)
-            
+
             # Update fields with extracted data but don't save
             self._update_fields_with_extracted_data(extracted_data)
-            
+
         except Exception as e:
-            self.error_display_callback("Extract PDF Error", "Failed to extract PDF metadata", traceback.format_exc())
-    
+            self.error_display_callback(
+                "Extract PDF Error",
+                "Failed to extract PDF metadata",
+                traceback.format_exc(),
+            )
+
     def _update_fields_with_extracted_data(self, extracted_data):
         """Update form fields with extracted PDF data."""
         field_mapping = {
-            'title': 'title',
-            'authors': 'author_names',
-            'abstract': 'abstract',
-            'year': 'year',
-            'venue_full': 'venue_full',
-            'venue_acronym': 'venue_acronym',
-            'doi': 'doi',
-            'url': 'url',
-            'category': 'category',
-            'paper_type': 'paper_type'
+            "title": "title",
+            "authors": "author_names",
+            "abstract": "abstract",
+            "year": "year",
+            "venue_full": "venue_full",
+            "venue_acronym": "venue_acronym",
+            "doi": "doi",
+            "url": "url",
+            "category": "category",
+            "paper_type": "paper_type",
         }
-        
+
         for extracted_field, form_field in field_mapping.items():
             if extracted_field in extracted_data and extracted_data[extracted_field]:
                 value = extracted_data[extracted_field]
-                
-                if extracted_field == 'authors' and isinstance(value, list):
-                    value = ', '.join(value)
-                elif extracted_field == 'year' and isinstance(value, int):
+
+                if extracted_field == "authors" and isinstance(value, list):
+                    value = ", ".join(value)
+                elif extracted_field == "year" and isinstance(value, int):
                     value = str(value)
-                elif extracted_field == 'paper_type':
+                elif extracted_field == "paper_type":
                     # Update paper type and rebuild form if different
                     if value != self.current_paper_type:
                         self.current_paper_type = value
                         # Preserve current field values
-                        current_values = {name: field.text for name, field in self.input_fields.items()}
+                        current_values = {
+                            name: field.text
+                            for name, field in self.input_fields.items()
+                        }
                         # Rebuild form
                         self.body_container.children = self._build_body_components()
                         # Restore values that weren't overwritten
                         for field_name, field_value in current_values.items():
-                            if field_name in self.input_fields and field_name not in field_mapping.values():
+                            if (
+                                field_name in self.input_fields
+                                and field_name not in field_mapping.values()
+                            ):
                                 self.input_fields[field_name].text = field_value
                         get_app().invalidate()
                     continue
-                
+
                 # Update field if it exists in current form
                 if form_field in self.input_fields:
                     self.input_fields[form_field].text = str(value) if value else ""
-        
+
         # Refresh the display
         get_app().invalidate()
 
@@ -360,41 +542,102 @@ class EditDialog:
         """Handle Summarize button press."""
         pdf_path = self.paper_data.get("pdf_path")
         if not pdf_path or not os.path.exists(pdf_path):
-            self.error_display_callback("Summarize Error", "No PDF file available for this paper.", "Please ensure the paper has an associated PDF and the file exists.")
+            self.error_display_callback(
+                "Summarize Error",
+                "No PDF file available for this paper.",
+                "Please ensure the paper has an associated PDF and the file exists.",
+            )
             return
-            
-        try:
-            self.log_callback("summarize_dialog", f"Generating summary for paper via edit dialog")
-            
-            # Generate summary using LLM
-            extractor = MetadataExtractor(log_callback=self.log_callback)
-            summary = extractor.generate_paper_summary(pdf_path)
-            
-            if summary:
-                # Update the notes field with the generated summary
-                if 'notes' in self.input_fields:
-                    self.input_fields['notes'].text = summary
-                    self.log_callback("summarize_dialog", "Successfully updated notes field with LLM summary")
-                else:
-                    self.error_display_callback("Summarize Error", "Notes field not available", "The notes field is not visible in the current paper type view.")
-            else:
-                self.error_display_callback("Summarize Error", "Failed to generate summary", "The LLM was unable to generate a summary for this paper. Check the /log for details.")
-                
-        except Exception as e:
-            self.error_display_callback("Summarize Error", "Failed to generate paper summary", traceback.format_exc())
-        
-        # Refresh the display
-        get_app().invalidate()
+
+        title = self.paper_data.get("title", "Unknown Title")
+
+        # Show status that we're working on the summary
+        if self.status_bar:
+            self.status_bar.set_status(f"Generating summary for '{title}'...", "llm")
+            get_app().invalidate()
+
+        # Run summarization in background thread
+        def generate_summary_background():
+            try:
+                self.log_callback(
+                    "summarize_dialog", f"Generating summary for paper via edit dialog"
+                )
+
+                extractor = MetadataExtractor(log_callback=self.log_callback)
+                summary = extractor.generate_paper_summary(pdf_path)
+
+                # Schedule UI update in main thread
+                def schedule_ui_update():
+                    if summary:
+                        # Update the notes field with the generated summary
+                        if "notes" in self.input_fields:
+                            self.input_fields["notes"].text = summary
+                            self.log_callback(
+                                "summarize_dialog",
+                                "Successfully updated notes field with LLM summary",
+                            )
+
+                            if self.status_bar:
+                                self.status_bar.set_success(
+                                    f"Summary generated for '{title}'"
+                                )
+                        else:
+                            self.error_display_callback(
+                                "Summarize Error",
+                                "Notes field not available",
+                                "The notes field is not visible in the current paper type view.",
+                            )
+                            if self.status_bar:
+                                self.status_bar.set_error("Notes field not available")
+                    else:
+                        self.error_display_callback(
+                            "Summarize Error",
+                            "Failed to generate summary",
+                            "The LLM returned an empty response. This could be due to PDF text extraction issues, token limits, or LLM service problems.",
+                        )
+                        if self.status_bar:
+                            self.status_bar.set_error(
+                                f"Failed to generate summary for '{title}'"
+                            )
+
+                    get_app().invalidate()
+
+                get_app().loop.call_soon_threadsafe(schedule_ui_update)
+
+            except Exception as e:
+
+                def schedule_ui_error():
+                    self.error_display_callback(
+                        "Summarize Error",
+                        "Failed to generate paper summary",
+                        traceback.format_exc(),
+                    )
+                    if self.status_bar:
+                        self.status_bar.set_error(
+                            f"Failed to generate summary for '{title}'"
+                        )
+                    get_app().invalidate()
+
+                get_app().loop.call_soon_threadsafe(schedule_ui_error)
+
+        # Start background thread
+        thread = threading.Thread(target=generate_summary_background, daemon=True)
+        thread.start()
 
     def _set_initial_focus(self):
         """Sets the initial focus to the first editable field."""
-        visible_fields = self.fields_by_type.get(self.current_paper_type, self.fields_by_type["other"])
-        
+        visible_fields = self.fields_by_type.get(
+            self.current_paper_type, self.fields_by_type["other"]
+        )
+
         for field_name in visible_fields:
-            if field_name in self.input_fields and not self.input_fields[field_name].read_only:
+            if (
+                field_name in self.input_fields
+                and not self.input_fields[field_name].read_only
+            ):
                 self.initial_focus = self.input_fields[field_name].window
                 return
-        
+
         self.initial_focus = self.dialog.buttons[0]
 
     def _focus_first_visible_field(self):
@@ -406,59 +649,76 @@ class EditDialog:
                 # TextArea does not have a 'focused' attribute like CustomInputField did.
                 # Focus is managed by the layout. We just need to ensure the correct window is focused.
                 pass
-            
+
             get_app().layout.focus(self.initial_focus)
 
     def get_initial_focus(self):
-        return getattr(self, 'initial_focus', None)
-    
+        return getattr(self, "initial_focus", None)
+
     def _get_focusable_fields(self):
         """Get list of focusable input field windows in order."""
-        visible_fields = self.fields_by_type.get(self.current_paper_type, self.fields_by_type["other"])
+        visible_fields = self.fields_by_type.get(
+            self.current_paper_type, self.fields_by_type["other"]
+        )
         focusable_windows = []
         field_names = []
-        
+
         for field_name in visible_fields:
-            if field_name in self.input_fields and not self.input_fields[field_name].read_only:
+            if (
+                field_name in self.input_fields
+                and not self.input_fields[field_name].read_only
+            ):
                 focusable_windows.append(self.input_fields[field_name].window)
                 field_names.append(field_name)
-        
+
         self.focusable_field_names = field_names  # Store for debugging
         return focusable_windows
-    
+
     def _focus_next_field(self):
         """Focus the next input field."""
         focusable_windows = self._get_focusable_fields()
         if not focusable_windows:
             return
-            
+
         current_window = get_app().layout.current_window
-        
+
         try:
             current_index = focusable_windows.index(current_window)
             next_index = (current_index + 1) % len(focusable_windows)
             next_window = focusable_windows[next_index]
-            current_field = self.focusable_field_names[current_index] if current_index < len(self.focusable_field_names) else "unknown"
-            next_field = self.focusable_field_names[next_index] if next_index < len(self.focusable_field_names) else "unknown"
+            current_field = (
+                self.focusable_field_names[current_index]
+                if current_index < len(self.focusable_field_names)
+                else "unknown"
+            )
+            next_field = (
+                self.focusable_field_names[next_index]
+                if next_index < len(self.focusable_field_names)
+                else "unknown"
+            )
         except ValueError:
             # Current window not in list, focus first
             next_window = focusable_windows[0]
-            next_field = self.focusable_field_names[0] if self.focusable_field_names else "unknown"
-        
+            next_field = (
+                self.focusable_field_names[0]
+                if self.focusable_field_names
+                else "unknown"
+            )
+
         # Update focused state - manually force focus
         for field_name, field in self.input_fields.items():
             # Check if the window of the TextArea matches the next_window
-            field.focused = (field.window == next_window)
-        
+            field.focused = field.window == next_window
+
         get_app().layout.focus(next_window)
         get_app().invalidate()
-    
+
     def _focus_previous_field(self):
         """Focus the previous input field."""
         focusable_windows = self._get_focusable_fields()
         if not focusable_windows:
             return
-            
+
         current_window = get_app().layout.current_window
         try:
             current_index = focusable_windows.index(current_window)
@@ -467,15 +727,13 @@ class EditDialog:
         except ValueError:
             # Current window not in list, focus last
             prev_window = focusable_windows[-1]
-        
-        
-        
+
         get_app().layout.focus(prev_window)
         get_app().invalidate()
 
     def _add_key_bindings(self):
         kb = KeyBindings()
-        
+
         @kb.add("c-s")
         def _(event):
             self._handle_save()
@@ -487,12 +745,14 @@ class EditDialog:
         @kb.add("c-e")
         def _(event):
             self._handle_extract_pdf()
-            
+
         @kb.add("c-l")
         def _(event):
             self._handle_summarize()
 
-        self.body_container.key_bindings = merge_key_bindings([self.body_container.key_bindings or KeyBindings(), kb])
+        self.body_container.key_bindings = merge_key_bindings(
+            [self.body_container.key_bindings or KeyBindings(), kb]
+        )
 
     def __pt_container__(self):
         return self.dialog

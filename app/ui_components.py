@@ -158,9 +158,9 @@ class StatusBar:
         self.progress_text = ""
         self.status_type = "info"  # info, success, error, warning
 
-    def set_status(self, text: str, status_type: str = "info"):
-        """Set status text with optional type for color coding."""
-        self.status_text = StatusMessages.format_message(text, status_type)
+    def set_status(self, text: str, status_type: str = "info", action: str = None):
+        """Set status text with optional type for color coding and action icon."""
+        self.status_text = StatusMessages.format_message(text, status_type, action)
         self.status_type = status_type
 
     def set_success(self, text: str):

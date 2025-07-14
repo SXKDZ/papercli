@@ -24,6 +24,7 @@ class StatusMessages:
         "help": "📖",
         "select": "🎯",
         "clean": "🧹",
+        "llm": "🤖",
     }
 
     @classmethod

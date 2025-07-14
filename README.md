@@ -23,8 +23,12 @@ A powerful command-line paper management system for researchers and academics. P
 - **Comprehensive Search**: Filter papers by title, author, venue, year, type, and collection
 
 ### 🤖 AI-Powered Features
-- **LLM Summarization**: Generate paper summaries using OpenAI integration
-- **Smart Chat**: Chat with an LLM about your papers and research
+- **Interactive Chat Interface**: Local chat dialog with OpenAI GPT for discussing papers
+  - Automatic PDF content inclusion (first 10 pages) for comprehensive context
+  - Auto-summarization for papers without notes
+  - Input history navigation and keyboard shortcuts
+- **Multi-LLM Browser Support**: Open Claude, ChatGPT, or Gemini in browser with PDFs
+- **LLM Summarization**: Generate paper summaries using OpenAI with multithreaded processing
 - **Enhanced Metadata**: AI-powered metadata extraction and improvement
 
 ### 📊 Export & Integration
@@ -121,7 +125,11 @@ python -m app.papercli
 
 ### Paper Operations
 Work on the paper under the cursor ► or selected papers ✓:
-- `/chat` - Chat with an LLM about the paper(s)
+- `/chat [provider]` - Chat with an LLM about the paper(s)
+  - `/chat` - Open local chat interface with OpenAI GPT (interactive dialog)
+  - `/chat claude` - Open Claude AI in browser
+  - `/chat chatgpt` - Open ChatGPT in browser  
+  - `/chat gemini` - Open Google Gemini in browser
 - `/edit` - Open edit dialog or edit field directly (e.g., `/edit title ...`)
 - `/open` - Open the PDF for the paper(s)
 - `/detail` - Show detailed metadata for the paper(s)
@@ -159,8 +167,13 @@ Work on the paper under the cursor ► or selected papers ✓:
 Create a `.env` file in your project directory:
 
 ```env
-# OpenAI API key for LLM features (required for AI features)
+# LLM API Keys (configure the providers you want to use)
 OPENAI_API_KEY=your_openai_api_key_here
+CLAUDE_API_KEY=your_claude_api_key_here
+GEMINI_API_KEY=your_gemini_api_key_here
+
+# Default LLM provider for chat (claude, openai, gemini)
+DEFAULT_LLM_PROVIDER=claude
 
 # Data directory for database and PDFs (optional, defaults to ~/.papercli)
 PAPERCLI_DATA_DIR=/path/to/your/papercli/data
@@ -195,13 +208,37 @@ PaperCLI uses a SQLite database with the following main entities:
 
 ## Keyboard Shortcuts
 
+### Navigation & General
 - **↑/↓** - Navigate the paper list or scroll panels
 - **PageUp/PageDown** - Scroll panels by a full page
 - **Space** - Toggle selection for a paper (only in `/select` mode)
 - **Enter** - Execute a command from the input bar
 - **ESC** - Close panels, exit selection mode, or clear input
 - **Tab** - Trigger and cycle through auto-completions
-- **F1** - Show help panel
+
+### Function Keys (Quick Actions)
+- **F1** - Add paper dialog
+- **F2** - Open paper PDF
+- **F3** - Show paper details
+- **F4** - Chat with AI about paper
+- **F5** - Edit paper metadata
+- **F6** - Delete paper
+- **F7** - Manage collections
+- **F8** - Filter papers
+- **F9** - Show all papers
+- **F10** - Sort papers
+- **F11** - Toggle selection mode
+- **F12** - Clear selection
+
+### Chat Interface Shortcuts
+When using the local chat interface (`/chat`):
+- **Enter** - Send message
+- **Ctrl+J** - Insert newline in message
+- **↑/↓** - Navigate input history (when focused on input)
+- **↑/↓** - Scroll chat display (when focused on chat)
+- **PageUp/PageDown** - Scroll chat display by page
+- **Ctrl+S** - Send message (alternative)
+- **Esc** - Close chat interface
 
 ## Troubleshooting
 

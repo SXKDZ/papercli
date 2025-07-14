@@ -2,14 +2,13 @@
 Sort dialog for selecting field and sort order.
 """
 
-from typing import Callable, Optional, Tuple
+from typing import Callable
 
-from prompt_toolkit.layout.containers import HSplit, VSplit, Window, WindowAlign
+from prompt_toolkit.layout.containers import HSplit, VSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.widgets import Button, Dialog, RadioList
 from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
-from prompt_toolkit.application import get_app
 
 
 class SortDialog:
