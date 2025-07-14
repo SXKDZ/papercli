@@ -23,11 +23,11 @@ A powerful command-line paper management system for researchers and academics. P
 - **Comprehensive Search**: Filter papers by title, author, venue, year, type, and collection
 
 ### 🤖 AI-Powered Features
-- **Interactive Chat Interface**: Local chat dialog with OpenAI GPT for discussing papers
+- **Interactive Chat Interface**: Local chat dialog with configurable OpenAI models (GPT-4o, etc.)
   - Automatic PDF content inclusion (first 10 pages) for comprehensive context
   - Auto-summarization for papers without notes
   - Input history navigation and keyboard shortcuts
-- **Multi-LLM Browser Support**: Open Claude, ChatGPT, or Gemini in browser with PDFs
+- **Browser Chat Integration**: Quick access to Claude, ChatGPT, or Gemini web interfaces
 - **LLM Summarization**: Generate paper summaries using OpenAI with multithreaded processing
 - **Enhanced Metadata**: AI-powered metadata extraction and improvement
 
@@ -167,13 +167,11 @@ Work on the paper under the cursor ► or selected papers ✓:
 Create a `.env` file in your project directory:
 
 ```env
-# LLM API Keys (configure the providers you want to use)
+# OpenAI API key (required for local chat interface and summarization)
 OPENAI_API_KEY=your_openai_api_key_here
-CLAUDE_API_KEY=your_claude_api_key_here
-GEMINI_API_KEY=your_gemini_api_key_here
 
-# Default LLM provider for chat (claude, openai, gemini)
-DEFAULT_LLM_PROVIDER=claude
+# OpenAI model for chat and summarization (optional, defaults to gpt-4o)
+OPENAI_MODEL=gpt-4o
 
 # Data directory for database and PDFs (optional, defaults to ~/.papercli)
 PAPERCLI_DATA_DIR=/path/to/your/papercli/data
