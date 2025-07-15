@@ -165,3 +165,7 @@ cython_debug/
 
 # Development and publishing scripts
 publish_version.py
+
+# Claude Code settings
+.claude/
+CLAUDE.md
