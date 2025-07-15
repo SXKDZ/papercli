@@ -13,6 +13,36 @@ from .database import init_database
 from .version import get_version
 
 
+def check_env_file():
+    """Check if .env file exists and prompt user to create it if needed."""
+    env_file = Path(".env")
+    current_dir = Path.cwd()
+    
+    if not env_file.exists():
+        print(f"""
+🔧 Configuration Setup Required
+
+PaperCLI requires a .env file for OpenAI API configuration.
+Please create a .env file in the directory where you run papercli:
+{current_dir}
+
+Required contents:
+OPENAI_API_KEY=your_openai_api_key_here
+OPENAI_MODEL=gpt-4o
+
+You can get an API key from: https://platform.openai.com/api-keys
+""")
+        
+        try:
+            response = input("Would you like to continue without a .env file? (y/N): ")
+            if response.lower() not in ['y', 'yes']:
+                print("Please create a .env file and run papercli again.")
+                sys.exit(0)
+        except KeyboardInterrupt:
+            print("\nGoodbye!")
+            sys.exit(0)
+
+
 def main():
     """Main entry point for PaperCLI."""
     # Handle command line arguments
@@ -37,6 +67,9 @@ For more information, visit: https://github.com/SXKDZ/papercli
             print(f"Unknown argument: {sys.argv[1]}")
             print("Use 'papercli --help' for usage information.")
             sys.exit(1)
+    
+    # Check for .env file and prompt user if needed
+    check_env_file()
     
     load_dotenv()
     

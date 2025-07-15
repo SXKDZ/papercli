@@ -2484,3 +2484,66 @@ class DatabaseHealthService:
             raise Exception(f"Failed to clean orphaned records: {e}")
 
         return cleaned
+
+
+class SummaryGenerationService:
+    """Service for generating paper summaries in the background."""
+    
+    def __init__(self, log_callback=None, status_bar=None):
+        self.log_callback = log_callback
+        self.status_bar = status_bar
+    
+    def generate_summary_background(self, pdf_path, title, on_complete=None):
+        """Generate a summary in the background and call on_complete with the result."""
+        import threading
+        from prompt_toolkit.application import get_app
+        
+        # Set initial status
+        if self.status_bar:
+            self.status_bar.set_status(f"Generating summary for '{title}'...", "llm")
+            get_app().invalidate()
+        
+        def background_worker():
+            try:
+                if self.log_callback:
+                    self.log_callback("summary_generation", f"Starting background summary generation for '{title}'")
+                
+                extractor = MetadataExtractor(log_callback=self.log_callback)
+                summary = extractor.generate_paper_summary(pdf_path)
+                
+                def schedule_result():
+                    if summary:
+                        if self.log_callback:
+                            self.log_callback("summary_generation", f"Successfully generated summary for '{title}'")
+                        if self.status_bar:
+                            self.status_bar.set_success(f"Summary generated for '{title}'")
+                    else:
+                        if self.log_callback:
+                            self.log_callback("summary_generation", f"Failed to generate summary for '{title}' - empty response")
+                        if self.status_bar:
+                            self.status_bar.set_warning(f"Could not generate summary for '{title}'")
+                    get_app().invalidate()
+                    
+                    # Call completion callback if provided
+                    if on_complete:
+                        on_complete(summary)
+                    
+                return get_app().loop.call_soon_threadsafe(schedule_result)
+                
+            except Exception as e:
+                def schedule_error():
+                    if self.log_callback:
+                        self.log_callback("summary_generation_error", f"Error generating summary for '{title}': {e}")
+                    if self.status_bar:
+                        self.status_bar.set_error(f"Failed to generate summary for '{title}'")
+                    get_app().invalidate()
+                    
+                    # Call completion callback if provided
+                    if on_complete:
+                        on_complete(None)
+                    
+                return get_app().loop.call_soon_threadsafe(schedule_error)
+        
+        thread = threading.Thread(target=background_worker, daemon=True)
+        thread.start()
+        return thread

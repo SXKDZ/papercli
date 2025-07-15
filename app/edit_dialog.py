@@ -4,7 +4,6 @@ Custom dialog for editing paper metadata in a full-window form with paper type b
 
 import os
 import traceback
-import threading
 from typing import Callable, Dict, Any, List
 
 from prompt_toolkit.layout.containers import HSplit, VSplit, Window, WindowAlign
@@ -21,6 +20,7 @@ from .services import (
     AuthorService,
     fix_broken_lines,
     MetadataExtractor,
+    SummaryGenerationService,
 )
 
 from prompt_toolkit.widgets import TextArea
@@ -46,6 +46,9 @@ class EditDialog:
         self.result = None
         self.collection_service = CollectionService()
         self.author_service = AuthorService()
+        self.summary_service = SummaryGenerationService(
+            log_callback=self.log_callback, status_bar=self.status_bar
+        )
         self.read_only_fields = read_only_fields or []
 
         self.paper_types = {
@@ -320,12 +323,8 @@ class EditDialog:
         )
 
         # Create custom button row with centered buttons and right-aligned help text
-        extract_pdf_button = Button(
-            text="Extract PDF", handler=self._handle_extract_pdf, width=17
-        )
-        summarize_button = Button(
-            text="Summarize", handler=self._handle_summarize, width=15
-        )
+        extract_pdf_button = Button(text="Extract", handler=self._handle_extract_pdf, width=13)
+        summarize_button = Button(text="Summarize", handler=self._handle_summarize, width=13)
         save_button = Button(text="Save", handler=self._handle_save)
         cancel_button = Button(text="Cancel", handler=self._handle_cancel)
 
@@ -551,78 +550,14 @@ class EditDialog:
 
         title = self.paper_data.get("title", "Unknown Title")
 
-        # Show status that we're working on the summary
-        if self.status_bar:
-            self.status_bar.set_status(f"Generating summary for '{title}'...", "llm")
-            get_app().invalidate()
+        # Generate summary using unified service
+        def on_summary_complete(summary):
+            if summary and "notes" in self.input_fields:
+                self.input_fields["notes"].text = summary
 
-        # Run summarization in background thread
-        def generate_summary_background():
-            try:
-                self.log_callback(
-                    "summarize_dialog", f"Generating summary for paper via edit dialog"
-                )
-
-                extractor = MetadataExtractor(log_callback=self.log_callback)
-                summary = extractor.generate_paper_summary(pdf_path)
-
-                # Schedule UI update in main thread
-                def schedule_ui_update():
-                    if summary:
-                        # Update the notes field with the generated summary
-                        if "notes" in self.input_fields:
-                            self.input_fields["notes"].text = summary
-                            self.log_callback(
-                                "summarize_dialog",
-                                "Successfully updated notes field with LLM summary",
-                            )
-
-                            if self.status_bar:
-                                self.status_bar.set_success(
-                                    f"Summary generated for '{title}'"
-                                )
-                        else:
-                            self.error_display_callback(
-                                "Summarize Error",
-                                "Notes field not available",
-                                "The notes field is not visible in the current paper type view.",
-                            )
-                            if self.status_bar:
-                                self.status_bar.set_error("Notes field not available")
-                    else:
-                        self.error_display_callback(
-                            "Summarize Error",
-                            "Failed to generate summary",
-                            "The LLM returned an empty response. This could be due to PDF text extraction issues, token limits, or LLM service problems.",
-                        )
-                        if self.status_bar:
-                            self.status_bar.set_error(
-                                f"Failed to generate summary for '{title}'"
-                            )
-
-                    get_app().invalidate()
-
-                get_app().loop.call_soon_threadsafe(schedule_ui_update)
-
-            except Exception as e:
-
-                def schedule_ui_error():
-                    self.error_display_callback(
-                        "Summarize Error",
-                        "Failed to generate paper summary",
-                        traceback.format_exc(),
-                    )
-                    if self.status_bar:
-                        self.status_bar.set_error(
-                            f"Failed to generate summary for '{title}'"
-                        )
-                    get_app().invalidate()
-
-                get_app().loop.call_soon_threadsafe(schedule_ui_error)
-
-        # Start background thread
-        thread = threading.Thread(target=generate_summary_background, daemon=True)
-        thread.start()
+        self.summary_service.generate_summary_background(
+            pdf_path, title, on_complete=on_summary_complete
+        )
 
     def _set_initial_focus(self):
         """Sets the initial focus to the first editable field."""

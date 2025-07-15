@@ -391,13 +391,24 @@ Indicators (in the first column):
                     if total_cleaned_pdfs > 0:
                         details.append(f"• PDF files: {total_cleaned_pdfs}")
 
-                    message = f"✓ Cleaned orphaned items"
-                    self.show_error_panel_with_message(
-                        "PaperCLI Doctor - Cleanup Complete",
-                        message,
-                        "\n".join(details),
-                    )
-                    self.status_bar.set_success(f"Database cleanup complete")
+                    # Log detailed cleanup results
+                    self._add_log("database_cleanup", "Database cleanup completed:")
+                    for detail in details:
+                        self._add_log("database_cleanup", detail)
+
+                    # Show cleanup results in status bar
+                    cleanup_summary = []
+                    if total_cleaned_records > 0:
+                        cleanup_summary.append(f"{total_cleaned_records} records")
+                    if total_cleaned_pdfs > 0:
+                        cleanup_summary.append(f"{total_cleaned_pdfs} PDFs")
+
+                    if cleanup_summary:
+                        self.status_bar.set_success(
+                            f"Database cleanup complete - cleaned {' and '.join(cleanup_summary)}"
+                        )
+                    else:
+                        self.status_bar.set_success("Database cleanup complete")
                 else:
                     self.status_bar.set_success(
                         "No orphaned items found - database is clean"

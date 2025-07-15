@@ -12,7 +12,7 @@ from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
 from prompt_toolkit.application import get_app
 
-from .services import PaperService, MetadataExtractor
+from .services import PaperService, MetadataExtractor, SummaryGenerationService
 from openai import OpenAI
 import PyPDF2
 
@@ -29,12 +29,14 @@ class ChatDialog:
         status_bar=None,
     ):
         self.papers = papers
-        self.llm_provider = llm_provider  # 'claude', 'openai', or 'gemini'
         self.callback = callback
         self.log_callback = log_callback
         self.status_bar = status_bar
         self.result = None
         self.paper_service = PaperService()
+        self.summary_service = SummaryGenerationService(
+            log_callback=self.log_callback, status_bar=self.status_bar
+        )
 
         # Initialize OpenAI client
         self.openai_client = OpenAI()
@@ -62,117 +64,104 @@ class ChatDialog:
             )
             return
 
-        # Get paper details from Notes section or generate summary
+        # Get paper details and potentially generate summaries
         paper_details = []
         for i, paper in enumerate(self.papers, 1):
-            title = getattr(paper, "title", "Unknown Title")
-            notes = getattr(paper, "notes", "") or ""
-            notes = notes.strip()
+            # Check if we need to generate a summary
+            fields = self._get_paper_fields(paper)
 
-            if notes:
-                paper_info = f"**Paper {i}: {title}**\n{notes}"
-            else:
-                # If no notes, try to generate summary from PDF
-                pdf_path = getattr(paper, "pdf_path", "")
-                if pdf_path and os.path.exists(pdf_path):
-                    if self.status_bar:
-                        self.status_bar.set_status(
-                            f"Generating summary for '{title}'...", "llm"
-                        )
-                        get_app().invalidate()
-
-                    # Generate summary in background thread
-                    def generate_summary_background():
-                        try:
-                            extractor = MetadataExtractor(
-                                log_callback=self.log_callback
+            if not fields["notes"]:
+                # Try to generate summary from PDF
+                if fields["pdf_path"] and os.path.exists(fields["pdf_path"]):
+                    # Generate summary using unified service
+                    def on_summary_complete(summary):
+                        if summary:
+                            paper.notes = summary
+                            self.paper_service.update_paper(
+                                paper.id, {"notes": summary}
                             )
-                            summary = extractor.generate_paper_summary(pdf_path)
+                            self._refresh_chat_display()
 
-                            def update_status_success():
-                                if summary:
-                                    paper.notes = summary
-                                    self.paper_service.update_paper(
-                                        paper.id, {"notes": summary}
-                                    )
-
-                                    if self.log_callback:
-                                        self.log_callback(
-                                            "chat_auto_summarize",
-                                            f"Auto-generated and saved summary for '{title}'",
-                                        )
-
-                                    if self.status_bar:
-                                        self.status_bar.set_success(
-                                            f"Summary generated and saved for '{title}'"
-                                        )
-                                else:
-                                    if self.status_bar:
-                                        self.status_bar.set_warning(
-                                            f"Could not generate summary for '{title}'"
-                                        )
-                                get_app().invalidate()
-
-                            get_app().loop.call_soon_threadsafe(update_status_success)
-
-                        except Exception as e:
-                            if self.log_callback:
-                                self.log_callback(
-                                    "chat_auto_summarize_error",
-                                    f"Failed to generate summary for '{title}': {e}",
-                                )
-
-                            def update_status_error():
-                                if self.status_bar:
-                                    self.status_bar.set_error(
-                                        f"Failed to generate summary for '{title}'"
-                                    )
-                                get_app().invalidate()
-
-                            get_app().loop.call_soon_threadsafe(update_status_error)
-
-                    # Start background thread for summarization
-                    summary_thread = threading.Thread(
-                        target=generate_summary_background, daemon=True
+                    self.summary_service.generate_summary_background(
+                        fields["pdf_path"],
+                        fields["title"],
+                        on_complete=on_summary_complete,
                     )
-                    summary_thread.start()
 
-                    # For now, use basic info and summary will be added later
-                    authors = getattr(paper, "author_names", "Unknown Authors")
-                    venue = getattr(paper, "venue_full", "Unknown Venue")
-                    year = getattr(paper, "year", "Unknown Year")
-                    abstract = getattr(paper, "abstract", "") or ""
-
-                    paper_info = f"**Paper {i}: {title}**\nAuthors: {authors}\nVenue: {venue} ({year})"
-                    if abstract:
-                        paper_info += f"\n\nAbstract: {abstract}"
-                    paper_info += f"\n\n(Summary being generated in background...)"
+                    # Add placeholder message for background generation
+                    paper_info = (
+                        self._format_paper_info(paper, i)
+                        + "\n\n(Summary being generated in background...)"
+                    )
                 else:
-                    # No PDF available, show basic paper info
-                    authors = getattr(paper, "author_names", "Unknown Authors")
-                    venue = getattr(paper, "venue_full", "Unknown Venue")
-                    year = getattr(paper, "year", "Unknown Year")
-                    abstract = getattr(paper, "abstract", "") or ""
-
-                    paper_info = f"**Paper {i}: {title}**\nAuthors: {authors}\nVenue: {venue} ({year})"
-                    if abstract:
-                        paper_info += f"\n\nAbstract: {abstract}"
+                    # No PDF available, use standard formatting
+                    paper_info = self._format_paper_info(paper, i)
+            else:
+                # Notes available, use standard formatting
+                paper_info = self._format_paper_info(paper, i)
 
             paper_details.append(paper_info)
 
         # Add initial system message with paper details
+        initial_content = self._build_initial_content(paper_details)
+        self.chat_history.append({"role": "assistant", "content": initial_content})
+
+    def _get_paper_fields(self, paper):
+        """Extract common paper fields."""
+        return {
+            "title": getattr(paper, "title", "Unknown Title"),
+            "authors": getattr(paper, "author_names", "Unknown Authors"),
+            "venue": getattr(paper, "venue_full", "Unknown Venue"),
+            "year": getattr(paper, "year", "Unknown Year"),
+            "abstract": getattr(paper, "abstract", "") or "",
+            "notes": (getattr(paper, "notes", "") or "").strip(),
+            "pdf_path": getattr(paper, "pdf_path", ""),
+        }
+
+    def _format_paper_info(self, paper, index):
+        """Format paper information for display."""
+        fields = self._get_paper_fields(paper)
+
+        if fields["notes"]:
+            return f"**Paper {index}: {fields['title']}**\n{fields['notes']}"
+        else:
+            # No notes available, show basic paper info
+            paper_info = f"**Paper {index}: {fields['title']}**\nAuthors: {fields['authors']}\nVenue: {fields['venue']} ({fields['year']})"
+            if fields["abstract"]:
+                paper_info += f"\n\nAbstract: {fields['abstract']}"
+            return paper_info
+
+    def _build_initial_content(self, paper_details):
+        """Build the initial content message for the chat."""
         if len(self.papers) == 1:
-            initial_content = (
-                "Here is the selected paper for discussion:\n\n" + paper_details[0]
+            return (
+                f"Here is the selected paper for discussion:\n\n{paper_details[0]}\n\n"
+                "(You can ask questions about this paper or request specific analyses.)"
             )
         else:
-            initial_content = (
+            content = (
                 f"Here are the {len(self.papers)} selected papers for discussion:\n\n"
                 + "\n\n---\n\n".join(paper_details)
             )
-            initial_content += f"\n\n(You can refer to papers by their numbers, e.g., 'Paper 1', 'Paper 2', etc.)"
+            content += f"\n\n(You can refer to papers by their numbers, e.g., 'Paper 1', 'Paper 2', etc.)"
+            return content
 
-        self.chat_history.append({"role": "assistant", "content": initial_content})
+    def _refresh_chat_display(self):
+        """Refresh the chat display by rebuilding the initial content with updated paper info."""
+        # Rebuild paper details using unified formatting
+        paper_details = [
+            self._format_paper_info(paper, i) for i, paper in enumerate(self.papers, 1)
+        ]
+
+        # Build the updated content
+        updated_content = self._build_initial_content(paper_details)
+
+        # Update the initial assistant message in chat history
+        if len(self.chat_history) > 0 and self.chat_history[-1]["role"] == "assistant":
+            self.chat_history[-1]["content"] = updated_content
+
+        # Refresh the display
+        self.chat_display.text = self._format_chat_history()
 
     def _create_ui_components(self):
         """Create the UI components for the chat dialog."""
@@ -509,29 +498,24 @@ IMPORTANT: Only provide information that is explicitly present in the paper info
 
         context_parts = []
         for i, paper in enumerate(self.papers, 1):
-            title = getattr(paper, "title", "Unknown Title")
-            authors = getattr(paper, "author_names", "Unknown Authors")
-            venue = getattr(paper, "venue_full", "Unknown Venue")
-            year = getattr(paper, "year", "Unknown Year")
-            abstract = getattr(paper, "abstract", "") or ""
-            notes = getattr(paper, "notes", "") or ""
-            notes = notes.strip()
-            pdf_path = getattr(paper, "pdf_path", "")
+            fields = self._get_paper_fields(paper)
 
-            paper_context = f"Paper {i}: {title}\n"
-            paper_context += f"Authors: {authors}\n"
-            paper_context += f"Venue: {venue} ({year})\n"
+            paper_context = f"Paper {i}: {fields['title']}\n"
+            paper_context += f"Authors: {fields['authors']}\n"
+            paper_context += f"Venue: {fields['venue']} ({fields['year']})\n"
 
-            if abstract:
-                paper_context += f"Abstract: {abstract}\n"
+            if fields["abstract"]:
+                paper_context += f"Abstract: {fields['abstract']}\n"
 
-            if notes:
-                paper_context += f"Notes: {notes}\n"
+            if fields["notes"]:
+                paper_context += f"Notes: {fields['notes']}\n"
 
             # Extract first 10 pages from PDF if available
-            if pdf_path and os.path.exists(pdf_path):
+            if fields["pdf_path"] and os.path.exists(fields["pdf_path"]):
                 try:
-                    pdf_text = self._extract_first_pages(pdf_path, max_pages=10)
+                    pdf_text = self._extract_first_pages(
+                        fields["pdf_path"], max_pages=10
+                    )
                     if pdf_text:
                         paper_context += (
                             f"First 10 pages attached to this chat:\n{pdf_text}\n"
@@ -540,7 +524,7 @@ IMPORTANT: Only provide information that is explicitly present in the paper info
                     if self.log_callback:
                         self.log_callback(
                             "pdf_extract_error",
-                            f"Failed to extract PDF pages for '{title}': {e}",
+                            f"Failed to extract PDF pages for '{fields['title']}': {e}",
                         )
 
             context_parts.append(paper_context)
