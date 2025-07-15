@@ -299,10 +299,8 @@ Indicators (in the first column):
     def __init__(self, db_path: str):
         self.db_path = db_path
 
-        # Initialize database if not already done
-        from .database import init_database, get_pdf_directory
-
-        init_database(db_path)
+        # Import required modules
+        from .database import get_pdf_directory
 
         # Initialize services
         self.paper_service = PaperService()
