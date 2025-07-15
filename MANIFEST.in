@@ -1,2 +1,1 @@
-include alembic.ini
-recursive-include alembic *.py *.mako
+recursive-include app *.py *.ini *.mako

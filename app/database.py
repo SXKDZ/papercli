@@ -44,7 +44,7 @@ class DatabaseManager:
             if not os.path.exists(alembic_ini_path):
                 # Look for it relative to this file (installed package)
                 import app
-                app_path = Path(app.__file__).parent.parent
+                app_path = Path(app.__file__).parent
                 alembic_ini_path = app_path / "alembic.ini"
                 alembic_dir = app_path / "alembic"
                 

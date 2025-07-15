@@ -77,16 +77,11 @@ dev = [
 papercli = "app.papercli:main"
 
 [tool.setuptools]
-packages = ["app", "alembic"]
+packages = ["app", "app.alembic"]
 include-package-data = true
 
 [tool.setuptools.package-data]
-app = ["*.py"]
-alembic = ["*.py", "*.mako", "versions/*.py"]
-"" = ["alembic.ini"]
-
-[tool.setuptools.package-dir]
-alembic = "alembic"
+app = ["*.py", "*.ini", "alembic/*.py", "alembic/*.mako", "alembic/versions/*.py"]
 
 [tool.black]
 line-length = 88
