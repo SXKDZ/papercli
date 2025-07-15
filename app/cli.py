@@ -10,6 +10,7 @@ from typing import List, Optional
 from .version import VersionManager, get_version
 
 from prompt_toolkit.application import Application, get_app
+from prompt_toolkit.shortcuts import set_title
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.document import Document
@@ -1407,6 +1408,9 @@ The doctor command helps maintain database health by:
 
         # Set initial focus to input buffer
         self.app.layout.focus(self.input_buffer)
+        
+        # Set terminal title
+        set_title("PaperCLI")
 
     def _get_target_papers(self) -> Optional[List[Paper]]:
         """
@@ -2139,6 +2143,11 @@ The doctor command helps maintain database health by:
 
         try:
             if provider is None:
+                # Check if chat dialog is already open
+                if hasattr(self, 'chat_float') and self.chat_float in self.app.layout.container.floats:
+                    self.status_bar.set_status("💬 Chat window is already open")
+                    return
+                
                 # /chat only - show chat window with OpenAI
                 self.status_bar.set_status(f"💬 Opening chat window...")
 
@@ -2192,8 +2201,10 @@ The doctor command helps maintain database health by:
     def _on_chat_complete(self, result):
         """Callback for when chat dialog is closed."""
         try:
-            if self.chat_float in self.app.layout.container.floats:
+            if hasattr(self, 'chat_float') and self.chat_float in self.app.layout.container.floats:
                 self.app.layout.container.floats.remove(self.chat_float)
+            self.chat_float = None
+            self.chat_dialog = None
             self.status_bar.set_status("← Chat closed")
         except Exception as e:
             self._add_log("chat_error", f"Error closing chat dialog: {e}")

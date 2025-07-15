@@ -377,6 +377,10 @@ class ChatDialog:
 
         # Add user message to history
         self.chat_history.append({"role": "user", "content": user_message})
+        
+        # Log the user message
+        if self.log_callback:
+            self.log_callback("chat_user", f"User: {user_message}")
 
         # Clear input
         self.user_input.text = ""
@@ -402,6 +406,11 @@ class ChatDialog:
                     self.chat_history.append(
                         {"role": "assistant", "content": assistant_response}
                     )
+                    
+                    # Log the assistant response
+                    if self.log_callback:
+                        self.log_callback("chat_assistant", f"{self._get_provider_display_name()}: {assistant_response}")
+                    
                     self.chat_display.text = self._format_chat_history()
 
                     if self.status_bar:
