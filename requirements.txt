@@ -16,3 +16,4 @@ python-dotenv>=1.0.0
 bibtexparser
 rispy
 packaging
+pyperclip>=1.8.0

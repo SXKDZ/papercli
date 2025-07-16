@@ -2,21 +2,20 @@
 Add dialog for adding new papers with source and path/ID input.
 """
 
-from typing import Callable, Dict, Any
+from typing import Callable
 
+from prompt_toolkit.application import get_app
+from prompt_toolkit.filters import Condition
+from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
 from prompt_toolkit.layout.containers import (
+    ConditionalContainer,
     HSplit,
     VSplit,
     Window,
-    WindowAlign,
-    ConditionalContainer,
 )
 from prompt_toolkit.layout.controls import FormattedTextControl
-from prompt_toolkit.widgets import Button, Dialog, TextArea, RadioList
 from prompt_toolkit.layout.dimension import Dimension
-from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
-from prompt_toolkit.application import get_app
-from prompt_toolkit.filters import Condition
+from prompt_toolkit.widgets import Button, Dialog, RadioList, TextArea
 
 
 class AddDialog:
@@ -26,14 +25,14 @@ class AddDialog:
         self.callback = callback
         self.result = None
 
-        # Available sources
+        # Available sources - arXiv first, PDF and manual last
         self.source_options = [
-            ("pdf", "PDF File - Add from a local PDF file"),
             ("arxiv", "arXiv - Add from an arXiv ID (e.g., 2307.10635)"),
             ("dblp", "DBLP - Add from a DBLP URL"),
             ("openreview", "OpenReview - Add from an OpenReview ID (e.g., bq1JEgioLr)"),
             ("bib", "BibTeX File - Add papers from a .bib file"),
             ("ris", "RIS File - Add papers from a .ris file"),
+            ("pdf", "PDF File - Add from a local PDF file"),
             ("manual", "Manual - Add with manual entry"),
         ]
 
@@ -46,7 +45,7 @@ class AddDialog:
         # Source selection list
         self.source_list = RadioList(
             values=self.source_options,
-            default="pdf",
+            default="arxiv",
         )
         self.source_list.show_scrollbar = False
 

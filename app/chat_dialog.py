@@ -4,17 +4,17 @@ Chat dialog for interacting with LLMs about selected papers.
 
 import os
 import threading
-from typing import Callable, Dict, Any, List
+from typing import Any, Callable, Dict, List
 
-from prompt_toolkit.layout.containers import HSplit, VSplit, Window
-from prompt_toolkit.widgets import Button, Dialog, TextArea
-from prompt_toolkit.layout.dimension import Dimension
-from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
-from prompt_toolkit.application import get_app
-
-from .services import PaperService, MetadataExtractor, SummaryGenerationService
-from openai import OpenAI
 import PyPDF2
+from openai import OpenAI
+from prompt_toolkit.application import get_app
+from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
+from prompt_toolkit.layout.containers import HSplit, VSplit, Window
+from prompt_toolkit.layout.dimension import Dimension
+from prompt_toolkit.widgets import Button, Dialog, TextArea
+
+from .services import PaperService, BackgroundOperationService
 
 
 class ChatDialog:
@@ -23,7 +23,6 @@ class ChatDialog:
     def __init__(
         self,
         papers: List[Dict[str, Any]],
-        llm_provider: str,
         callback: Callable,
         log_callback: Callable,
         status_bar=None,
@@ -34,8 +33,8 @@ class ChatDialog:
         self.status_bar = status_bar
         self.result = None
         self.paper_service = PaperService()
-        self.summary_service = SummaryGenerationService(
-            log_callback=self.log_callback, status_bar=self.status_bar
+        self.background_service = BackgroundOperationService(
+            status_bar=self.status_bar, log_callback=self.log_callback
         )
 
         # Initialize OpenAI client
@@ -66,6 +65,44 @@ class ChatDialog:
 
         # Get paper details and potentially generate summaries
         paper_details = []
+        papers_needing_summaries = [
+            paper for paper in self.papers 
+            if not self._get_paper_fields(paper)["notes"] 
+            and self._get_paper_fields(paper)["pdf_path"] 
+            and os.path.exists(self._get_paper_fields(paper)["pdf_path"])
+        ]
+        
+        # Generate summaries using the shared service
+        if papers_needing_summaries:
+            from .services import LLMSummaryService
+            
+            summary_service = LLMSummaryService(
+                paper_service=self.paper_service,
+                background_service=self.background_service,
+                log_callback=self.log_callback
+            )
+            
+            def on_summaries_complete(tracking):
+                # Update in-memory paper objects with summaries
+                for paper_id, summary, paper_title in tracking['queue']:
+                    for paper in self.papers:
+                        if paper.id == paper_id:
+                            paper.notes = summary
+                            if self.log_callback:
+                                self.log_callback(
+                                    f"chat_summary_memory_updated_{paper_id}",
+                                    f"Updated in-memory paper: {paper.title[:50]}..."
+                                )
+                            break
+                self._refresh_chat_display()
+            
+            summary_service.generate_summaries(
+                papers=papers_needing_summaries,
+                on_all_complete=on_summaries_complete,
+                operation_prefix="chat_summary"
+            )
+        
+        # Second pass: build paper details for display
         for i, paper in enumerate(self.papers, 1):
             # Check if we need to generate a summary
             fields = self._get_paper_fields(paper)
@@ -73,20 +110,6 @@ class ChatDialog:
             if not fields["notes"]:
                 # Try to generate summary from PDF
                 if fields["pdf_path"] and os.path.exists(fields["pdf_path"]):
-                    # Generate summary using unified service
-                    def on_summary_complete(summary):
-                        if summary:
-                            paper.notes = summary
-                            self.paper_service.update_paper(
-                                paper.id, {"notes": summary}
-                            )
-                            self._refresh_chat_display()
-
-                    self.summary_service.generate_summary_background(
-                        fields["pdf_path"],
-                        fields["title"],
-                        on_complete=on_summary_complete,
-                    )
 
                     # Add placeholder message for background generation
                     paper_info = (
@@ -145,6 +168,7 @@ class ChatDialog:
             )
             content += f"\n\n(You can refer to papers by their numbers, e.g., 'Paper 1', 'Paper 2', etc.)"
             return content
+
 
     def _refresh_chat_display(self):
         """Refresh the chat display by rebuilding the initial content with updated paper info."""
@@ -377,7 +401,7 @@ class ChatDialog:
 
         # Add user message to history
         self.chat_history.append({"role": "user", "content": user_message})
-        
+
         # Log the user message
         if self.log_callback:
             self.log_callback("chat_user", f"User: {user_message}")
@@ -406,11 +430,14 @@ class ChatDialog:
                     self.chat_history.append(
                         {"role": "assistant", "content": assistant_response}
                     )
-                    
+
                     # Log the assistant response
                     if self.log_callback:
-                        self.log_callback("chat_assistant", f"{self._get_provider_display_name()}: {assistant_response}")
-                    
+                        self.log_callback(
+                            "chat_assistant",
+                            f"{self._get_provider_display_name()}: {assistant_response}",
+                        )
+
                     self.chat_display.text = self._format_chat_history()
 
                     if self.status_bar:

@@ -3,21 +3,22 @@ Main CLI application for PaperCLI.
 """
 
 import os
+import shutil
+import threading
 import traceback
 from datetime import datetime
 from typing import List, Optional
 
-from .version import VersionManager, get_version
-
+import requests
 from prompt_toolkit.application import Application, get_app
-from prompt_toolkit.shortcuts import set_title
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.document import Document
 from prompt_toolkit.filters import Condition, has_focus
 from prompt_toolkit.formatted_text import FormattedText
-from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
 from prompt_toolkit.key_binding.bindings import scroll
+from prompt_toolkit.key_binding.defaults import load_key_bindings
 from prompt_toolkit.layout import HSplit, Layout, Window, WindowAlign
 from prompt_toolkit.layout.containers import (
     ConditionalContainer,
@@ -27,30 +28,36 @@ from prompt_toolkit.layout.containers import (
 )
 from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.layout.menus import CompletionsMenu
+from prompt_toolkit.layout.processors import BeforeInput
+from prompt_toolkit.shortcuts import set_title
 from prompt_toolkit.styles import Style
-from prompt_toolkit.widgets import Dialog, Frame, Button, Label
+from prompt_toolkit.widgets import Button, Dialog, Frame, Label
 
-from .models import Paper
+from .add_dialog import AddDialog
+from .chat_dialog import ChatDialog
+from .collect_dialog import CollectDialog
 from .database import get_pdf_directory
+from .edit_dialog import EditDialog
+from .filter_dialog import FilterDialog
+from .models import Paper
 from .services import (
     AuthorService,
+    BackgroundOperationService,
     ChatService,
     CollectionService,
     DatabaseHealthService,
     ExportService,
+    LLMSummaryService,
     MetadataExtractor,
     PaperService,
+    PDFManager,
+    PDFMetadataExtractionService,
     SearchService,
     SystemService,
 )
-from .add_dialog import AddDialog
-from .filter_dialog import FilterDialog
 from .sort_dialog import SortDialog
 from .ui_components import ErrorPanel, PaperListControl, StatusBar
-from .edit_dialog import EditDialog
-from .chat_dialog import ChatDialog
-from .collect_dialog import CollectDialog
-from .status_messages import StatusMessages
+from .version import VersionManager, get_version
 
 
 class SmartCompleter(Completer):
@@ -300,9 +307,6 @@ Indicators (in the first column):
     def __init__(self, db_path: str):
         self.db_path = db_path
 
-        # Import required modules
-        from .database import get_pdf_directory
-
         # Initialize services
         self.paper_service = PaperService()
         self.search_service = SearchService()
@@ -313,6 +317,9 @@ Indicators (in the first column):
         self.chat_service = ChatService(self._add_log)
         self.system_service = SystemService()
         self.db_health_service = DatabaseHealthService()
+
+        # Background operation service (initialized after status_bar)
+        self.background_service = None
 
         # UI state
         self.smart_completer = SmartCompleter()
@@ -345,6 +352,11 @@ Indicators (in the first column):
         self.setup_key_bindings()
         self.setup_application()
 
+        # Initialize background service after status_bar is created
+        self.background_service = BackgroundOperationService(
+            status_bar=self.status_bar, log_callback=self._add_log
+        )
+
     def _add_log(self, action: str, details: str):
         """Add a log entry."""
 
@@ -365,7 +377,7 @@ Indicators (in the first column):
             log_content = "\n".join(log_entries)
 
         self.show_help_dialog(log_content, "Activity Log")
-        self.status_bar.set_status("📜 Activity log opened - Press ESC to close")
+        self.status_bar.set_status("Activity log opened - Press ESC to close", "open")
 
     def handle_doctor_command(self, args: List[str]):
         """Handle /doctor command for database diagnostics and cleanup."""
@@ -373,12 +385,14 @@ Indicators (in the first column):
             action = args[0] if args else "diagnose"
 
             if action == "diagnose":
-                self.status_bar.set_status("🔍 Running diagnostic checks...")
+                self.status_bar.set_status("Running diagnostic checks...", "diagnose")
                 report = self.db_health_service.run_full_diagnostic()
                 self._show_doctor_report(report)
 
             elif action == "clean":
-                self.status_bar.set_status("🧹 Cleaning orphaned records and files...")
+                self.status_bar.set_status(
+                    "Cleaning orphaned records and files...", "clean"
+                )
                 cleaned_records = self.db_health_service.clean_orphaned_records()
                 cleaned_pdfs = self.db_health_service.clean_orphaned_pdfs()
 
@@ -561,7 +575,7 @@ The doctor command helps maintain database health by:
             self.is_filtered_view = False
 
             self.status_bar.set_status(
-                StatusMessages.papers_loaded(len(self.current_papers))
+                f"Loaded {len(self.current_papers)} papers", "papers"
             )
         except Exception as e:
             self.status_bar.set_error(f"Error loading papers: {e}")
@@ -650,7 +664,7 @@ The doctor command helps maintain database health by:
                 self.paper_list_control.toggle_selection()
                 selected_count = len(self.paper_list_control.selected_paper_ids)
                 self.status_bar.set_status(
-                    f"✓ Toggled selection. Selected: {selected_count} papers"
+                    f"Toggled selection. Selected: {selected_count} papers", "success"
                 )
                 event.app.invalidate()  # Force refresh of UI
             else:
@@ -696,10 +710,11 @@ The doctor command helps maintain database health by:
                 selected_count = len(self.paper_list_control.selected_paper_ids)
                 if selected_count > 0:
                     self.status_bar.set_status(
-                        f"← Exited selection mode ({selected_count} papers remain selected)"
+                        f"Exited selection mode ({selected_count} papers remain selected)",
+                        "info",
                     )
                 else:
-                    self.status_bar.set_status("← Exited selection mode")
+                    self.status_bar.set_status("Exited selection mode", "info")
                 event.app.invalidate()
 
         # Function key bindings
@@ -762,19 +777,19 @@ The doctor command helps maintain database health by:
             elif self.show_error_panel:
                 self.show_error_panel = False
                 self.app.layout.focus(self.input_buffer)
-                self.status_bar.set_status("← Closed error panel")
+                self.status_bar.set_status("Closed error panel", "close")
                 event.app.invalidate()
                 return
             elif self.show_help:
                 self.show_help = False
                 self.app.layout.focus(self.input_buffer)
-                self.status_bar.set_status("← Closed help panel")
+                self.status_bar.set_status("Closed help panel", "close")
                 event.app.invalidate()
                 return
             elif self.show_details_panel:
                 self.show_details_panel = False
                 self.app.layout.focus(self.input_buffer)
-                self.status_bar.set_status("← Closed details panel")
+                self.status_bar.set_status("Closed details panel", "close")
                 event.app.invalidate()
                 return
             elif self.edit_dialog is not None:
@@ -782,7 +797,7 @@ The doctor command helps maintain database health by:
                 self.edit_dialog = None
                 self.edit_float = None
                 self.app.layout.focus(self.input_buffer)
-                self.status_bar.set_status("← Closed edit dialog")
+                self.status_bar.set_status("Closed edit dialog", "close")
                 event.app.invalidate()
                 return
             elif self.add_dialog is not None:
@@ -790,7 +805,7 @@ The doctor command helps maintain database health by:
                 self.add_dialog = None
                 self.add_float = None
                 self.app.layout.focus(self.input_buffer)
-                self.status_bar.set_status("← Closed add dialog")
+                self.status_bar.set_status("Closed add dialog", "close")
                 event.app.invalidate()
                 return
             elif self.filter_dialog is not None:
@@ -798,7 +813,7 @@ The doctor command helps maintain database health by:
                 self.filter_dialog = None
                 self.filter_float = None
                 self.app.layout.focus(self.input_buffer)
-                self.status_bar.set_status("← Closed filter dialog")
+                self.status_bar.set_status("Closed filter dialog", "close")
                 event.app.invalidate()
                 return
             elif self.sort_dialog is not None:
@@ -806,7 +821,7 @@ The doctor command helps maintain database health by:
                 self.sort_dialog = None
                 self.sort_float = None
                 self.app.layout.focus(self.input_buffer)
-                self.status_bar.set_status("← Closed sort dialog")
+                self.status_bar.set_status("Closed sort dialog", "close")
                 event.app.invalidate()
                 return
             elif self.in_select_mode:
@@ -815,15 +830,16 @@ The doctor command helps maintain database health by:
                 selected_count = len(self.paper_list_control.selected_paper_ids)
                 if selected_count > 0:
                     self.status_bar.set_status(
-                        f"← Exited selection mode ({selected_count} papers remain selected)"
+                        f"Exited selection mode ({selected_count} papers remain selected)",
+                        "info",
                     )
                 else:
-                    self.status_bar.set_status("← Exited selection mode")
+                    self.status_bar.set_status("Exited selection mode", "info")
                 event.app.invalidate()
                 return
             else:
                 self.input_buffer.text = ""
-                self.status_bar.set_status("🧹 Input cleared")
+                self.status_bar.set_status("Input cleared", "clear")
 
         # Auto-completion - Tab key
         @self.kb.add("tab")
@@ -989,8 +1005,6 @@ The doctor command helps maintain database health by:
         )
 
         # Input window with prompt
-        from prompt_toolkit.layout.processors import BeforeInput
-
         input_window = Window(
             content=BufferControl(
                 buffer=self.input_buffer,
@@ -1232,8 +1246,6 @@ The doctor command helps maintain database health by:
 
     def get_header_text(self) -> FormattedText:
         """Get header text."""
-        from prompt_toolkit.application import get_app
-
         try:
             width = get_app().output.get_size().columns
         except Exception:
@@ -1295,7 +1307,6 @@ The doctor command helps maintain database health by:
 
     def get_shortkey_bar_text(self) -> FormattedText:
         """Get shortkey bar text with function key shortcuts."""
-        from prompt_toolkit.application import get_app
 
         try:
             width = get_app().output.get_size().columns
@@ -1390,9 +1401,6 @@ The doctor command helps maintain database health by:
         )
 
         # Merge our key bindings with default ones
-        from prompt_toolkit.key_binding import merge_key_bindings
-        from prompt_toolkit.key_binding.defaults import load_key_bindings
-
         default_bindings = load_key_bindings()
         all_bindings = merge_key_bindings([default_bindings, self.kb])
 
@@ -1408,7 +1416,7 @@ The doctor command helps maintain database health by:
 
         # Set initial focus to input buffer
         self.app.layout.focus(self.input_buffer)
-        
+
         # Set terminal title
         set_title("PaperCLI")
 
@@ -1424,7 +1432,7 @@ The doctor command helps maintain database health by:
                 target_papers = [current_paper]
 
         if not target_papers:
-            self.status_bar.set_warning(StatusMessages.no_papers_selected())
+            self.status_bar.set_warning("No papers selected or under cursor")
             return None
 
         return target_papers
@@ -1499,19 +1507,21 @@ The doctor command helps maintain database health by:
         if self.in_select_mode:
             # Don't exit selection mode, just show all papers while maintaining selection
             self.load_papers()
-            self.status_bar.set_status(f"📚 Showing all papers (selection mode active)")
+            self.status_bar.set_status(
+                "Showing all papers (selection mode active)", "papers"
+            )
         else:
             # Return to full list from search/filter results
             self.load_papers()
             self.is_filtered_view = False
             self.status_bar.set_status(
-                f"📚 Showing all {len(self.current_papers)} papers."
+                f"Showing all {len(self.current_papers)} papers.", "papers"
             )
 
     def handle_clear_command(self):
         """Handle /clear command - deselect all papers."""
         if not self.paper_list_control.selected_paper_ids:
-            self.status_bar.set_status("No papers were selected.")
+            self.status_bar.set_warning("No papers were selected.")
             return
 
         count = len(self.paper_list_control.selected_paper_ids)
@@ -1542,7 +1552,8 @@ The doctor command helps maintain database health by:
                     self._add_manual_paper()
                 else:
                     self.status_bar.set_status(
-                        "📝 Usage: /add [arxiv <id>|dblp <url>|openreview <id>|pdf <path>|bib <path>|ris <path>|manual]"
+                        "Usage: /add [arxiv <id>|dblp <url>|openreview <id>|pdf <path>|bib <path>|ris <path>|manual]",
+                        "info",
                     )
             else:
                 # Open add dialog when no arguments provided
@@ -1552,10 +1563,9 @@ The doctor command helps maintain database health by:
             self.status_bar.set_error(f"Error adding paper: {e}")
 
     def _quick_add_arxiv(self, arxiv_id: str):
-        """Quickly add a paper from arXiv."""
-        try:
-            self.status_bar.set_status(f"📡 Fetching arXiv paper {arxiv_id}...")
+        """Quickly add a paper from arXiv using background operation."""
 
+        def complete_arxiv_operation():
             # Extract metadata from arXiv
             metadata = self.metadata_extractor.extract_from_arxiv(arxiv_id)
 
@@ -1582,25 +1592,39 @@ The doctor command helps maintain database health by:
 
             # Download PDF
             pdf_dir = get_pdf_directory()
-            self.status_bar.set_status(f"📡 Downloading PDF for {arxiv_id}...")
             pdf_path, pdf_error = self.system_service.download_pdf(
                 "arxiv", arxiv_id, pdf_dir, paper_data
             )
 
+            return {"paper": paper, "pdf_path": pdf_path, "pdf_error": pdf_error}
+
+        def on_arxiv_complete(result, error):
+            if error:
+                self.show_error_panel_with_message(
+                    "Add arXiv Paper Error",
+                    f"Failed to add arXiv paper: {arxiv_id}",
+                    str(error),
+                )
+                return
+
+            paper = result["paper"]
+            pdf_path = result["pdf_path"]
+            pdf_error = result["pdf_error"]
+
             if pdf_path:
                 self._add_log("add_arxiv", f"PDF download successful: {pdf_path}")
-                # Update paper with local PDF path (this will generate proper filename with authors)
-                updated_paper, error = self.paper_service.update_paper(
+                # Update paper with local PDF path
+                updated_paper, update_error = self.paper_service.update_paper(
                     paper.id, {"pdf_path": pdf_path}
                 )
-                if error:
+                if update_error:
                     self.status_bar.set_error(
-                        f"Failed to update PDF path for '{paper.title}': {error}"
+                        f"Failed to update PDF path for '{paper.title}': {update_error}"
                     )
                     self.show_error_panel_with_message(
                         "Database Update Error",
                         f"Failed to update PDF path for '{paper.title}'",
-                        str(error),
+                        str(update_error),
                     )
                 else:
                     self._add_log(
@@ -1616,25 +1640,25 @@ The doctor command helps maintain database health by:
                     or "The paper metadata will still be added, but without the PDF file.",
                 )
 
-            # Refresh display
+            # Refresh display and show success
             self.load_papers()
             self._add_log("add_arxiv", f"Added arXiv paper '{paper.title}'")
-            self.status_bar.set_status(StatusMessages.paper_added(paper.title))
-
-        except Exception as e:
-            self.show_error_panel_with_message(
-                "Add arXiv Paper Error",
-                f"Failed to add arXiv paper: {arxiv_id}",
-                traceback.format_exc(),
+            self.status_bar.set_success(
+                f"Added: {paper.title[:50] + '...' if len(paper.title) > 50 else paper.title}"
             )
+
+        # Run in background
+        self.background_service.run_operation(
+            operation_func=complete_arxiv_operation,
+            operation_name="add_arxiv",
+            initial_message=f"Fetching arXiv paper {arxiv_id}...",
+            on_complete=on_arxiv_complete,
+        )
 
     def _quick_add_dblp(self, dblp_url: str):
-        """Quickly add a paper from DBLP URL."""
-        try:
-            self.status_bar.set_status(
-                f"🌐 Fetching DBLP paper from {dblp_url[:50]}..."
-            )
+        """Quickly add a paper from DBLP URL using background operation."""
 
+        def complete_dblp_operation():
             # Extract metadata from DBLP
             metadata = self.metadata_extractor.extract_from_dblp(dblp_url)
 
@@ -1658,24 +1682,36 @@ The doctor command helps maintain database health by:
                 paper_data, authors, collections
             )
 
-            # Refresh display
+            return {"paper": paper}
+
+        def on_dblp_complete(result, error):
+            if error:
+                self.show_error_panel_with_message(
+                    "Add DBLP Paper Error",
+                    f"Failed to add DBLP paper: {dblp_url}",
+                    str(error),
+                )
+                return
+
+            paper = result["paper"]
+
+            # Refresh display and show success
             self.load_papers()
             self._add_log("add_dblp", f"Added DBLP paper '{paper.title}'")
             self.status_bar.set_success(f"Added: {paper.title[:50]}...")
 
-        except Exception as e:
-            self.show_error_panel_with_message(
-                "Add DBLP Paper Error",
-                f"Failed to add DBLP paper: {dblp_url}",
-                traceback.format_exc(),
-            )
+        # Run in background
+        self.background_service.run_operation(
+            operation_func=complete_dblp_operation,
+            operation_name="add_dblp",
+            initial_message=f"Fetching DBLP paper from {dblp_url[:50]}...",
+            on_complete=on_dblp_complete,
+        )
 
     def _quick_add_openreview(self, openreview_id: str):
-        """Quickly add a paper from OpenReview."""
-        try:
-            self.status_bar.set_status(
-                f"🔬 Fetching OpenReview paper {openreview_id}..."
-            )
+        """Quickly add a paper from OpenReview using background operation."""
+
+        def complete_openreview_operation():
 
             # Extract metadata from OpenReview
             metadata = self.metadata_extractor.extract_from_openreview(openreview_id)
@@ -1709,20 +1745,35 @@ The doctor command helps maintain database health by:
                 "openreview", openreview_id, pdf_dir, paper_data
             )
 
+            return {"paper": paper, "pdf_path": pdf_path, "pdf_error": pdf_error}
+
+        def on_openreview_complete(result, error):
+            if error:
+                self.show_error_panel_with_message(
+                    "Add OpenReview Paper Error",
+                    f"Failed to add OpenReview paper: {openreview_id}",
+                    str(error),
+                )
+                return
+
+            paper = result["paper"]
+            pdf_path = result["pdf_path"]
+            pdf_error = result["pdf_error"]
+
             if pdf_path:
                 self._add_log("add_openreview", f"PDF download successful: {pdf_path}")
                 # Update paper with local PDF path
-                updated_paper, error = self.paper_service.update_paper(
+                updated_paper, update_error = self.paper_service.update_paper(
                     paper.id, {"pdf_path": pdf_path}
                 )
-                if error:
+                if update_error:
                     self.status_bar.set_error(
-                        f"Failed to update PDF path for '{paper.title}': {error}"
+                        f"Failed to update PDF path for '{paper.title}': {update_error}"
                     )
                     self.show_error_panel_with_message(
                         "Database Update Error",
                         f"Failed to update PDF path for '{paper.title}'",
-                        str(error),
+                        str(update_error),
                     )
                 else:
                     self._add_log(
@@ -1737,58 +1788,50 @@ The doctor command helps maintain database health by:
                     or "Please check the network connection or the paper's availability.",
                 )
 
-            # Refresh display
+            # Refresh display and show success
             self.load_papers()
             self._add_log("add_openreview", f"Added OpenReview paper '{paper.title}'")
             self.status_bar.set_success(f"Added: {paper.title[:50]}...")
 
-        except Exception as e:
-            self.show_error_panel_with_message(
-                "Add OpenReview Paper Error",
-                f"Failed to add OpenReview paper: {openreview_id}",
-                traceback.format_exc(),
-            )
+        # Run in background
+        self.background_service.run_operation(
+            operation_func=complete_openreview_operation,
+            operation_name="add_openreview",
+            initial_message=f"Fetching OpenReview paper {openreview_id}...",
+            on_complete=on_openreview_complete,
+        )
 
     def _quick_add_pdf(self, pdf_path: str):
-        """Quickly add a paper from local PDF file."""
-        try:
-            # Expand user path and resolve relative paths
-            pdf_path = os.path.expanduser(pdf_path)
-            pdf_path = os.path.abspath(pdf_path)
+        """Quickly add a paper from local PDF file using background operation."""
+        # Expand user path and resolve relative paths
+        pdf_path = os.path.expanduser(pdf_path)
+        pdf_path = os.path.abspath(pdf_path)
 
-            # Check if file exists
-            if not os.path.exists(pdf_path):
-                self.status_bar.set_error(f"PDF file not found: {pdf_path}")
-                return
+        # Check if file exists
+        if not os.path.exists(pdf_path):
+            self.status_bar.set_error(f"PDF file not found: {pdf_path}")
+            return
 
-            # Check if it's a PDF file
-            if not pdf_path.lower().endswith(".pdf"):
-                self.status_bar.set_error("File must be a PDF")
-                return
+        # Check if it's a PDF file
+        if not pdf_path.lower().endswith(".pdf"):
+            self.status_bar.set_error("File must be a PDF")
+            return
 
-            self.status_bar.set_status(
-                f"📄 Processing PDF: {os.path.basename(pdf_path)}..."
-            )
-
+        def complete_pdf_operation():
             # Extract metadata from PDF using LLM
             metadata = self.metadata_extractor.extract_from_pdf(pdf_path)
             if not metadata:
-                self.status_bar.set_error("Failed to extract metadata from PDF")
-                return
+                raise Exception("Failed to extract metadata from PDF")
 
             # Copy PDF to pdfs folder
             pdf_dir = get_pdf_directory()
 
             # Generate smart filename using PDFManager
-            from .services import PDFManager
-
             pdf_manager = PDFManager()
             filename = pdf_manager._generate_pdf_filename(metadata, pdf_path)
             target_path = os.path.join(pdf_dir, filename)
 
             # Copy the file
-            import shutil
-
             shutil.copy2(pdf_path, target_path)
 
             # Prepare paper data
@@ -1812,17 +1855,31 @@ The doctor command helps maintain database health by:
                 paper_data, authors, collections
             )
 
-            # Refresh display
+            return {"paper": paper}
+
+        def on_pdf_complete(result, error):
+            if error:
+                self.show_error_panel_with_message(
+                    "Add PDF Paper Error",
+                    f"Failed to add PDF paper: {pdf_path}",
+                    str(error),
+                )
+                return
+
+            paper = result["paper"]
+
+            # Refresh display and show success
             self.load_papers()
             self._add_log("add_pdf", f"Added PDF paper '{paper.title}'")
             self.status_bar.set_success(f"Added: {paper.title[:50]}...")
 
-        except Exception as e:
-            self.show_error_panel_with_message(
-                "Add PDF Paper Error",
-                f"Failed to add PDF paper: {pdf_path}",
-                traceback.format_exc(),
-            )
+        # Run in background
+        self.background_service.run_operation(
+            operation_func=complete_pdf_operation,
+            operation_name="add_pdf",
+            initial_message=f"Processing PDF: {os.path.basename(pdf_path)}...",
+            on_complete=on_pdf_complete,
+        )
 
     def _quick_add_bib(self, bib_path: str):
         """Quickly add papers from .bib file."""
@@ -1842,7 +1899,7 @@ The doctor command helps maintain database health by:
                 return
 
             self.status_bar.set_status(
-                f"📚 Processing BibTeX: {os.path.basename(bib_path)}..."
+                f"Processing BibTeX: {os.path.basename(bib_path)}...", "process"
             )
 
             # Extract metadata from BibTeX file
@@ -1917,7 +1974,7 @@ The doctor command helps maintain database health by:
                 return
 
             self.status_bar.set_status(
-                f"📚 Processing RIS: {os.path.basename(ris_path)}..."
+                f"Processing RIS: {os.path.basename(ris_path)}...", "process"
             )
 
             # Extract metadata from RIS file
@@ -1980,7 +2037,8 @@ The doctor command helps maintain database health by:
             # For now, create a basic manual paper
             # This could be enhanced with a proper input dialog
             self.status_bar.set_status(
-                f"✏️ Manual paper entry - using defaults (enhance with dialog later)"
+                "Manual paper entry - using defaults (enhance with dialog later)",
+                "edit",
             )
 
             paper_data = {
@@ -2004,7 +2062,8 @@ The doctor command helps maintain database health by:
             self.load_papers()
             self._add_log("add_manual", f"Added manual paper '{paper.title}'")
             self.status_bar.set_status(
-                f"📝 Added manual paper: {paper.title} (use /update to edit metadata)"
+                f"Added manual paper: {paper.title} (use /update to edit metadata)",
+                "add",
             )
 
         except Exception as e:
@@ -2033,7 +2092,9 @@ The doctor command helps maintain database health by:
                     return
 
                 query = " ".join(args[1:])
-                self.status_bar.set_status(f"🔍 Searching all fields for '{query}'")
+                self.status_bar.set_status(
+                    f"Searching all fields for '{query}'", "search"
+                )
 
                 # Perform search across all fields like the old search command
                 results = self.search_service.search_papers(
@@ -2050,7 +2111,8 @@ The doctor command helps maintain database health by:
                 self.is_filtered_view = True
 
                 self.status_bar.set_status(
-                    f"🎯 Found {len(results)} papers matching '{query}' in all fields"
+                    f"Found {len(results)} papers matching '{query}' in all fields",
+                    "select",
                 )
                 return
 
@@ -2104,7 +2166,7 @@ The doctor command helps maintain database health by:
                 filters["collection"] = value
 
             self._add_log("filter_command", f"Command-line filter: {field}={value}")
-            self.status_bar.set_status(f"🔽 Applying filters...")
+            self.status_bar.set_status("Applying filters...", "loading")
 
             # Apply filters
             results = self.search_service.filter_papers(filters)
@@ -2116,12 +2178,10 @@ The doctor command helps maintain database health by:
 
             filter_desc = ", ".join([f"{k}={v}" for k, v in filters.items()])
             self.status_bar.set_status(
-                f"🔽 Filtered {len(results)} papers by {filter_desc}"
+                f"Filtered {len(results)} papers by {filter_desc}", "filter"
             )
 
         except Exception as e:
-            import traceback
-
             self.show_error_panel_with_message(
                 "Filter Error",
                 f"Error filtering papers: {e}",
@@ -2133,7 +2193,9 @@ The doctor command helps maintain database health by:
         """Handle /select command."""
         self.in_select_mode = True
         self.paper_list_control.in_select_mode = True
-        self.status_bar.set_status(StatusMessages.selection_mode_entered())
+        self.status_bar.set_status(
+            "Entered multi-selection mode. Use Space to select, ESC to exit.", "select"
+        )
 
     def handle_chat_command(self, provider: str = None):
         """Handle /chat command with optional provider."""
@@ -2144,17 +2206,21 @@ The doctor command helps maintain database health by:
         try:
             if provider is None:
                 # Check if chat dialog is already open
-                if hasattr(self, 'chat_float') and self.chat_float in self.app.layout.container.floats:
-                    self.status_bar.set_status("💬 Chat window is already open")
+                if (
+                    hasattr(self, "chat_float")
+                    and self.chat_float in self.app.layout.container.floats
+                ):
+                    self.status_bar.set_status("Chat window is already open", "info")
                     return
-                
+
                 # /chat only - show chat window with OpenAI
-                self.status_bar.set_status(f"💬 Opening chat window...")
+                self.status_bar.set_status(
+                    "Chat window opened - Press ESC to close", "open"
+                )
 
                 # Show chat dialog with OpenAI
                 chat_dialog = ChatDialog(
                     papers=papers_to_chat,
-                    llm_provider="openai",
                     callback=self._on_chat_complete,
                     log_callback=self._add_log,
                     status_bar=self.status_bar,
@@ -2177,7 +2243,7 @@ The doctor command helps maintain database health by:
                     return
 
                 self.status_bar.set_status(
-                    f"💬 Opening {provider.title()} in browser..."
+                    f"Opening {provider.title()} in browser...", "chat"
                 )
 
                 # Open browser interface with provider-specific behavior
@@ -2201,11 +2267,14 @@ The doctor command helps maintain database health by:
     def _on_chat_complete(self, result):
         """Callback for when chat dialog is closed."""
         try:
-            if hasattr(self, 'chat_float') and self.chat_float in self.app.layout.container.floats:
+            if (
+                hasattr(self, "chat_float")
+                and self.chat_float in self.app.layout.container.floats
+            ):
                 self.app.layout.container.floats.remove(self.chat_float)
             self.chat_float = None
             self.chat_dialog = None
-            self.status_bar.set_status("← Chat closed")
+            self.status_bar.set_status("Closed chat dialog", "close")
         except Exception as e:
             self._add_log("chat_error", f"Error closing chat dialog: {e}")
 
@@ -2263,7 +2332,7 @@ The doctor command helps maintain database health by:
 
                 updates = {field: value}
                 self.status_bar.set_status(
-                    f"🔄 Updating {len(papers_to_update)} paper(s)..."
+                    f"Updating {len(papers_to_update)} paper(s)...", "edit"
                 )
 
                 # Update papers
@@ -2403,244 +2472,40 @@ The doctor command helps maintain database health by:
         self.app.invalidate()
 
     def _handle_extract_pdf_command(self, papers):
-        """Handle /edit extract-pdf command with confirmation dialog."""
-        if not isinstance(papers, list):
-            papers = [papers]
+        """Handle /edit extract-pdf command to extract metadata from PDF(s)."""
+        # Filter papers that have PDFs
+        papers_with_pdfs = [
+            paper
+            for paper in papers
+            if paper.pdf_path and os.path.exists(paper.pdf_path)
+        ]
 
-        if len(papers) > 1:
-            self.status_bar.set_error("PDF extraction works with one paper at a time")
+        if not papers_with_pdfs:
+            self.status_bar.set_status("No papers have PDF files to extract from")
             return
 
-        paper = papers[0]
-        pdf_path = paper.pdf_path
+        # Create the extraction service and run with confirmation
+        extraction_service = PDFMetadataExtractionService(
+            paper_service=self.paper_service,
+            background_service=self.background_service,
+            log_callback=self._add_log,
+        )
 
-        if not pdf_path or not os.path.exists(pdf_path):
-            self.status_bar.set_error("No PDF file available for this paper")
-            return
-
-        try:
-            extracted_data = self.metadata_extractor.extract_from_pdf(pdf_path)
-
-            # Prepare changes summary
-            changes = []
-            field_mapping = {
-                "title": "title",
-                "authors": "authors",
-                "abstract": "abstract",
-                "year": "year",
-                "venue_full": "venue_full",
-                "venue_acronym": "venue_acronym",
-                "doi": "doi",
-                "url": "url",
-                "category": "category",
-                "paper_type": "paper_type",
-            }
-
-            for extracted_field, paper_field in field_mapping.items():
-                if (
-                    extracted_field in extracted_data
-                    and extracted_data[extracted_field]
-                ):
-                    new_value = extracted_data[extracted_field]
-
-                    # Get current value
-                    if paper_field == "authors":
-                        ordered_authors = paper.get_ordered_authors()
-                        current_value = (
-                            ", ".join([a.full_name for a in ordered_authors])
-                            if ordered_authors
-                            else ""
-                        )
-                        new_value = (
-                            ", ".join(new_value)
-                            if isinstance(new_value, list)
-                            else str(new_value)
-                        )
-                    else:
-                        current_value = (
-                            str(getattr(paper, paper_field, ""))
-                            if getattr(paper, paper_field, None)
-                            else ""
-                        )
-                        new_value = str(new_value) if new_value else ""
-
-                    if current_value != new_value:
-                        changes.append(
-                            f"{paper_field}: '{current_value}' → '{new_value}'"
-                        )
-
-            if not changes:
-                self.status_bar.set_status("No changes detected from PDF extraction")
-                return
-
-            # Show confirmation dialog
-            changes_text = "The following changes will be applied:\n\n" + "\n".join(
-                changes
-            )
-
-            from prompt_toolkit.widgets import Label
-            from prompt_toolkit.layout.containers import Float
-
-            def confirm_apply():
-                if hasattr(self, "confirmation_float"):
-                    self.app.layout.container.floats.remove(self.confirmation_float)
-                self.app.layout.focus(self.input_buffer)
-
-                # Apply changes
-                try:
-                    updates = {}
-
-                    for extracted_field, paper_field in field_mapping.items():
-                        if (
-                            extracted_field in extracted_data
-                            and extracted_data[extracted_field]
-                        ):
-                            value = extracted_data[extracted_field]
-
-                            if paper_field == "authors":
-                                from .services import AuthorService
-
-                                author_service = AuthorService()
-                                if isinstance(value, list):
-                                    updates["authors"] = [
-                                        author_service.get_or_create_author(name)
-                                        for name in value
-                                    ]
-                            elif paper_field == "year" and isinstance(value, int):
-                                updates["year"] = value
-                            else:
-                                updates[paper_field] = value
-
-                    updated_paper, error = self.paper_service.update_paper(
-                        paper.id, updates
-                    )
-                    if error:
-                        self.status_bar.set_error(f"Update error: {error}")
-                    else:
-                        self.load_papers()
-                        self.status_bar.set_success("Paper updated with PDF metadata")
-                        self._add_log(
-                            "pdf_extract",
-                            f"Extracted and applied PDF metadata for '{paper.title}'",
-                        )
-
-                except Exception as e:
-                    self.status_bar.set_error(f"Error applying changes: {e}")
-
-            def confirm_cancel():
-                if hasattr(self, "confirmation_float"):
-                    self.app.layout.container.floats.remove(self.confirmation_float)
-                self.app.layout.focus(self.input_buffer)
-                self.status_bar.set_status("PDF extraction cancelled")
-
-            from prompt_toolkit.widgets import Dialog, Button
-
-            confirmation_dialog = Dialog(
-                title="Confirm PDF Metadata Extraction",
-                body=Label(text=changes_text, dont_extend_height=True),
-                buttons=[
-                    Button(text="Yes", handler=confirm_apply),
-                    Button(text="No", handler=confirm_cancel),
-                ],
-                with_background=False,
-            )
-
-            self.confirmation_float = Float(content=confirmation_dialog)
-            self.app.layout.container.floats.append(self.confirmation_float)
-            self.app.layout.focus(confirmation_dialog)
-
-        except Exception as e:
-            self.show_error_panel_with_message(
-                "PDF Extraction Error",
-                f"Failed to extract metadata from PDF: {pdf_path}",
-                traceback.format_exc(),
-            )
+        # Extract metadata with confirmation (like /edit summary but with confirmation step)
+        extraction_service.extract_metadata_with_confirmation(
+            papers=papers_with_pdfs,
+            operation_prefix="extract_pdf",
+            refresh_callback=self.load_papers,  # Pass the refresh callback
+        )
 
     def _handle_summarize_command(self, papers):
         """Handle /edit summarize command to generate LLM summary for paper(s)."""
-        if not isinstance(papers, list):
-            papers = [papers]
-
-        from .database import get_pdf_directory
-
-        successful_count = 0
-        failed_papers = []
-
-        for paper in papers:
-            pdf_path = paper.pdf_path
-
-            if not pdf_path or not os.path.exists(pdf_path):
-                failed_papers.append(f"'{paper.title}': No PDF file available")
-                continue
-
-            try:
-                self.status_bar.set_status(
-                    f"Generating summary for '{paper.title}'...", "llm"
-                )
-                self._add_log(
-                    "summarize", f"Generating LLM summary for '{paper.title}'"
-                )
-
-                # Generate summary using LLM
-                summary = self.metadata_extractor.generate_paper_summary(pdf_path)
-
-                if summary:
-                    # Update paper with the generated summary
-                    updated_paper, error = self.paper_service.update_paper(
-                        paper.id, {"notes": summary}
-                    )
-
-                    if error:
-                        failed_papers.append(
-                            f"'{paper.title}': Database update failed - {error}"
-                        )
-                    else:
-                        successful_count += 1
-                        self._add_log(
-                            "summarize",
-                            f"Successfully generated summary for '{paper.title}'",
-                        )
-                else:
-                    failed_papers.append(
-                        f"'{paper.title}': LLM summary generation failed"
-                    )
-
-            except Exception as e:
-                failed_papers.append(f"'{paper.title}': {str(e)}")
-                self._add_log(
-                    "summarize_error",
-                    f"Error summarizing '{paper.title}': {traceback.format_exc()}",
-                )
-
-        # Update display and show results
-        if successful_count > 0:
-            self.load_papers()
-
-        # Prepare result message
-        if successful_count > 0 and not failed_papers:
-            self.status_bar.set_success(
-                f"Generated summaries for {successful_count} paper(s)"
-            )
-        elif successful_count > 0 and failed_papers:
-            self.status_bar.set_success(
-                f"Generated summaries for {successful_count} paper(s), {len(failed_papers)} failed"
-            )
-            # Show details about failures
-            self.show_error_panel_with_message(
-                "Partial Summary Success",
-                f"Successfully summarized {successful_count} papers, but {len(failed_papers)} failed:",
-                "\n".join(failed_papers),
-            )
-        else:
-            self.status_bar.set_error(
-                f"Failed to generate summaries for all {len(failed_papers)} paper(s)"
-            )
-            if failed_papers:
-                self.show_error_panel_with_message(
-                    "Summary Generation Failed",
-                    "Failed to generate summaries:",
-                    "\n".join(failed_papers),
-                )
+        summary_service = LLMSummaryService(
+            paper_service=self.paper_service,
+            background_service=self.background_service,
+            log_callback=self._add_log,
+        )
+        summary_service.generate_summaries(papers=papers, operation_prefix="summarize")
 
     def show_add_dialog(self):
         """Show the add paper dialog."""
@@ -2683,7 +2548,7 @@ The doctor command helps maintain database health by:
                     self.status_bar.set_error(f"Error adding paper: {e}")
             else:
                 # Dialog was cancelled
-                self.status_bar.set_status("← Cancelled add paper")
+                self.status_bar.set_status("Closed add dialog", "close")
 
         self.add_dialog = AddDialog(callback)
         self.add_float = Float(self.add_dialog)
@@ -2718,7 +2583,7 @@ The doctor command helps maintain database health by:
                     self.status_bar.set_error(f"Error filtering papers: {e}")
             else:
                 # Dialog was cancelled
-                self.status_bar.set_status("← Cancelled filter")
+                self.status_bar.set_status("Closed filter dialog", "close")
 
         self.filter_dialog = FilterDialog(callback)
         self.filter_float = Float(self.filter_dialog)
@@ -2750,7 +2615,7 @@ The doctor command helps maintain database health by:
                     self.status_bar.set_error(f"Error sorting papers: {e}")
             else:
                 # Dialog was cancelled
-                self.status_bar.set_status("← Cancelled sort")
+                self.status_bar.set_status("Closed sort dialog", "close")
 
         self.sort_dialog = SortDialog(callback)
         self.sort_float = Float(self.sort_dialog)
@@ -2773,7 +2638,8 @@ The doctor command helps maintain database health by:
 
                 if export_format not in ["bibtex", "markdown", "html", "json"]:
                     self.status_bar.set_status(
-                        f"ℹ Usage: /export <format> [filename]. Formats: bibtex, markdown, html, json"
+                        "Usage: /export <format> [filename]. Formats: bibtex, markdown, html, json",
+                        "info",
                     )
                     return
 
@@ -2793,11 +2659,12 @@ The doctor command helps maintain database health by:
             else:
                 # Show usage instead of interactive dialog
                 self.status_bar.set_status(
-                    f"ℹ Usage: /export <format> [filename]. Formats: bibtex, markdown, html, json"
+                    "Usage: /export <format> [filename]. Formats: bibtex, markdown, html, json",
+                    "info",
                 )
                 return
 
-            self.status_bar.set_status(StatusMessages.export_started())
+            self.status_bar.set_status("Exporting papers...", "export")
 
             # Export papers
             export_format = export_params["format"]
@@ -2820,13 +2687,13 @@ The doctor command helps maintain database health by:
                 with open(filename, "w", encoding="utf-8") as f:
                     f.write(content)
                 self.status_bar.set_status(
-                    f"✓ Exported {len(papers_to_export)} papers to {filename}"
+                    f"Exported {len(papers_to_export)} papers to {filename}", "success"
                 )
 
             elif destination == "clipboard":
                 if self.system_service.copy_to_clipboard(content):
                     self.status_bar.set_status(
-                        f"✓ Copied {len(papers_to_export)} papers to clipboard"
+                        f"Copied {len(papers_to_export)} papers to clipboard", "success"
                     )
                 else:
                     self.status_bar.set_status("Error copying to clipboard")
@@ -2967,7 +2834,8 @@ The doctor command helps maintain database health by:
         """Handle /sort command - sort papers by field."""
         if not args:
             self.status_bar.set_status(
-                "⚠ Usage: /sort <field> [asc|desc]. Fields: title, authors, venue, year"
+                "Usage: /sort <field> [asc|desc]. Fields: title, authors, venue, year",
+                "warning",
             )
             return
 
@@ -2979,13 +2847,14 @@ The doctor command helps maintain database health by:
 
         if field not in valid_fields:
             self.status_bar.set_status(
-                f"⚠ Invalid field '{field}'. Valid fields: {', '.join(valid_fields)}"
+                f"Invalid field '{field}'. Valid fields: {', '.join(valid_fields)}",
+                "warning",
             )
             return
 
         if order not in valid_orders:
             self.status_bar.set_status(
-                f"⚠ Invalid order '{order}'. Valid orders: asc, desc"
+                f"Invalid order '{order}'. Valid orders: asc, desc", "warning"
             )
             return
 
@@ -3038,8 +2907,6 @@ The doctor command helps maintain database health by:
             self.app.layout.focus(self.details_control)
             self.status_bar.set_status("Details panel opened - Press ESC to close")
         except Exception as e:
-            import traceback
-
             self.show_error_panel_with_message(
                 "Detail View Error",
                 "Could not display paper details.",
@@ -3161,16 +3028,15 @@ The doctor command helps maintain database health by:
 
         self.show_help = True
         self.app.layout.focus(self.help_control)
-        self.status_bar.set_status("📖 Help panel opened - Press ESC to close")
+        self.status_bar.set_status("Help panel opened - Press ESC to close", "open")
 
     def run(self):
         """Run the application."""
         # Check for updates on startup (non-blocking)
         try:
             version_manager = VersionManager()
-            # Perform silent check in background without blocking startup
-            import threading
 
+            # Perform silent check in background without blocking startup
             def check_updates():
                 try:
                     update_available, latest_version = (
@@ -3291,8 +3157,6 @@ The doctor command helps maintain database health by:
                     "Collection Purge",
                     f"Successfully deleted {deleted_count} empty collection{'s' if deleted_count != 1 else ''}",
                 )
-                # Refresh the display if we're showing papers
-                self.refresh_display()
         except Exception as e:
             self.show_error_panel_with_message(
                 "Collection Purge Error",
@@ -3302,9 +3166,6 @@ The doctor command helps maintain database health by:
 
     def show_collect_dialog(self):
         """Show the collection management dialog."""
-        import logging
-
-        debug_logger = logging.getLogger("papercli")
 
         def callback(result):
             """Callback executed when the dialog is closed."""
@@ -3332,14 +3193,6 @@ The doctor command helps maintain database health by:
             # Store original key bindings
             self.original_key_bindings = self.app.key_bindings
 
-            debug_logger.debug("Fetching all collections and papers for CollectDialog")
-            all_collections = self.collection_service.get_all_collections()
-            all_papers = self.paper_service.get_all_papers()
-            debug_logger.debug(
-                f"Found {len(all_collections)} collections and {len(all_papers)} papers."
-            )
-
-            debug_logger.debug("Creating CollectDialog")
             self.collect_dialog = CollectDialog(
                 self.collection_service.get_all_collections(),
                 self.paper_service.get_all_papers(),
@@ -3350,33 +3203,22 @@ The doctor command helps maintain database health by:
                 self._add_log,
                 self.show_error_panel_with_message,
             )
-            debug_logger.debug("CollectDialog created successfully")
 
             self.collect_float = Float(self.collect_dialog)
             self.app.layout.container.floats.append(self.collect_float)
 
             initial_focus_target = self.collect_dialog.get_initial_focus()
-            debug_logger.debug(
-                f"Initial focus target from dialog: {initial_focus_target}"
-            )
-
             if initial_focus_target:
                 self.app.layout.focus(initial_focus_target)
-                debug_logger.debug("Focus set on initial_focus_target")
             else:
                 self.app.layout.focus(self.collect_dialog)
-                debug_logger.debug("Focus set on collect_dialog as fallback")
 
             # Set application key bindings to dialog's key bindings
             self.app.key_bindings = self.collect_dialog.dialog.container.key_bindings
 
             self.app.invalidate()
-            debug_logger.debug("Application layout invalidated")
 
         except Exception as e:
-            debug_logger.error(
-                f"Error creating or showing CollectDialog: {e}", exc_info=True
-            )
             self.show_error_panel_with_message(
                 "Collection Dialog Error",
                 "Could not open the collection management dialog.",
@@ -3432,8 +3274,6 @@ The doctor command helps maintain database health by:
 
                     # Get release notes from GitHub
                     try:
-                        import requests
-
                         url = f"https://api.github.com/repos/{version_manager.github_repo}/releases/latest"
                         response = requests.get(url, timeout=10)
                         if response.status_code == 200:

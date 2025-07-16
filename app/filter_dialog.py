@@ -4,12 +4,12 @@ Filter dialog for filtering papers by various criteria.
 
 from typing import Callable
 
+from prompt_toolkit.application import get_app
+from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
 from prompt_toolkit.layout.containers import HSplit, VSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
-from prompt_toolkit.widgets import Button, Dialog, RadioList, TextArea
 from prompt_toolkit.layout.dimension import Dimension
-from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
-from prompt_toolkit.application import get_app
+from prompt_toolkit.widgets import Button, Dialog, RadioList, TextArea
 
 
 class FilterDialog:

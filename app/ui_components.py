@@ -2,15 +2,16 @@
 UI components for PaperCLI using prompt-toolkit.
 """
 
-from typing import List, Optional
-from prompt_toolkit.formatted_text import FormattedText, ANSI
-from prompt_toolkit.application import get_app
-
-from rich.table import Table
-from rich.console import Console
-from rich.text import Text
-from rich.style import Style as RichStyle
 from io import StringIO
+from typing import List, Optional
+
+from prompt_toolkit.application import get_app
+from prompt_toolkit.formatted_text import ANSI, FormattedText
+from rich.console import Console
+from rich.style import Style as RichStyle
+from rich.table import Table
+from rich.text import Text
+
 from .models import Paper
 from .status_messages import StatusMessages
 
@@ -158,9 +159,9 @@ class StatusBar:
         self.progress_text = ""
         self.status_type = "info"  # info, success, error, warning
 
-    def set_status(self, text: str, status_type: str = "info", action: str = None):
-        """Set status text with optional type for color coding and action icon."""
-        self.status_text = StatusMessages.format_message(text, status_type, action)
+    def set_status(self, text: str, status_type: str = "info"):
+        """Set status text with optional type for color coding and icon."""
+        self.status_text = StatusMessages.format_message(text, status_type)
         self.status_type = status_type
 
     def set_success(self, text: str):

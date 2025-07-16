@@ -4,13 +4,16 @@ Advanced collection management dialog with three-column layout.
 
 import traceback
 from typing import List, Optional
+
+from prompt_toolkit.application import get_app
+from prompt_toolkit.formatted_text import FormattedText
+from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout.containers import HSplit, VSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
-from prompt_toolkit.widgets import Button, Dialog, Frame, TextArea
-from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.layout.dimension import Dimension
-from .models import Paper, Collection
+from prompt_toolkit.widgets import Button, Dialog, Frame, TextArea
+
+from .models import Collection, Paper
 from .services import CollectionService, PaperService
 
 
@@ -33,9 +36,9 @@ class EditableList:
             focusable=True,
             show_cursor=False,
         )
-
-        # Create the window once and reuse it.
-        self.window = Window(content=self.control)
+        self.window = Window(
+            content=self.control, height=Dimension(min=16, preferred=18)
+        )
 
     def set_items(self, items: List[str]):
         self.items = items[:]
@@ -275,7 +278,6 @@ class CollectDialog:
 
         # Initialize buttons
         self.save_button = Button(text="Save", handler=self.save_and_close)
-        self.purge_button = Button(text="Purge", handler=self.purge_empty_collections)
         self.close_button = Button(text="Cancel", handler=self.cancel)
 
         # Initialize lists
@@ -382,8 +384,6 @@ class CollectDialog:
 
         button_row = VSplit(
             [
-                self.purge_button,
-                Window(width=3),
                 self.save_button,
                 Window(width=3),
                 self.close_button,
@@ -395,7 +395,7 @@ class CollectDialog:
             title="Collection Management",
             body=self.dialog_body,
             buttons=[button_row],
-            width=Dimension(min=180, preferred=200),
+            width=Dimension(min=160, preferred=180),
             with_background=False,
             modal=True,
         )
@@ -410,7 +410,6 @@ class CollectDialog:
             self.add_button,
             self.remove_button,
             self.other_papers_list,
-            self.purge_button,
             self.save_button,
             self.close_button,
         ]
@@ -430,8 +429,6 @@ class CollectDialog:
 
     def _set_focus_style(self):
         """Update the border style and titles of frames based on current focus."""
-        from prompt_toolkit.application import get_app
-
         # Define base titles and focus symbols
         base_titles = {
             self.collections_list: "Collections",
@@ -654,33 +651,14 @@ class CollectDialog:
                 break
 
         if paper:
-            # Create a compact one-liner citation format
+            # Create a one-liner with full information (no truncation)
             authors = paper.author_names or "Unknown Authors"
             title = paper.title
             venue = paper.venue_display or "Unknown Venue"
             year = paper.year or "N/A"
-            paper_type = paper.paper_type or "Unknown"
 
-            # Format as: Authors, "Title," Venue, Type. Date.
-            # Truncate long fields to fit in one line
-            if len(authors) > 60:
-                authors = authors[:57] + "..."
-            if len(title) > 80:
-                title = title[:77] + "..."
-            if len(venue) > 40:
-                venue = venue[:37] + "..."
-
-            # Create citation-style format
-            citation = f'{authors}, "{title}," {venue}'
-
-            # Add type and date if available
-            if paper_type != "Unknown":
-                citation += f", vol. {paper_type}"
-            if year != "N/A":
-                citation += f". {year}"
-            citation += "."
-
-            self.paper_details.text = citation
+            # Format as one-liner with full details
+            self.paper_details.text = f'{authors}, "{title}," {venue} ({year})'
         else:
             self.paper_details.text = "Paper details not found"
 
@@ -708,12 +686,19 @@ class CollectDialog:
             self.status_bar.set_warning(f"Paper '{paper_title}' not found.")
             return
 
-        # Find the collection object from all_collections
+        # Find the collection object from all_collections or check if it's a new collection
         target_collection = None
         for c in self.all_collections:
             if c.name == collection_name:
                 target_collection = c
                 break
+
+        # If not found in existing collections, check if it's a new collection
+        if not target_collection and collection_name in self.new_collections:
+            # Create a temporary collection object for the new collection
+            target_collection = Collection(name=collection_name, papers=[])
+            # Add it to all_collections for immediate UI feedback
+            self.all_collections.append(target_collection)
 
         if not target_collection:
             self.status_bar.set_warning(f"Collection '{collection_name}' not found.")
@@ -1010,8 +995,6 @@ class CollectDialog:
 
     def purge_empty_collections(self):
         """Purge all empty collections."""
-        from .services import CollectionService
-
         try:
             collection_service = CollectionService()
             deleted_count = collection_service.purge_empty_collections()
@@ -1041,8 +1024,6 @@ class CollectDialog:
                 self.on_collection_select(self.collections_list)
 
         except Exception as e:
-            import traceback
-
             if self.error_display_callback:
                 self.error_display_callback(
                     "Collection Purge Error",

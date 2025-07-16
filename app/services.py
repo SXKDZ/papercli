@@ -2,23 +2,40 @@
 Service classes for PaperCLI business logic.
 """
 
-import os
-import re
-import requests
+import hashlib
 import json
-import PyPDF2
-from openai import OpenAI
+import os
+import platform
+import re
+import secrets
+import shutil
 import subprocess
-import webbrowser
+import threading
 import traceback
-from typing import List, Optional, Dict, Any
+import webbrowser
+import xml.etree.ElementTree as ET
 from datetime import datetime
-from sqlalchemy import or_, and_
+from functools import partial
+from typing import Any, Dict, List, Optional
+
+import bibtexparser
+import PyPDF2
+import pyperclip
+import requests
+import rispy
 from fuzzywuzzy import fuzz
+from openai import OpenAI
+from prompt_toolkit.application import get_app
+from prompt_toolkit.filters import Condition
+from prompt_toolkit.layout.containers import Float
+from prompt_toolkit.layout.dimension import Dimension
+from prompt_toolkit.widgets import Button, Dialog, TextArea
+from sqlalchemy import and_, or_, text
+from sqlalchemy.orm import joinedload
 from titlecase import titlecase
 
-from .database import get_db_session
-from .models import Paper, Author, Collection, PaperAuthor
+from .database import get_db_manager, get_db_session, get_pdf_directory
+from .models import Author, Collection, Paper, PaperAuthor
 
 
 def fix_broken_lines(text: str) -> str:
@@ -32,13 +49,125 @@ def fix_broken_lines(text: str) -> str:
     return text.strip()
 
 
+def compare_extracted_metadata_with_paper(extracted_data, paper, paper_service=None):
+    """
+    Compare extracted PDF metadata with current paper data and return list of changes.
+
+    Args:
+        extracted_data: Dictionary of extracted metadata from PDF
+        paper: Paper object or paper data dict
+        paper_service: Optional PaperService to fetch fresh paper data
+
+    Returns:
+        List of change strings in format "field_name: 'old_value' → 'new_value'"
+    """
+    # Get fresh paper data if we have a paper ID and service
+    if paper_service and hasattr(paper, "id"):
+        fresh_paper = paper_service.get_paper_by_id(paper.id)
+        if fresh_paper:
+            paper = fresh_paper
+
+    field_mapping = {
+        "title": "title",
+        "authors": "author_names",
+        "abstract": "abstract",
+        "year": "year",
+        "venue_full": "venue_full",
+        "venue_acronym": "venue_acronym",
+        "doi": "doi",
+        "url": "url",
+        "category": "category",
+    }
+
+    changes = []
+
+    for extracted_field, paper_field in field_mapping.items():
+        if extracted_field in extracted_data and extracted_data[extracted_field]:
+            value = extracted_data[extracted_field]
+
+            # Convert extracted value to string format
+            if extracted_field == "authors" and isinstance(value, list):
+                value = ", ".join(value)
+            elif extracted_field == "year" and isinstance(value, int):
+                value = str(value)
+
+            # Get current value from paper
+            if paper_field == "author_names":
+                current_value = ""
+                try:
+                    if (
+                        hasattr(paper, "paper_authors")
+                        and paper.paper_authors is not None
+                    ):
+                        # Paper model object - use paper_authors to avoid lazy loading issues
+                        current_value = (
+                            ", ".join(
+                                [
+                                    paper_author.author.full_name
+                                    for paper_author in paper.paper_authors
+                                ]
+                            )
+                            if paper.paper_authors
+                            else ""
+                        )
+                    elif hasattr(paper, "authors") and paper.authors is not None:
+                        # Paper model object with authors relationship
+                        current_value = (
+                            ", ".join([author.full_name for author in paper.authors])
+                            if paper.authors
+                            else ""
+                        )
+                    elif hasattr(paper, "get"):
+                        # Paper data dict (from edit dialog)
+                        authors = paper.get("authors", [])
+                        if isinstance(authors, list):
+                            # Try both 'full_name' and 'name' attributes for compatibility
+                            current_value = ", ".join(
+                                [
+                                    getattr(a, "full_name", getattr(a, "name", str(a)))
+                                    for a in authors
+                                ]
+                            )
+                        else:
+                            current_value = str(authors) if authors else ""
+                except (AttributeError, Exception) as e:
+                    # If we can't access the authors due to session issues, skip this comparison
+                    if hasattr(paper, "title"):
+                        paper_title = getattr(paper, "title", "Unknown")
+                    else:
+                        paper_title = str(paper)[:50]
+                    print(
+                        f"[Session Error] Could not access authors for paper '{paper_title}': {e}"
+                    )
+                    current_value = ""
+            else:
+                # Regular field access
+                if hasattr(paper, paper_field):
+                    # Paper model object
+                    current_value = getattr(paper, paper_field, "") or ""
+                else:
+                    # Paper data dict
+                    current_value = paper.get(paper_field, "") or ""
+
+                # Convert to string for comparison
+                if current_value is None:
+                    current_value = ""
+                else:
+                    current_value = str(current_value)
+
+            # Compare and record changes
+            if str(value) != str(current_value):
+                changes.append(f"{paper_field}: '{current_value}' → '{value}'")
+
+    return changes
+
+
 class PaperService:
     """Service for managing papers."""
 
     def get_all_papers(self) -> List[Paper]:
         """Get all papers ordered by added date (newest first)."""
         with get_db_session() as session:
-            from sqlalchemy.orm import joinedload
 
             # Eagerly load relationships to avoid detached instance errors
             papers = (
@@ -64,7 +193,6 @@ class PaperService:
     def get_paper_by_id(self, paper_id: int) -> Optional[Paper]:
         """Get paper by ID."""
         with get_db_session() as session:
-            from sqlalchemy.orm import joinedload
 
             paper = (
                 session.query(Paper)
@@ -79,6 +207,9 @@ class PaperService:
             if paper:
                 # Force load relationships while in session
                 _ = paper.paper_authors
+                # Force load authors within each paper_author
+                for paper_author in paper.paper_authors:
+                    _ = paper_author.author
                 _ = paper.collections
 
                 # Expunge to make detached but accessible
@@ -229,7 +360,6 @@ class PaperService:
     ) -> Paper:
         """Add paper with authors and collections."""
         with get_db_session() as session:
-            from sqlalchemy.orm import joinedload
 
             # Check for existing paper by preprint ID, DOI, or title
             existing_paper = None
@@ -295,7 +425,6 @@ class PaperService:
                         session.flush()  # Ensure collection has an ID
 
                     # Double-check for existing association in the database
-                    from sqlalchemy import text
 
                     existing_association = session.execute(
                         text(
@@ -512,16 +641,16 @@ class CollectionService:
         """Delete all collections that have no papers. Returns number of collections deleted."""
         with get_db_session() as session:
             # Find collections with no papers
-            empty_collections = session.query(Collection).filter(
-                ~Collection.papers.any()
-            ).all()
-            
+            empty_collections = (
+                session.query(Collection).filter(~Collection.papers.any()).all()
+            )
+
             count = len(empty_collections)
-            
+
             # Delete empty collections
             for collection in empty_collections:
                 session.delete(collection)
-            
+
             session.commit()
             return count
 
@@ -566,8 +695,6 @@ class SearchService:
                     conditions.append(Paper.id.in_(paper_ids))
 
             if conditions:
-                from sqlalchemy.orm import joinedload
-
                 papers = (
                     session.query(Paper)
                     .options(
@@ -592,8 +719,6 @@ class SearchService:
     def fuzzy_search_papers(self, query: str, threshold: int = 60) -> List[Paper]:
         """Fuzzy search papers using edit distance."""
         with get_db_session() as session:
-            from sqlalchemy.orm import joinedload
-
             # Eagerly load all papers with relationships
             all_papers = (
                 session.query(Paper)
@@ -654,8 +779,6 @@ class SearchService:
     def filter_papers(self, filters: Dict[str, Any]) -> List[Paper]:
         """Filter papers by various criteria."""
         with get_db_session() as session:
-            from sqlalchemy.orm import joinedload
-
             query = session.query(Paper).options(
                 joinedload(Paper.paper_authors).joinedload(PaperAuthor.author),
                 joinedload(Paper.collections),
@@ -711,8 +834,6 @@ class MetadataExtractor:
 
     def extract_from_arxiv(self, arxiv_id: str) -> Dict[str, Any]:
         """Extract metadata from arXiv."""
-        import xml.etree.ElementTree as ET
-
         # Clean arXiv ID
         arxiv_id = re.sub(r"arxiv[:\s]*", "", arxiv_id, flags=re.IGNORECASE)
         arxiv_id = re.sub(r"[^\d\.]", "", arxiv_id)
@@ -799,8 +920,6 @@ class MetadataExtractor:
     def extract_from_dblp(self, dblp_url: str) -> Dict[str, Any]:
         """Extract metadata from DBLP URL using BibTeX endpoint and LLM processing."""
         try:
-            import bibtexparser
-
             # Convert DBLP HTML URL to BibTeX URL
             bib_url = self._convert_dblp_url_to_bib(dblp_url)
 
@@ -1233,8 +1352,6 @@ Respond in this exact JSON format:
             )
 
             # Parse the JSON response
-            import json
-
             response_content = response.choices[0].message.content.strip()
 
             # Clean up potential markdown code blocks
@@ -1310,24 +1427,24 @@ Respond in this exact JSON format:
             # Extract text from all pages (or first 10 pages to avoid token limits)
             with open(pdf_path, "rb") as file:
                 pdf_reader = PyPDF2.PdfReader(file)
-                
+
                 if len(pdf_reader.pages) == 0:
                     return ""
-                
+
                 # Extract text from first 10 pages to stay within token limits
                 pages_to_extract = min(10, len(pdf_reader.pages))
                 full_text = ""
-                
+
                 for i in range(pages_to_extract):
                     page = pdf_reader.pages[i]
                     full_text += page.extract_text() + "\n\n"
-                
+
                 if not full_text.strip():
                     return ""
-            
+
             # Use LLM to generate academic summary
             client = OpenAI()
-            
+
             prompt = f"""You are an excellent academic paper reviewer. You conduct paper summarization on the full paper text provided, with following instructions:
 
 IMPORTANT: Only include information that is explicitly present in the paper text. Do not hallucinate or make up information. If a section is not applicable (e.g., a theory paper may not have experiments), clearly state "Not applicable" or "Not described in the provided text".
@@ -1353,41 +1470,53 @@ Paper text:
 
             # Log the LLM request
             if self.log_callback:
-                self.log_callback("llm_summarization_request", f"Requesting paper summary for PDF: {pdf_path}")
-                self.log_callback("llm_summarization_prompt", f"Prompt sent to GPT-4o:\n{prompt[:500]}...")
+                self.log_callback(
+                    "llm_summarization_request",
+                    f"Requesting paper summary for PDF: {pdf_path}",
+                )
+                self.log_callback(
+                    "llm_summarization_prompt",
+                    f"Prompt sent to GPT-4o:\n{prompt[:500]}...",
+                )
 
             response = client.chat.completions.create(
                 model="gpt-4o",
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are an expert academic paper reviewer specializing in technical paper analysis and summarization. You are extremely careful to only report information that is explicitly present in the provided text and never hallucinate or make assumptions."
+                        "content": "You are an expert academic paper reviewer specializing in technical paper analysis and summarization. You are extremely careful to only report information that is explicitly present in the provided text and never hallucinate or make assumptions.",
                     },
-                    {"role": "user", "content": prompt}
+                    {"role": "user", "content": prompt},
                 ],
                 max_tokens=5000,
                 temperature=0.1,
             )
-            
+
             summary_response = response.choices[0].message.content.strip()
-            
+
             # Log the LLM response
             if self.log_callback:
-                self.log_callback("llm_summarization_response", f"GPT-4o response received ({len(summary_response)} chars)")
-                self.log_callback("llm_summarization_content", f"Generated summary:\n{summary_response}")
-            
+                self.log_callback(
+                    "llm_summarization_response",
+                    f"GPT-4o response received ({len(summary_response)} chars)",
+                )
+                self.log_callback(
+                    "llm_summarization_content",
+                    f"Generated summary:\n{summary_response}",
+                )
+
             return summary_response
-            
+
         except Exception as e:
             if self.log_callback:
-                self.log_callback("paper_summary_error", f"Failed to generate paper summary: {e}")
+                self.log_callback(
+                    "paper_summary_error", f"Failed to generate paper summary: {e}"
+                )
             return ""  # Return empty string if summarization fails, don't break the workflow
-
 
     def extract_from_bibtex(self, bib_path: str) -> List[Dict[str, Any]]:
         """Extract metadata from BibTeX file."""
         try:
-            import bibtexparser
 
             with open(bib_path, "r", encoding="utf-8") as file:
                 bib_database = bibtexparser.load(file)
@@ -1436,8 +1565,6 @@ Paper text:
     def extract_from_ris(self, ris_path: str) -> List[Dict[str, Any]]:
         """Extract metadata from RIS file."""
         try:
-            import rispy
-
             with open(ris_path, "r", encoding="utf-8") as file:
                 entries = rispy.load(file)
 
@@ -1682,16 +1809,13 @@ class ChatService:
     def open_chat_interface(self, papers: List[Paper], provider: str = "claude"):
         """Open specified LLM provider in browser and show PDF files in Finder/File Explorer."""
         try:
-            import platform
-            import subprocess
-
             # Open provider-specific homepage in browser
             provider_urls = {
                 "claude": "https://claude.ai",
                 "chatgpt": "https://chat.openai.com",
-                "gemini": "https://gemini.google.com"
+                "gemini": "https://gemini.google.com",
             }
-            
+
             url = provider_urls.get(provider, "https://claude.ai")
             webbrowser.open(url)
 
@@ -1732,7 +1856,9 @@ class ChatService:
                     f"Opened {provider_name} and {len(opened_files)} PDF file(s)"
                 )
             else:
-                result_parts.append(f"Opened {provider_name} (no local PDF files found)")
+                result_parts.append(
+                    f"Opened {provider_name} (no local PDF files found)"
+                )
 
             if failed_files:
                 result_parts.append(f"Failed to open {len(failed_files)} file(s)")
@@ -1805,8 +1931,6 @@ class SystemService:
         try:
             # Try using pyperclip if available
             try:
-                import pyperclip
-
                 pyperclip.copy(text)
                 return True
             except ImportError:
@@ -1881,19 +2005,10 @@ class PDFManager:
 
     def __init__(self):
         self.pdf_dir = None
-        self._setup_pdf_directory()
-
-    def _setup_pdf_directory(self):
-        """Setup PDF directory path."""
-        from .database import get_pdf_directory
-
         self.pdf_dir = get_pdf_directory()
 
     def _generate_pdf_filename(self, paper_data: Dict[str, Any], pdf_path: str) -> str:
         """Generate a smart filename for the PDF based on paper metadata."""
-        import hashlib
-        import secrets
-
         # Extract first author last name
         authors = paper_data.get("authors", [])
         if authors and isinstance(authors[0], str):
@@ -2012,15 +2127,13 @@ class PDFManager:
 
             if is_local_file:
                 # Copy local file to PDF directory
-                import shutil
-                
                 # Check if source and destination are the same file
                 if os.path.abspath(pdf_input) == os.path.abspath(target_path):
                     # File is already in the right place, no need to copy
                     return target_path, ""
 
                 shutil.copy2(pdf_input, target_path)
-                
+
                 # Clean up old PDF only after successful copy
                 if (
                     old_pdf_path
@@ -2031,13 +2144,13 @@ class PDFManager:
                         os.remove(old_pdf_path)
                     except Exception:
                         pass  # Don't fail if cleanup fails
-                
+
                 return target_path, ""
 
             elif is_url:
                 # Download URL to PDF directory
                 new_path, error = self._download_pdf_from_url(pdf_input, target_path)
-                
+
                 if not error:
                     # Clean up old PDF only after successful download
                     if (
@@ -2049,7 +2162,7 @@ class PDFManager:
                             os.remove(old_pdf_path)
                         except Exception:
                             pass  # Don't fail if cleanup fails
-                
+
                 return new_path, error
 
         except Exception as e:
@@ -2071,8 +2184,11 @@ class PDFManager:
                 first_chunk = next(response.iter_content(chunk_size=1024), b"")
                 if not first_chunk.startswith(b"%PDF"):
                     # Provide more detailed error information
-                    content_preview = first_chunk[:100].decode('utf-8', errors='ignore')
-                    return "", f"URL does not point to a valid PDF file.\nContent-Type: {content_type}\nContent preview: {content_preview}..."
+                    content_preview = first_chunk[:100].decode("utf-8", errors="ignore")
+                    return (
+                        "",
+                        f"URL does not point to a valid PDF file.\nContent-Type: {content_type}\nContent preview: {content_preview}...",
+                    )
 
             # Download the file
             with open(target_path, "wb") as f:
@@ -2130,8 +2246,6 @@ class DatabaseHealthService:
         try:
             with get_db_session() as session:
                 # Check if database file exists
-                from .database import get_db_manager
-
                 db_manager = get_db_manager()
                 db_path = db_manager.db_path
                 checks["database_exists"] = os.path.exists(db_path)
@@ -2153,8 +2267,6 @@ class DatabaseHealthService:
 
                 # Check foreign key constraints
                 try:
-                    from sqlalchemy import text
-
                     result = session.execute(
                         text("PRAGMA foreign_key_check")
                     ).fetchall()
@@ -2177,8 +2289,6 @@ class DatabaseHealthService:
 
         try:
             with get_db_session() as session:
-                from sqlalchemy import text
-
                 # Check orphaned paper_collections
                 orphaned_pc = session.execute(
                     text(
@@ -2287,8 +2397,6 @@ class DatabaseHealthService:
 
         # Check terminal size
         try:
-            import shutil
-
             size = shutil.get_terminal_size()
             checks["terminal_size"]["columns"] = size.columns
             checks["terminal_size"]["lines"] = size.lines
@@ -2377,8 +2485,6 @@ class DatabaseHealthService:
 
         try:
             with get_db_session() as session:
-                from .database import get_db_manager
-
                 db_manager = get_db_manager()
                 pdf_dir = os.path.join(os.path.dirname(db_manager.db_path), "pdfs")
 
@@ -2443,8 +2549,6 @@ class DatabaseHealthService:
 
         try:
             with get_db_session() as session:
-                from sqlalchemy import text
-
                 # Clean orphaned paper_collections
                 result = session.execute(
                     text(
@@ -2486,64 +2590,629 @@ class DatabaseHealthService:
         return cleaned
 
 
-class SummaryGenerationService:
-    """Service for generating paper summaries in the background."""
-    
-    def __init__(self, log_callback=None, status_bar=None):
+class LLMSummaryService:
+    """Service for generating LLM summaries for multiple papers with queue-based database updates."""
+
+    def __init__(self, paper_service, background_service, log_callback=None):
+        self.paper_service = paper_service
+        self.background_service = background_service
         self.log_callback = log_callback
-        self.status_bar = status_bar
-    
-    def generate_summary_background(self, pdf_path, title, on_complete=None):
-        """Generate a summary in the background and call on_complete with the result."""
-        import threading
-        from prompt_toolkit.application import get_app
-        
+
+    def generate_summaries(
+        self, papers, on_all_complete=None, operation_prefix="summary"
+    ):
+        """
+        Generate summaries for one or more papers with batched database updates.
+
+        Args:
+            papers: Single Paper object or list of Paper objects
+            on_all_complete: Callback when all summaries are complete (optional)
+            operation_prefix: Prefix for operation names and logs
+
+        Returns:
+            dict: Tracking info with completed/total counts and queue, or None if no valid papers
+        """
+        # Normalize to list
+        if not isinstance(papers, list):
+            papers = [papers]
+
+        # Filter papers that have PDFs
+        papers_with_pdfs = [
+            p for p in papers if p.pdf_path and os.path.exists(p.pdf_path)
+        ]
+
+        if not papers_with_pdfs:
+            if self.log_callback:
+                self.log_callback(
+                    f"{operation_prefix}_no_pdfs", "No papers with PDFs found"
+                )
+            return None
+
+        # Initialize tracking
+        tracking = {
+            "completed": 0,
+            "total": len(papers_with_pdfs),
+            "queue": [],  # Will hold (paper_id, summary, paper_title) tuples
+            "papers": papers_with_pdfs,
+            "on_all_complete": on_all_complete,
+            "operation_prefix": operation_prefix,
+        }
+
         # Set initial status
-        if self.status_bar:
-            self.status_bar.set_status(f"Generating summary for '{title}'...", "llm")
+        if self.background_service.status_bar:
+            if tracking["total"] == 1:
+                title = papers_with_pdfs[0].title[:50]
+                self.background_service.status_bar.set_status(
+                    f"Generating summary for '{title}...'", "loading"
+                )
+            else:
+                self.background_service.status_bar.set_status(
+                    f"Generating summaries for {tracking['total']} papers...", "loading"
+                )
+
+        # Start all summary operations
+        for paper in papers_with_pdfs:
+            self._start_paper_summary(paper, tracking)
+
+        return tracking
+
+    def _start_paper_summary(self, paper, tracking):
+        """Start summary generation for a single paper."""
+
+        def generate_summary(current_paper):
+            if self.log_callback:
+                self.log_callback(
+                    f"{tracking['operation_prefix']}_starting_{current_paper.id}",
+                    f"Starting summary for paper ID {current_paper.id}: '{current_paper.title[:50]}...'",
+                )
+
+            extractor = MetadataExtractor(log_callback=self.log_callback)
+            summary = extractor.generate_paper_summary(current_paper.pdf_path)
+
+            if not summary:
+                raise Exception("Failed to generate summary - empty response")
+
+            return {
+                "paper_id": current_paper.id,
+                "summary": summary,
+                "paper_title": current_paper.title,
+            }
+
+        def on_summary_complete(current_paper, tracking, result, error):
+            if error:
+                tracking["completed"] += 1
+                if self.log_callback:
+                    self.log_callback(
+                        f"{tracking['operation_prefix']}_error_{current_paper.id}",
+                        f"Failed to generate summary for '{current_paper.title[:50]}...': {error}",
+                    )
+                self._check_completion(tracking)
+                return
+
+            tracking["queue"].append(
+                (result["paper_id"], result["summary"], result["paper_title"])
+            )
+
+            if self.log_callback:
+                self.log_callback(
+                    tracking["operation_prefix"],
+                    f"Successfully generated summary for '{result['paper_title']}'",
+                )
+
+            tracking["completed"] += 1
+            self._check_completion(tracking)
+
+        self.background_service.run_operation(
+            operation_func=partial(generate_summary, paper),
+            operation_name=f"{tracking['operation_prefix']}_{paper.id}",
+            initial_message=None,  # Don't override the main status
+            on_complete=partial(on_summary_complete, paper, tracking),
+        )
+
+    def _check_completion(self, tracking):
+        """Check if all summaries are complete and process the queue."""
+        # Update status
+        if tracking["completed"] >= tracking["total"]:
+            # All completed - process queue
+            if tracking["queue"]:
+                if self.log_callback:
+                    self.log_callback(
+                        f"{tracking['operation_prefix']}_queue_processing",
+                        f"Processing queue with {len(tracking['queue'])} summaries to save",
+                    )
+
+                def process_queue():
+                    for paper_id, summary, paper_title in tracking["queue"]:
+                        try:
+                            updated_paper, error_msg = self.paper_service.update_paper(
+                                paper_id, {"notes": summary}
+                            )
+
+                            if updated_paper and not error_msg:
+                                if self.log_callback:
+                                    self.log_callback(
+                                        f"{tracking['operation_prefix']}_saved_{paper_id}",
+                                        f"Summary saved to database for: {paper_title[:50]}...",
+                                    )
+                            else:
+                                if self.log_callback:
+                                    self.log_callback(
+                                        f"{tracking['operation_prefix']}_save_error_{paper_id}",
+                                        f"Failed to save summary for {paper_title[:50]}...: {error_msg or 'Unknown error'}",
+                                    )
+                        except Exception as e:
+                            if self.log_callback:
+                                self.log_callback(
+                                    f"{tracking['operation_prefix']}_save_exception_{paper_id}",
+                                    f"Exception saving summary for {paper_title[:50]}...: {e}",
+                                )
+
+                    # Schedule UI update
+                    def update_ui():
+                        if self.background_service.status_bar:
+                            if tracking["total"] == 1:
+                                self.background_service.status_bar.set_success(
+                                    "Summary generated and saved successfully"
+                                )
+                            else:
+                                self.background_service.status_bar.set_success(
+                                    f"All {tracking['total']} summaries generated and saved successfully"
+                                )
+
+                        # Call completion callback
+                        if tracking["on_all_complete"]:
+                            tracking["on_all_complete"](tracking)
+
+                        get_app().invalidate()
+
+                    get_app().loop.call_soon_threadsafe(update_ui)
+
+                # Process in background
+                threading.Thread(target=process_queue, daemon=True).start()
+            else:
+                # No summaries to save
+                if self.background_service.status_bar:
+                    self.background_service.status_bar.set_success(
+                        "Summary generation completed"
+                    )
+                if tracking["on_all_complete"]:
+                    tracking["on_all_complete"](tracking)
+        else:
+            # Still in progress
+            if self.background_service.status_bar:
+                if tracking["total"] == 1:
+                    self.background_service.status_bar.set_status(
+                        "Generating summary...", "loading"
+                    )
+                else:
+                    self.background_service.status_bar.set_status(
+                        f"Generating summaries... ({tracking['completed']}/{tracking['total']} completed)",
+                        "loading",
+                    )
+
+
+class PDFMetadataExtractionService:
+    """Service for extracting metadata from PDF files for multiple papers."""
+
+    def __init__(self, paper_service, background_service, log_callback=None):
+        self.paper_service = paper_service
+        self.background_service = background_service
+        self.log_callback = log_callback
+
+    def extract_metadata(
+        self, papers, on_all_complete=None, operation_prefix="extract_pdf"
+    ):
+        """
+        Extract metadata from PDF files for one or more papers.
+
+        Args:
+            papers: Single Paper object or list of Paper objects
+            on_all_complete: Callback when all extractions are complete (optional)
+            operation_prefix: Prefix for operation names and logs
+
+        Returns:
+            dict: Tracking info with completed/total counts and results, or None if no valid papers
+        """
+        # Normalize to list
+        if not isinstance(papers, list):
+            papers = [papers]
+
+        # Filter papers that have PDFs
+        papers_with_pdfs = [
+            p for p in papers if p.pdf_path and os.path.exists(p.pdf_path)
+        ]
+
+        if not papers_with_pdfs:
+            if self.log_callback:
+                self.log_callback(
+                    f"{operation_prefix}_no_pdfs", "No papers with PDFs found"
+                )
+            return None
+
+        # Initialize tracking
+        tracking = {
+            "completed": 0,
+            "total": len(papers_with_pdfs),
+            "results": [],  # Will hold (paper_id, extracted_data, paper_title) tuples
+            "papers": papers_with_pdfs,
+            "on_all_complete": on_all_complete,
+            "operation_prefix": operation_prefix,
+        }
+
+        # Set initial status
+        if self.background_service.status_bar:
+            if tracking["total"] == 1:
+                title = papers_with_pdfs[0].title[:50]
+                self.background_service.status_bar.set_status(
+                    f"Extracting metadata from '{title}...'", "loading"
+                )
+            else:
+                self.background_service.status_bar.set_status(
+                    f"Extracting metadata from {tracking['total']} PDFs...", "loading"
+                )
+
+        # Start all extraction operations
+        for paper in papers_with_pdfs:
+            self._start_paper_extraction(paper, tracking)
+
+        return tracking
+
+    def extract_metadata_with_confirmation(
+        self, papers, operation_prefix="extract_pdf", refresh_callback=None
+    ):
+        """
+        Extract metadata from PDFs with confirmation dialog, similar to /edit summary pattern.
+
+        Args:
+            papers: Single Paper object or list of Paper objects
+            operation_prefix: Prefix for operation names and logs
+        """
+        # Normalize to list
+        if not isinstance(papers, list):
+            papers = [papers]
+
+        # Filter papers that have PDFs
+        papers_with_pdfs = [
+            p for p in papers if p.pdf_path and os.path.exists(p.pdf_path)
+        ]
+
+        if not papers_with_pdfs:
+            if self.log_callback:
+                self.log_callback(
+                    f"{operation_prefix}_no_pdfs", "No papers with PDFs found"
+                )
+            return
+
+        def extract_and_show_confirmation():
+            """Extract metadata and show confirmation dialog."""
+            all_results = []
+            all_changes = []
+
+            for paper in papers_with_pdfs:
+                try:
+                    extractor = MetadataExtractor(log_callback=self.log_callback)
+                    extracted_data = extractor.extract_from_pdf(paper.pdf_path)
+
+                    if extracted_data:
+                        # Compare with current paper data
+                        paper_changes = compare_extracted_metadata_with_paper(
+                            extracted_data, paper
+                        )
+
+                        if paper_changes:
+                            all_results.append((paper.id, extracted_data, paper.title))
+                            all_changes.append(
+                                f"Paper: {paper.title[:60]}{'...' if len(paper.title) > 60 else ''}"
+                            )
+                            all_changes.extend(
+                                [f"  {change}" for change in paper_changes]
+                            )
+                            all_changes.append("")  # Empty line between papers
+
+                except Exception as e:
+                    if self.log_callback:
+                        self.log_callback(
+                            "extract_error",
+                            f"Failed to extract from {paper.title}: {e}",
+                        )
+
+            # Show confirmation dialog if there are changes
+            if not all_changes:
+                if self.background_service.status_bar:
+                    self.background_service.status_bar.set_status(
+                        "No changes found in PDFs"
+                    )
+                return
+
+            changes_text = "\n".join(all_changes)
+
+            def apply_updates():
+                """Apply the extracted metadata to database."""
+                updated_count = 0
+                for paper_id, extracted_data, paper_title in all_results:
+                    try:
+                        paper = self.paper_service.get_paper_by_id(paper_id)
+                        if paper and extracted_data:
+                            update_data = self._prepare_update_data(extracted_data)
+                            if update_data:
+                                self.paper_service.update_paper(paper_id, update_data)
+                                updated_count += 1
+
+                                if self.log_callback:
+                                    fields_updated = list(update_data.keys())
+                                    self.log_callback(
+                                        "extract_pdf_update",
+                                        f"Updated '{paper_title}' with: {', '.join(fields_updated)}",
+                                    )
+                    except Exception as e:
+                        if self.log_callback:
+                            self.log_callback(
+                                "extract_pdf_error",
+                                f"Failed to update '{paper_title}': {e}",
+                            )
+
+                # Set final status
+                if self.background_service.status_bar:
+                    if updated_count == 0:
+                        self.background_service.status_bar.set_status(
+                            "PDF metadata extracted but no database updates needed"
+                        )
+                    elif updated_count == 1:
+                        self.background_service.status_bar.set_success(
+                            "PDF metadata extraction completed - 1 paper updated"
+                        )
+                    else:
+                        self.background_service.status_bar.set_success(
+                            f"PDF metadata extraction completed - {updated_count} papers updated"
+                        )
+
+            # Create confirmation dialog with scrollable textarea
+            changes_textarea = TextArea(
+                text=changes_text,
+                read_only=True,
+                scrollbar=True,
+                multiline=True,
+                height=Dimension(min=10, max=25),  # Set height on TextArea instead
+                width=Dimension(min=80, preferred=100),
+            )
+
+            def cleanup_and_apply():
+                apply_updates()
+                # Clean up dialog
+                if (
+                    hasattr(self, "_confirmation_float")
+                    and self._confirmation_float in get_app().layout.container.floats
+                ):
+                    get_app().layout.container.floats.remove(self._confirmation_float)
+                # Refresh papers display
+                if refresh_callback:
+                    refresh_callback()
+
+            def cleanup_and_cancel():
+                # Clean up dialog
+                if (
+                    hasattr(self, "_confirmation_float")
+                    and self._confirmation_float in get_app().layout.container.floats
+                ):
+                    get_app().layout.container.floats.remove(self._confirmation_float)
+                if self.background_service.status_bar:
+                    self.background_service.status_bar.set_status(
+                        "PDF extraction cancelled"
+                    )
+
+            dialog = Dialog(
+                title="Confirm PDF Metadata Extraction",
+                body=changes_textarea,
+                buttons=[
+                    Button(text="Apply", handler=cleanup_and_apply),
+                    Button(text="Cancel", handler=cleanup_and_cancel),
+                ],
+                with_background=False,
+            )
+
+            # Show dialog
+            app = get_app()
+            self._confirmation_float = Float(content=dialog)
+            app.layout.container.floats.append(self._confirmation_float)
+            app.layout.focus(dialog)
+            app.invalidate()
+
+        # Run extraction in background
+        self.background_service.run_operation(
+            operation_func=extract_and_show_confirmation,
+            operation_name=f"{operation_prefix}_confirmation",
+            initial_message="Extracting metadata from PDFs...",
+            on_complete=lambda result, error: None,
+        )
+
+    def _prepare_update_data(self, extracted_data):
+        """Prepare update data from extracted metadata."""
+        update_data = {}
+
+        field_mapping = {
+            "title": "title",
+            "authors": "authors",
+            "abstract": "abstract",
+            "year": "year",
+            "venue_full": "venue_full",
+            "venue_acronym": "venue_acronym",
+            "doi": "doi",
+            "url": "url",
+            "category": "category",
+            "paper_type": "paper_type",
+        }
+
+        for extracted_field, paper_field in field_mapping.items():
+            if extracted_field in extracted_data and extracted_data[extracted_field]:
+                if extracted_field == "authors" and isinstance(
+                    extracted_data[extracted_field], list
+                ):
+                    # Convert author names to Author objects
+                    author_service = AuthorService()
+                    author_objects = []
+                    for author_name in extracted_data[extracted_field]:
+                        author = author_service.get_or_create_author(
+                            author_name.strip()
+                        )
+                        author_objects.append(author)
+                    update_data[paper_field] = author_objects
+                else:
+                    update_data[paper_field] = extracted_data[extracted_field]
+
+        return update_data
+
+    def _start_paper_extraction(self, paper, tracking):
+        """Start PDF metadata extraction for a single paper."""
+
+        def extract_metadata(current_paper):
+            if self.log_callback:
+                self.log_callback(
+                    f"{tracking['operation_prefix']}_starting_{current_paper.id}",
+                    f"Starting PDF extraction for paper ID {current_paper.id}: '{current_paper.title[:50]}...'",
+                )
+
+            extractor = MetadataExtractor(log_callback=self.log_callback)
+            extracted_data = extractor.extract_from_pdf(current_paper.pdf_path)
+
+            return {
+                "paper_id": current_paper.id,
+                "extracted_data": extracted_data,
+                "paper_title": current_paper.title,
+            }
+
+        def on_extraction_complete(current_paper, tracking, result, error):
+            if error:
+                tracking["completed"] += 1
+                if self.log_callback:
+                    self.log_callback(
+                        f"{tracking['operation_prefix']}_error_{current_paper.id}",
+                        f"Failed to extract metadata for '{current_paper.title[:50]}...': {error}",
+                    )
+                self._check_completion(tracking)
+                return
+
+            # Add to results
+            tracking["results"].append(
+                (result["paper_id"], result["extracted_data"], result["paper_title"])
+            )
+
+            if self.log_callback:
+                self.log_callback(
+                    tracking["operation_prefix"],
+                    f"Successfully extracted metadata for '{result['paper_title']}'",
+                )
+
+            tracking["completed"] += 1
+            self._check_completion(tracking)
+
+        self.background_service.run_operation(
+            operation_func=partial(extract_metadata, paper),
+            operation_name=f"{tracking['operation_prefix']}_{paper.id}",
+            initial_message=None,  # Don't override the main status
+            on_complete=partial(on_extraction_complete, paper, tracking),
+        )
+
+    def _check_completion(self, tracking):
+        """Check if all extractions are complete and process results."""
+        # Update status
+        if tracking["completed"] >= tracking["total"]:
+            # All completed
+            if self.background_service.status_bar:
+                if tracking["total"] == 1:
+                    self.background_service.status_bar.set_success(
+                        "PDF metadata extraction completed"
+                    )
+                else:
+                    self.background_service.status_bar.set_success(
+                        f"All {tracking['total']} PDF extractions completed"
+                    )
+
+            # Call completion callback
+            if tracking["on_all_complete"]:
+                tracking["on_all_complete"](tracking)
+        else:
+            # Still in progress
+            if self.background_service.status_bar:
+                if tracking["total"] == 1:
+                    self.background_service.status_bar.set_status(
+                        "Extracting PDF metadata...", "loading"
+                    )
+                else:
+                    self.background_service.status_bar.set_status(
+                        f"Extracting metadata... ({tracking['completed']}/{tracking['total']} completed)",
+                        "loading",
+                    )
+
+
+class BackgroundOperationService:
+    """Service for running operations in background threads with status updates."""
+
+    def __init__(self, status_bar=None, log_callback=None):
+        self.status_bar = status_bar
+        self.log_callback = log_callback
+
+    def run_operation(
+        self, operation_func, operation_name, initial_message=None, on_complete=None
+    ):
+        """
+        Run an operation in the background with status updates.
+
+        Args:
+            operation_func: Function to run in background
+            operation_name: Name for logging purposes
+            initial_message: Initial status message to display
+            on_complete: Callback function to call with result
+
+        Returns:
+            Thread object
+        """
+        # Set initial status
+        if initial_message and self.status_bar:
+            self.status_bar.set_status(initial_message, "loading")
             get_app().invalidate()
-        
+
         def background_worker():
             try:
                 if self.log_callback:
-                    self.log_callback("summary_generation", f"Starting background summary generation for '{title}'")
-                
-                extractor = MetadataExtractor(log_callback=self.log_callback)
-                summary = extractor.generate_paper_summary(pdf_path)
-                
-                def schedule_result():
-                    if summary:
-                        if self.log_callback:
-                            self.log_callback("summary_generation", f"Successfully generated summary for '{title}'")
-                        if self.status_bar:
-                            self.status_bar.set_success(f"Summary generated for '{title}'")
-                    else:
-                        if self.log_callback:
-                            self.log_callback("summary_generation", f"Failed to generate summary for '{title}' - empty response")
-                        if self.status_bar:
-                            self.status_bar.set_warning(f"Could not generate summary for '{title}'")
-                    get_app().invalidate()
-                    
-                    # Call completion callback if provided
-                    if on_complete:
-                        on_complete(summary)
-                    
-                return get_app().loop.call_soon_threadsafe(schedule_result)
-                
-            except Exception as e:
-                def schedule_error():
+                    self.log_callback(
+                        operation_name,
+                        f"Starting background operation: {operation_name}",
+                    )
+
+                # Run the operation
+                result = operation_func()
+
+                def schedule_success():
                     if self.log_callback:
-                        self.log_callback("summary_generation_error", f"Error generating summary for '{title}': {e}")
-                    if self.status_bar:
-                        self.status_bar.set_error(f"Failed to generate summary for '{title}'")
-                    get_app().invalidate()
-                    
-                    # Call completion callback if provided
+                        self.log_callback(
+                            operation_name, f"Successfully completed: {operation_name}"
+                        )
+
+                    # Call completion callback with result
                     if on_complete:
-                        on_complete(None)
-                    
+                        on_complete(result, None)
+
+                    get_app().invalidate()
+
+                return get_app().loop.call_soon_threadsafe(schedule_success)
+
+            except Exception as e:
+
+                def schedule_error(error=e):
+                    if self.log_callback:
+                        self.log_callback(
+                            f"{operation_name}_error",
+                            f"Error in {operation_name}: {error}",
+                        )
+
+                    # Call completion callback with error
+                    if on_complete:
+                        on_complete(None, error)
+
+                    get_app().invalidate()
+
                 return get_app().loop.call_soon_threadsafe(schedule_error)
-        
+
         thread = threading.Thread(target=background_worker, daemon=True)
         thread.start()
         return thread

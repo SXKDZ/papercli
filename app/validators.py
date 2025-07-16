@@ -5,7 +5,7 @@ Validators for prompt-toolkit input.
 import re
 from pathlib import Path
 
-from prompt_toolkit.validation import Validator, ValidationError
+from prompt_toolkit.validation import ValidationError, Validator
 
 
 class FilePathValidator(Validator):

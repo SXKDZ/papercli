@@ -4,18 +4,10 @@ Database models for PaperCLI using SQLAlchemy ORM.
 
 from datetime import datetime
 from typing import List, Optional
-from sqlalchemy import (
-    Column,
-    Integer,
-    String,
-    Text,
-    DateTime,
-    ForeignKey,
-    Table,
-)
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship, Mapped, mapped_column
 
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Table, Text
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 Base = declarative_base()
 
@@ -23,16 +15,23 @@ Base = declarative_base()
 # Association object for many-to-many relationship between papers and authors with ordering
 class PaperAuthor(Base):
     """Association object for paper-author relationship with ordering."""
-    
+
     __tablename__ = "paper_authors"
-    
-    paper_id: Mapped[int] = mapped_column(Integer, ForeignKey("papers.id", ondelete="CASCADE"), primary_key=True)
-    author_id: Mapped[int] = mapped_column(Integer, ForeignKey("authors.id", ondelete="CASCADE"), primary_key=True)
-    position: Mapped[int] = mapped_column(Integer, primary_key=True)  # Author order position
-    
+
+    paper_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("papers.id", ondelete="CASCADE"), primary_key=True
+    )
+    author_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("authors.id", ondelete="CASCADE"), primary_key=True
+    )
+    position: Mapped[int] = mapped_column(
+        Integer, primary_key=True
+    )  # Author order position
+
     # Relationships to actual objects
     paper: Mapped["Paper"] = relationship("Paper", back_populates="paper_authors")
     author: Mapped["Author"] = relationship("Author", back_populates="paper_authors")
+
 
 # Association table for many-to-many relationship between papers and collections
 paper_collections = Table(
@@ -110,7 +109,9 @@ class Paper(Base):
 
     # External identifiers
     doi: Mapped[Optional[str]] = mapped_column(String(255))
-    preprint_id: Mapped[Optional[str]] = mapped_column(String(100))  # e.g., "arXiv 2505.15134"
+    preprint_id: Mapped[Optional[str]] = mapped_column(
+        String(100)
+    )  # e.g., "arXiv 2505.15134"
     category: Mapped[Optional[str]] = mapped_column(String(50))  # e.g., "cs.LG"
     url: Mapped[Optional[str]] = mapped_column(String(500))  # General URL field
 
@@ -128,7 +129,10 @@ class Paper(Base):
 
     # Relationships
     paper_authors: Mapped[List[PaperAuthor]] = relationship(
-        "PaperAuthor", back_populates="paper", order_by="PaperAuthor.position", cascade="all, delete-orphan"
+        "PaperAuthor",
+        back_populates="paper",
+        order_by="PaperAuthor.position",
+        cascade="all, delete-orphan",
     )
     authors: Mapped[List[Author]] = relationship(
         "Author", secondary="paper_authors", back_populates="papers", viewonly=True
@@ -144,12 +148,16 @@ class Paper(Base):
     def author_names(self) -> str:
         """Return formatted author names in correct order."""
         # Get authors in order using the paper_authors relationship
-        ordered_authors = [pa.author for pa in sorted(self.paper_authors, key=lambda x: x.position)]
+        ordered_authors = [
+            pa.author for pa in sorted(self.paper_authors, key=lambda x: x.position)
+        ]
         return ", ".join([author.full_name for author in ordered_authors])
-    
+
     def get_ordered_authors(self) -> List[Author]:
         """Get authors in their correct order."""
-        return [pa.author for pa in sorted(self.paper_authors, key=lambda x: x.position)]
+        return [
+            pa.author for pa in sorted(self.paper_authors, key=lambda x: x.position)
+        ]
 
     @property
     def venue_display(self) -> str:

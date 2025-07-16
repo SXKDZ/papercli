@@ -9,7 +9,6 @@
  ╚═╝     ╚═╝  ╚═╝╚═╝     ╚══════╝╚═╝  ╚═╝ ╚═════╝╚══════╝╚═╝
                                                               
         📚 Your Command-Line Research Paper Manager 📚
-      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
 A powerful command-line paper management system for researchers and academics. PaperCLI helps you organize, search, and manage your research papers with an intuitive terminal interface.
@@ -28,7 +27,6 @@ A powerful command-line paper management system for researchers and academics. P
   - Auto-summarization for papers without notes
   - Input history navigation and keyboard shortcuts
 - **Browser Chat Integration**: Quick access to Claude, ChatGPT, or Gemini web interfaces
-- **LLM Summarization**: Generate paper summaries using OpenAI with multithreaded processing
 - **Enhanced Metadata**: AI-powered metadata extraction and improvement
 
 ### 📊 Export & Integration
@@ -38,7 +36,7 @@ A powerful command-line paper management system for researchers and academics. P
 
 ### 🔧 Advanced Features
 - **Database Health**: Built-in diagnostic tools for database maintenance
-- **Interactive UI**: Modern terminal interface with auto-completion
+- **Interactive UI**: Modern terminal interface with auto-completion and consistent status messaging
 - **Multi-selection**: Batch operations on multiple papers
 - **Real-time Search**: Filter and search as you type
 - **Version Management**: Automatic update checking and seamless upgrades
@@ -80,13 +78,7 @@ python -m app.papercli
 
 ## Quick Start
 
-1. **Set up OpenAI API key** (required for AI features):
-   ```bash
-   # Create a .env file in your working directory
-   echo "OPENAI_API_KEY=your_openai_api_key_here" > .env
-   ```
-
-2. **Launch PaperCLI**:
+1. **Launch PaperCLI**:
    ```bash
    # If installed via pipx or pip
    papercli
@@ -95,7 +87,17 @@ python -m app.papercli
    python -m app.papercli
    ```
 
-3. **Add your first paper**:
+2. **Set up OpenAI API key** (prompted on first run if missing):
+   - Option 1: Environment variable (recommended)
+     ```bash
+     export OPENAI_API_KEY=your_openai_api_key_here
+     ```
+   - Option 2: Create `.env` file in current directory or `~/.papercli/`
+     ```bash
+     echo "OPENAI_API_KEY=your_openai_api_key_here" > .env
+     ```
+
+3. **Add your first paper** (arXiv is now the default option):
    ```
    /add arxiv 2307.10635
    ```
@@ -163,8 +165,20 @@ Work on the paper under the cursor ► or selected papers ✓:
 
 ## Configuration
 
-### Environment Variables
-Create a `.env` file in your project directory:
+PaperCLI will prompt you for configuration on first run if needed. You can set up configuration in two ways:
+
+### Method 1: Environment Variables (Recommended)
+```bash
+# Required for AI features
+export OPENAI_API_KEY=your_openai_api_key_here
+
+# Optional settings
+export OPENAI_MODEL=gpt-4o  # defaults to gpt-4o
+export PAPERCLI_DATA_DIR=/path/to/data  # defaults to ~/.papercli
+```
+
+### Method 2: .env File
+Create a `.env` file in your current directory or data directory (`~/.papercli/`):
 
 ```env
 # OpenAI API key (required for local chat interface and summarization)
@@ -183,18 +197,9 @@ PaperCLI stores all data in a single directory (default: `~/.papercli/`):
 - `pdfs/` - Downloaded PDF files
 - `version_config.json` - Version update settings
 
-You can customize the data directory by setting `PAPERCLI_DATA_DIR` in your `.env` file.
-
-## Dependencies
-
-- **prompt-toolkit** - Modern terminal interface
-- **SQLAlchemy** - Database management
-- **requests** - HTTP requests for metadata fetching
-- **beautifulsoup4** - HTML parsing for web scraping
-- **PyPDF2** - PDF text extraction
-- **openai** - LLM integration (optional)
-- **bibtexparser** - BibTeX file parsing
-- **rispy** - RIS file parsing
+The application will check for `.env` files in this order:
+1. Current working directory
+2. Data directory (`~/.papercli/` or `$PAPERCLI_DATA_DIR`)
 
 ## Database Schema
 

@@ -4,26 +4,25 @@ Custom dialog for editing paper metadata in a full-window form with paper type b
 
 import os
 import traceback
-from typing import Callable, Dict, Any, List
+from typing import Any, Callable, Dict, List
 
-from prompt_toolkit.layout.containers import HSplit, VSplit, Window, WindowAlign
-from prompt_toolkit.layout import ScrollablePane
-from prompt_toolkit.layout.controls import FormattedTextControl
-from prompt_toolkit.widgets import Button, Dialog
-from prompt_toolkit.layout.dimension import Dimension
-from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
 from prompt_toolkit.application import get_app
+from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
+from prompt_toolkit.layout import ScrollablePane
+from prompt_toolkit.layout.containers import HSplit, VSplit, Window, WindowAlign
+from prompt_toolkit.layout.controls import FormattedTextControl
+from prompt_toolkit.layout.dimension import Dimension
+from prompt_toolkit.widgets import Button, Dialog, TextArea
 from titlecase import titlecase
 
 from .services import (
-    CollectionService,
     AuthorService,
-    fix_broken_lines,
+    CollectionService,
     MetadataExtractor,
-    SummaryGenerationService,
+    BackgroundOperationService,
+    fix_broken_lines,
+    compare_extracted_metadata_with_paper,
 )
-
-from prompt_toolkit.widgets import TextArea
 
 
 class EditDialog:
@@ -46,10 +45,13 @@ class EditDialog:
         self.result = None
         self.collection_service = CollectionService()
         self.author_service = AuthorService()
-        self.summary_service = SummaryGenerationService(
-            log_callback=self.log_callback, status_bar=self.status_bar
+        self.background_service = BackgroundOperationService(
+            status_bar=self.status_bar, log_callback=self.log_callback
         )
         self.read_only_fields = read_only_fields or []
+        
+        # Track fields that have been changed by Extract/Summarize operations
+        self.changed_fields = set()
 
         self.paper_types = {
             "Conference": "conference",
@@ -205,18 +207,24 @@ class EditDialog:
                     "notes",
                 ]
 
+                # Apply italic styling if field was changed by Extract/Summarize
+                field_style = "class:textarea"
+                if field_name in self.changed_fields:
+                    field_style = "class:textarea italic"
+                elif is_read_only:
+                    field_style = "class:textarea.readonly"
+                
                 input_field = TextArea(
                     text=value,
                     multiline=is_multiline,
                     read_only=is_read_only,
                     width=Dimension(min=80, preferred=120),  # Make input fields wider
-                    style=(
-                        "class:textarea"
-                        if not is_read_only
-                        else "class:textarea.readonly"
-                    ),
+                    style=field_style,
                     focusable=not is_read_only,  # Explicitly set focusable
                 )
+                
+                # Note: Removed automatic text change handlers to avoid event loop conflicts
+                # Changed fields will be cleared when user saves or when form is rebuilt
 
                 # Set height for multiline fields
                 if field_name in ["title", "author_names"]:
@@ -323,8 +331,12 @@ class EditDialog:
         )
 
         # Create custom button row with centered buttons and right-aligned help text
-        extract_pdf_button = Button(text="Extract", handler=self._handle_extract_pdf, width=13)
-        summarize_button = Button(text="Summarize", handler=self._handle_summarize, width=13)
+        extract_pdf_button = Button(
+            text="Extract", handler=self._handle_extract_pdf, width=13
+        )
+        summarize_button = Button(
+            text="Summarize", handler=self._handle_summarize, width=13
+        )
         save_button = Button(text="Save", handler=self._handle_save)
         cancel_button = Button(text="Cancel", handler=self._handle_cancel)
 
@@ -455,10 +467,51 @@ class EditDialog:
             log_message = f"Paper '{self.paper_data.get('title')}' (ID: {paper_id}) updated: \n{changes_text}"
             self.log_callback("edit", log_message)
 
+        # Clear changed fields when saving
+        self.changed_fields.clear()
+        
         self.result = result
         self.callback(self.result)
 
+    def _apply_styling_changes(self):
+        """Apply styling changes by rebuilding the form (use sparingly)."""
+        try:
+            # Preserve current field values
+            current_values = {
+                name: field.text
+                for name, field in self.input_fields.items()
+            }
+            # Rebuild form to apply styling changes
+            self.body_container.children = self._build_body_components()
+            # Restore all current values
+            for field_name, field_value in current_values.items():
+                if field_name in self.input_fields:
+                    self.input_fields[field_name].text = field_value
+            # Refresh the display
+            get_app().invalidate()
+        except Exception as e:
+            # If styling update fails, just log it and continue
+            if self.log_callback:
+                self.log_callback("styling_error", f"Failed to update field styling: {e}")
+
+    def _restore_dialog_focus(self):
+        """Restore focus to the edit dialog after background operations."""
+        try:
+            # Focus on the notes field if it exists (since that's what was just updated)
+            if "notes" in self.input_fields:
+                get_app().layout.focus(self.input_fields["notes"])
+            # Otherwise focus on the first available field
+            elif self.input_fields:
+                first_field = next(iter(self.input_fields.values()))
+                get_app().layout.focus(first_field)
+        except Exception as e:
+            # If focus restoration fails, just log it and continue
+            if self.log_callback:
+                self.log_callback("focus_error", f"Failed to restore dialog focus: {e}")
+
     def _handle_cancel(self):
+        # Clear changed fields when cancelling
+        self.changed_fields.clear()
         self.callback(None)
 
     def _handle_extract_pdf(self):
@@ -472,19 +525,44 @@ class EditDialog:
             )
             return
 
-        try:
-            extractor = MetadataExtractor()
+        title = self.paper_data.get("title", "Unknown Title")
+        paper_id = self.paper_data.get("id", "unknown")
+
+        # Extract metadata using background service
+        def extract_operation():
+            extractor = MetadataExtractor(log_callback=self.log_callback)
             extracted_data = extractor.extract_from_pdf(pdf_path)
+            if not extracted_data:
+                raise Exception("No metadata could be extracted from PDF")
+            return extracted_data
 
-            # Update fields with extracted data but don't save
+        def on_extract_complete(extracted_data, error):
+            if error or not extracted_data:
+                return
+
+            # Check what changes would be made by comparing with current form values
+            changes = self._compare_extracted_with_current_form(extracted_data)
+            
+            if not changes:
+                if self.status_bar:
+                    self.status_bar.set_status("ℹ No changes found - extracted metadata matches current values")
+                return
+
+            # Apply changes directly to form fields (no confirmation needed for edit dialog)
             self._update_fields_with_extracted_data(extracted_data)
+            # Force styling update after extraction since this is user-initiated
+            self._apply_styling_changes()
+            # Ensure focus returns to the edit dialog after styling update
+            self._restore_dialog_focus()
+            if self.status_bar:
+                self.status_bar.set_success(f"PDF metadata extracted and applied - {len(changes)} fields updated")
 
-        except Exception as e:
-            self.error_display_callback(
-                "Extract PDF Error",
-                "Failed to extract PDF metadata",
-                traceback.format_exc(),
-            )
+        self.background_service.run_operation(
+            operation_func=extract_operation,
+            operation_name=f"edit_extract_{paper_id}",
+            initial_message=f"Extracting metadata from PDF for '{title}'...",
+            on_complete=on_extract_complete
+        )
 
     def _update_fields_with_extracted_data(self, extracted_data):
         """Update form fields with extracted PDF data."""
@@ -501,9 +579,16 @@ class EditDialog:
             "paper_type": "paper_type",
         }
 
+        # Track which fields are being updated
+        updated_fields = []
+        
         for extracted_field, form_field in field_mapping.items():
-            if extracted_field in extracted_data and extracted_data[extracted_field]:
+            if extracted_field in extracted_data:
                 value = extracted_data[extracted_field]
+
+                # Skip empty/None values but not for special handling fields
+                if not value and extracted_field not in ["paper_type"]:
+                    continue
 
                 if extracted_field == "authors" and isinstance(value, list):
                     value = ", ".join(value)
@@ -513,7 +598,8 @@ class EditDialog:
                     # Update paper type and rebuild form if different
                     if value != self.current_paper_type:
                         self.current_paper_type = value
-                        # Preserve current field values
+                        updated_fields.append(form_field)
+                        # Preserve current field values and changed fields tracking
                         current_values = {
                             name: field.text
                             for name, field in self.input_fields.items()
@@ -532,10 +618,62 @@ class EditDialog:
 
                 # Update field if it exists in current form
                 if form_field in self.input_fields:
-                    self.input_fields[form_field].text = str(value) if value else ""
+                    old_value = self.input_fields[form_field].text or ""
+                    new_value = str(value) if value else ""
+                    
+                    # Only update and mark as changed if values are actually different
+                    if old_value.strip() != new_value.strip():
+                        self.input_fields[form_field].text = new_value
+                        updated_fields.append(form_field)
+        
+        # Add updated fields to changed_fields set for italic styling
+        self.changed_fields.update(updated_fields)
 
         # Refresh the display
         get_app().invalidate()
+
+    def _compare_extracted_with_current_form(self, extracted_data):
+        """Compare extracted data with current form values and return list of changes."""
+        field_mapping = {
+            "title": "title",
+            "authors": "author_names",
+            "abstract": "abstract",
+            "year": "year",
+            "venue_full": "venue_full",
+            "venue_acronym": "venue_acronym",
+            "doi": "doi",
+            "url": "url",
+            "category": "category",
+            "paper_type": "paper_type",
+        }
+        
+        changes = []
+        
+        for extracted_field, form_field in field_mapping.items():
+            if extracted_field in extracted_data and extracted_data[extracted_field]:
+                value = extracted_data[extracted_field]
+                
+                # Convert extracted value to string format for comparison
+                if extracted_field == "authors" and isinstance(value, list):
+                    new_value = ", ".join(value)
+                elif extracted_field == "year" and isinstance(value, int):
+                    new_value = str(value)
+                else:
+                    new_value = str(value) if value else ""
+                
+                # Get current form value
+                if extracted_field == "paper_type":
+                    current_value = self.current_paper_type
+                elif form_field in self.input_fields:
+                    current_value = self.input_fields[form_field].text or ""
+                else:
+                    current_value = ""
+                
+                # Compare values (strip whitespace for accurate comparison)
+                if new_value.strip() != current_value.strip():
+                    changes.append(f"{form_field}: '{current_value}' → '{new_value}'")
+        
+        return changes
 
     def _handle_summarize(self):
         """Handle Summarize button press."""
@@ -549,14 +687,53 @@ class EditDialog:
             return
 
         title = self.paper_data.get("title", "Unknown Title")
+        paper_id = self.paper_data.get("id", "unknown")
 
-        # Generate summary using unified service
-        def on_summary_complete(summary):
+        # Generate summary using background service
+        def generate_summary_operation():
+            extractor = MetadataExtractor(log_callback=self.log_callback)
+            summary = extractor.generate_paper_summary(pdf_path)
+            if not summary:
+                raise Exception("Failed to generate summary - empty response")
+            return {"summary": summary}
+
+        def on_summary_complete(result, error):
+            if error:
+                if self.status_bar:
+                    self.status_bar.set_error(f"Failed to generate summary: {error}")
+                return
+                
+            if not result:
+                if self.status_bar:
+                    self.status_bar.set_error("No summary generated")
+                return
+                
+            summary = result["summary"]
             if summary and "notes" in self.input_fields:
-                self.input_fields["notes"].text = summary
+                # Check if the summary is different from current notes
+                current_notes = self.input_fields["notes"].text
+                if current_notes != summary:
+                    self.input_fields["notes"].text = summary
+                    # Add notes field to changed_fields for italic styling
+                    self.changed_fields.add("notes")
+                    # Apply styling changes immediately to show italic
+                    self._apply_styling_changes()
+                    # Ensure focus returns to the edit dialog after styling update
+                    self._restore_dialog_focus()
+                    if self.status_bar:
+                        self.status_bar.set_success("Summary generated and applied to notes field")
+                else:
+                    if self.status_bar:
+                        self.status_bar.set_status("Summary matches existing notes - no changes made")
+            else:
+                if self.status_bar:
+                    self.status_bar.set_error("Failed to generate summary or notes field not available")
 
-        self.summary_service.generate_summary_background(
-            pdf_path, title, on_complete=on_summary_complete
+        self.background_service.run_operation(
+            operation_func=generate_summary_operation,
+            operation_name=f"edit_summary_{paper_id}",
+            initial_message=f"Generating summary for '{title}'...",
+            on_complete=on_summary_complete
         )
 
     def _set_initial_focus(self):
