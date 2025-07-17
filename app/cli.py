@@ -2494,7 +2494,11 @@ The doctor command helps maintain database health by:
             background_service=self.background_service,
             log_callback=self._add_log,
         )
-        summary_service.generate_summaries(papers=papers, operation_prefix="summarize")
+        summary_service.generate_summaries(
+            papers=papers, 
+            operation_prefix="summarize",
+            on_all_complete=lambda tracking: self.load_papers()
+        )
 
     def show_add_dialog(self):
         """Show the add paper dialog."""

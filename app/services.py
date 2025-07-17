@@ -562,7 +562,7 @@ class CollectionService:
                         count += 1
                     else:
                         errors.append(
-                            f"Paper '{paper.title[:30]}...' not in collection: {collection_name}"
+                            f"Paper '{paper.title[:50]}...' not in collection: {collection_name}"
                         )
 
             if count > 0:
@@ -2752,6 +2752,11 @@ class LLMSummaryService:
         failed_count = len(tracking["failed"])
         total_count = tracking["total"]
 
+        # Call completion callback first to refresh the UI
+        if tracking["on_all_complete"]:
+            tracking["on_all_complete"](tracking)
+
+        # Then set the status bar message
         if self.background_service.status_bar:
             if total_count == 1:
                 if success_count == 1:
@@ -2779,10 +2784,6 @@ class LLMSummaryService:
                     self.background_service.status_bar.set_status(
                         "Summary generation finished with no results"
                     )
-
-        # Call completion callback
-        if tracking["on_all_complete"]:
-            tracking["on_all_complete"](tracking)
 
         get_app().invalidate()
 
@@ -2897,7 +2898,7 @@ class PDFMetadataExtractionService:
                         if paper_changes:
                             all_results.append((paper.id, extracted_data, paper.title))
                             all_changes.append(
-                                f"Paper: {paper.title[:60]}{'...' if len(paper.title) > 60 else ''}"
+                                f"Paper: {paper.title[:50]}{'...' if len(paper.title) > 50 else ''}"
                             )
                             all_changes.extend(
                                 [f"  {change}" for change in paper_changes]
