@@ -26,7 +26,6 @@ import rispy
 from fuzzywuzzy import fuzz
 from openai import OpenAI
 from prompt_toolkit.application import get_app
-from prompt_toolkit.filters import Condition
 from prompt_toolkit.layout.containers import Float
 from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.widgets import Button, Dialog, TextArea
@@ -2786,6 +2785,7 @@ class LLMSummaryService:
                     )
 
         get_app().invalidate()
+
 
 class PDFMetadataExtractionService:
     """Service for extracting metadata from PDF files for multiple papers."""

@@ -14,7 +14,7 @@ from prompt_toolkit.layout.containers import HSplit, VSplit, Window
 from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.widgets import Button, Dialog, TextArea
 
-from .services import PaperService, BackgroundOperationService
+from .services import BackgroundOperationService, PaperService
 
 
 class ChatDialog:
@@ -66,42 +66,43 @@ class ChatDialog:
         # Get paper details and potentially generate summaries
         paper_details = []
         papers_needing_summaries = [
-            paper for paper in self.papers 
-            if not self._get_paper_fields(paper)["notes"] 
-            and self._get_paper_fields(paper)["pdf_path"] 
+            paper
+            for paper in self.papers
+            if not self._get_paper_fields(paper)["notes"]
+            and self._get_paper_fields(paper)["pdf_path"]
             and os.path.exists(self._get_paper_fields(paper)["pdf_path"])
         ]
-        
+
         # Generate summaries using the shared service
         if papers_needing_summaries:
             from .services import LLMSummaryService
-            
+
             summary_service = LLMSummaryService(
                 paper_service=self.paper_service,
                 background_service=self.background_service,
-                log_callback=self.log_callback
+                log_callback=self.log_callback,
             )
-            
+
             def on_summaries_complete(tracking):
                 # Update in-memory paper objects with summaries
-                for paper_id, summary, paper_title in tracking['queue']:
+                for paper_id, summary, paper_title in tracking["queue"]:
                     for paper in self.papers:
                         if paper.id == paper_id:
                             paper.notes = summary
                             if self.log_callback:
                                 self.log_callback(
                                     f"chat_summary_memory_updated_{paper_id}",
-                                    f"Updated in-memory paper: {paper.title[:50]}..."
+                                    f"Updated in-memory paper: {paper.title[:50]}...",
                                 )
                             break
                 self._refresh_chat_display()
-            
+
             summary_service.generate_summaries(
                 papers=papers_needing_summaries,
                 on_all_complete=on_summaries_complete,
-                operation_prefix="chat_summary"
+                operation_prefix="chat_summary",
             )
-        
+
         # Second pass: build paper details for display
         for i, paper in enumerate(self.papers, 1):
             # Check if we need to generate a summary
@@ -168,7 +169,6 @@ class ChatDialog:
             )
             content += f"\n\n(You can refer to papers by their numbers, e.g., 'Paper 1', 'Paper 2', etc.)"
             return content
-
 
     def _refresh_chat_display(self):
         """Refresh the chat display by rebuilding the initial content with updated paper info."""
@@ -423,27 +423,51 @@ class ChatDialog:
         # Show status that we're working on the response
         if self.status_bar:
             self.status_bar.set_status(
-                f"Generating response from {self._get_provider_display_name()}...",
+                f"Streaming response from {self._get_provider_display_name()}...",
                 "llm",
             )
             get_app().invalidate()
 
-        # Run LLM response generation in background thread to allow UI updates
+        # Add a placeholder for the streaming response
+        streaming_placeholder = {"role": "assistant", "content": ""}
+        self.chat_history.append(streaming_placeholder)
+        self.chat_display.text = self._format_chat_history()
+        get_app().invalidate()
+
+        # Run LLM response generation in background thread with streaming
         def get_response_background():
             try:
-                assistant_response = self._get_llm_response(user_message)
+                # Use streaming to get response
+                def on_chunk(chunk_text):
+                    # Update the assistant response in place
+                    streaming_placeholder["content"] += chunk_text
 
-                # Schedule UI update in main thread
-                def schedule_ui_update():
-                    self.chat_history.append(
-                        {"role": "assistant", "content": assistant_response}
-                    )
+                    # Schedule UI update in main thread
+                    def schedule_stream_update():
+                        self.chat_display.text = self._format_chat_history()
+                        # Auto-scroll to bottom to follow the streaming text
+                        self.chat_display.buffer.cursor_position = len(
+                            self.chat_display.text
+                        )
+                        get_app().invalidate()
 
-                    # Log the assistant response
+                    get_app().loop.call_soon_threadsafe(schedule_stream_update)
+
+                # Get streaming response
+                final_response = self._get_llm_response_streaming(
+                    user_message, on_chunk
+                )
+
+                # Schedule final UI update
+                def schedule_final_update():
+                    # Ensure the final content is set correctly
+                    streaming_placeholder["content"] = final_response
+
+                    # Log the final assistant response
                     if self.log_callback:
                         self.log_callback(
                             "chat_assistant",
-                            f"{self._get_provider_display_name()}: {assistant_response}",
+                            f"{self._get_provider_display_name()}: {final_response}",
                         )
 
                     self.chat_display.text = self._format_chat_history()
@@ -459,19 +483,15 @@ class ChatDialog:
                     )
                     get_app().invalidate()
 
-                # Use call_from_executor to safely update UI from background thread
-                get_app().loop.call_soon_threadsafe(schedule_ui_update)
+                get_app().loop.call_soon_threadsafe(schedule_final_update)
 
             except Exception as e:
 
                 def schedule_ui_error():
                     if self.status_bar:
                         self.status_bar.set_error(f"Failed to get response: {str(e)}")
-                    self.chat_history.append(
-                        {
-                            "role": "assistant",
-                            "content": f"Sorry, I encountered an error: {str(e)}",
-                        }
+                    streaming_placeholder["content"] = (
+                        f"Sorry, I encountered an error: {str(e)}"
                     )
                     self.chat_display.text = self._format_chat_history()
                     get_app().invalidate()
@@ -485,8 +505,8 @@ class ChatDialog:
         # Scroll to bottom
         self.chat_display.buffer.cursor_position = len(self.chat_display.text)
 
-    def _get_llm_response(self, user_message: str) -> str:
-        """Get response from ChatGPT."""
+    def _get_llm_response_streaming(self, user_message: str, on_chunk_callback) -> str:
+        """Get streaming response from ChatGPT."""
         try:
             # Prepare messages for API call
             messages = []
@@ -505,13 +525,14 @@ IMPORTANT: Only provide information that is explicitly present in the paper info
             )
 
             # Add conversation history (last 6 messages to stay within token limits)
+            # Skip the last entry since it's our streaming placeholder
             recent_history = (
-                self.chat_history[-6:]
-                if len(self.chat_history) > 6
-                else self.chat_history
+                self.chat_history[-7:-1]
+                if len(self.chat_history) > 7
+                else self.chat_history[:-1]
             )
             for entry in recent_history:
-                if entry["role"] in ["user", "assistant"]:
+                if entry["role"] in ["user", "assistant"] and entry["content"].strip():
                     messages.append(
                         {"role": entry["role"], "content": entry["content"]}
                     )
@@ -519,21 +540,34 @@ IMPORTANT: Only provide information that is explicitly present in the paper info
             # Add current user message
             messages.append({"role": "user", "content": user_message})
 
-            # Call OpenAI API directly
-            response = self.openai_client.chat.completions.create(
+            # Call OpenAI API with streaming
+            stream = self.openai_client.chat.completions.create(
                 model=self.model_name,
                 messages=messages,
                 max_tokens=4000,
                 temperature=0.7,
+                stream=True,
             )
-            return response.choices[0].message.content.strip()
+
+            # Collect the full response while streaming
+            full_response = ""
+            for chunk in stream:
+                if chunk.choices[0].delta.content is not None:
+                    chunk_text = chunk.choices[0].delta.content
+                    full_response += chunk_text
+                    # Call the callback for each chunk
+                    on_chunk_callback(chunk_text)
+
+            return full_response.strip()
 
         except Exception as e:
             if self.log_callback:
                 self.log_callback(
-                    "openai_error", f"Error getting ChatGPT response: {e}"
+                    "openai_error", f"Error getting ChatGPT streaming response: {e}"
                 )
-            return f"Error: Failed to get response from ChatGPT. {str(e)}"
+            error_msg = f"Error: Failed to get response from ChatGPT. {str(e)}"
+            on_chunk_callback(error_msg)
+            return error_msg
 
     def _build_paper_context(self) -> str:
         """Build context string about the papers for the LLM."""

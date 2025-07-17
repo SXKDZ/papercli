@@ -2,6 +2,8 @@
 UI components for PaperCLI using prompt-toolkit.
 """
 
+import threading
+import time
 from io import StringIO
 from typing import List, Optional
 
@@ -152,16 +154,30 @@ class PaperListControl:
 
 
 class StatusBar:
-    """Status bar component with color-coded status types."""
+    """Status bar component with color-coded status types and animation support."""
 
     def __init__(self):
         self.status_text = "Ready"
         self.progress_text = ""
         self.status_type = "info"  # info, success, error, warning
+        self.is_animating = False
+        self.animation_thread = None
+        self.animation_frame = 0
+        self.original_text = ""
 
     def set_status(self, text: str, status_type: str = "info"):
         """Set status text with optional type for color coding and icon."""
-        self.status_text = StatusMessages.format_message(text, status_type)
+        self._stop_animation()
+
+        # Special handling for LLM status to add animation
+        if status_type == "llm" and (
+            "streaming" in text.lower() or "generating" in text.lower()
+        ):
+            self.original_text = text
+            self._start_llm_animation(text)
+        else:
+            self.status_text = StatusMessages.format_message(text, status_type)
+
         self.status_type = status_type
 
     def set_success(self, text: str):
@@ -179,6 +195,41 @@ class StatusBar:
     def set_progress(self, text: str):
         """Set progress text."""
         self.progress_text = text
+
+    def _start_llm_animation(self, base_text: str):
+        """Start LLM animation with star frames."""
+        if self.is_animating:
+            return
+
+        self.is_animating = True
+        self.animation_frame = 0
+
+        def animate():
+            star_frames = ["✶", "✸", "✹", "✺", "✹", "✷"]
+
+            while self.is_animating:
+                try:
+                    current_star = star_frames[self.animation_frame % len(star_frames)]
+                    self.status_text = f"{current_star} {base_text}"
+                    self.animation_frame += 1
+
+                    if get_app():
+                        get_app().invalidate()
+
+                    time.sleep(0.2)  # 200ms interval
+                except Exception:
+                    break
+
+        self.animation_thread = threading.Thread(target=animate, daemon=True)
+        self.animation_thread.start()
+
+    def _stop_animation(self):
+        """Stop any running animation."""
+        if self.is_animating:
+            self.is_animating = False
+            if self.animation_thread:
+                # Don't join the thread to avoid blocking, just let it finish naturally
+                self.animation_thread = None
 
     def get_formatted_text(self) -> FormattedText:
         """Get formatted text for status bar with color coding."""
