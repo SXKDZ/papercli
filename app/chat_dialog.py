@@ -282,6 +282,14 @@ class ChatDialog:
         def _(event):
             self._handle_close()
 
+        @kb.add("c-k")
+        def _(event):
+            # Cut text from cursor to end of line
+            current_control = event.app.layout.current_control
+            if hasattr(current_control, "buffer"):
+                buffer = current_control.buffer
+                buffer.delete(count=len(buffer.document.current_line_after_cursor))
+
         # Add backspace and delete handling for text input
         @kb.add("backspace")
         def _(event):

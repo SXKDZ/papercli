@@ -3,7 +3,6 @@ Custom dialog for editing paper metadata in a full-window form with paper type b
 """
 
 import os
-import traceback
 from typing import Any, Callable, Dict, List
 
 from prompt_toolkit.application import get_app
@@ -21,7 +20,6 @@ from .services import (
     MetadataExtractor,
     BackgroundOperationService,
     fix_broken_lines,
-    compare_extracted_metadata_with_paper,
 )
 
 
@@ -222,9 +220,6 @@ class EditDialog:
                     style=field_style,
                     focusable=not is_read_only,  # Explicitly set focusable
                 )
-                
-                # Note: Removed automatic text change handlers to avoid event loop conflicts
-                # Changed fields will be cleared when user saves or when form is rebuilt
 
                 # Set height for multiline fields
                 if field_name in ["title", "author_names"]:
@@ -537,7 +532,14 @@ class EditDialog:
             return extracted_data
 
         def on_extract_complete(extracted_data, error):
-            if error or not extracted_data:
+            if error:
+                if self.status_bar:
+                    self.status_bar.set_error(f"Failed to extract metadata: {error}")
+                return
+
+            if not extracted_data:
+                if self.status_bar:
+                    self.status_bar.set_error("Failed to extract metadata: No data extracted")
                 return
 
             # Check what changes would be made by comparing with current form values
@@ -861,6 +863,21 @@ class EditDialog:
         @kb.add("c-l")
         def _(event):
             self._handle_summarize()
+
+        @kb.add("enter")
+        def _(event):
+            # Add newline in multiline text areas
+            current_control = event.app.layout.current_control
+            if hasattr(current_control, "buffer") and current_control.buffer.multiline():
+                current_control.buffer.insert_text("\n")
+
+        @kb.add("c-k")
+        def _(event):
+            # Cut text from cursor to end of line
+            current_control = event.app.layout.current_control
+            if hasattr(current_control, "buffer"):
+                buffer = current_control.buffer
+                buffer.delete(count=len(buffer.document.current_line_after_cursor))
 
         self.body_container.key_bindings = merge_key_bindings(
             [self.body_container.key_bindings or KeyBindings(), kb]

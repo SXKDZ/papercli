@@ -1044,7 +1044,7 @@ Please extract:
    - For conferences: Use common name (e.g., "NeurIPS" for Conference on Neural Information Processing Systems, not "NIPS")
 
 Respond in this exact JSON format:
-{{"venue_full": "...", "venue_acronym": "..."}}"""
+{{"venue_full": "...", "venue_acronym": "..."}} """
 
             response = client.chat.completions.create(
                 model="gpt-4o",
@@ -1466,7 +1466,7 @@ Conclusion: Sum up the key points made about the paper's technical approach, its
 Please provide your analysis in clear, readable text format (not markdown). Use the exact headers provided above. Be honest about missing information rather than making assumptions.
 
 Paper text:
-{full_text[:15000]}"""  # Limit to ~15k characters to avoid token limits
+{full_text[:16000]}"""  # Limit to ~16k characters to avoid token limits
 
             # Log the LLM request
             if self.log_callback:
@@ -1476,7 +1476,7 @@ Paper text:
                 )
                 self.log_callback(
                     "llm_summarization_prompt",
-                    f"Prompt sent to GPT-4o:\n{prompt[:500]}...",
+                    f"Prompt sent to gpt-4o:\n{prompt[:500]}...",
                 )
 
             response = client.chat.completions.create(
@@ -1488,7 +1488,7 @@ Paper text:
                     },
                     {"role": "user", "content": prompt},
                 ],
-                max_tokens=5000,
+                max_tokens=8000,
                 temperature=0.1,
             )
 
@@ -1724,23 +1724,7 @@ class ExportService:
 
     def export_to_html(self, papers: List[Paper]) -> str:
         """Export papers to HTML format."""
-        html = """<!DOCTYPE html>
-<html>
-<head>
-    <title>Paper List</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        .paper { margin-bottom: 30px; padding: 20px; border: 1px solid #ddd; }
-        .title { font-size: 18px; font-weight: bold; margin-bottom: 10px; }
-        .authors { font-style: italic; margin-bottom: 5px; }
-        .venue { color: #666; margin-bottom: 5px; }
-        .abstract { margin-top: 10px; }
-        .notes { margin-top: 10px; font-style: italic; }
-    </style>
-</head>
-<body>
-    <h1>Paper List</h1>
-"""
+        html = """<!DOCTYPE html>\n<html>\n<head>\n    <title>Paper List</title>\n    <style>\n        body { font-family: Arial, sans-serif; margin: 20px; }\n        .paper { margin-bottom: 30px; padding: 20px; border: 1px solid #ddd; }\n        .title { font-size: 18px; font-weight: bold; margin-bottom: 10px; }\n        .authors { font-style: italic; margin-bottom: 5px; }\n        .venue { color: #666; margin-bottom: 5px; }\n        .abstract { margin-top: 10px; }\n        .notes { margin-top: 10px; font-style: italic; }\n    </style>\n</head>\n<body>\n    <h1>Paper List</h1>\n"""
 
         for paper in papers:
             html += f'    <div class="paper">\n'
@@ -1762,8 +1746,7 @@ class ExportService:
 
             html += "    </div>\n"
 
-        html += """</body>
-</html>"""
+        html += """</body>\n</html>"""
 
         return html
 
@@ -2090,7 +2073,7 @@ class PDFManager:
         filename = f"{author_lastname}{year}{first_word}_{file_hash}.pdf"
 
         # Ensure filename is filesystem-safe
-        filename = re.sub(r"[^\w\-_.]", "", filename)
+        filename = re.sub(r"[^\w\-._]", "", filename)
 
         return filename
 
@@ -2401,15 +2384,15 @@ class DatabaseHealthService:
             checks["terminal_size"]["columns"] = size.columns
             checks["terminal_size"]["lines"] = size.lines
 
-            if size.columns < 80:
+            if size.columns <= 125:
                 self.issues_found.append(
-                    "Terminal width is less than 80 columns (current: {})".format(
+                    "Terminal width is less than 125 columns (current: {})".format(
                         size.columns
                     )
                 )
-            if size.lines < 24:
+            if size.lines <= 35:
                 self.issues_found.append(
-                    "Terminal height is less than 24 lines (current: {})".format(
+                    "Terminal height is less than 35 lines (current: {})".format(
                         size.lines
                     )
                 )
@@ -2633,6 +2616,7 @@ class LLMSummaryService:
             "completed": 0,
             "total": len(papers_with_pdfs),
             "queue": [],  # Will hold (paper_id, summary, paper_title) tuples
+            "failed": [],  # Will hold (paper_id, error_message) tuples
             "papers": papers_with_pdfs,
             "on_all_complete": on_all_complete,
             "operation_prefix": operation_prefix,
@@ -2643,7 +2627,7 @@ class LLMSummaryService:
             if tracking["total"] == 1:
                 title = papers_with_pdfs[0].title[:50]
                 self.background_service.status_bar.set_status(
-                    f"Generating summary for '{title}...'", "loading"
+                    f"Generating summary for '{title}'...", "loading"
                 )
             else:
                 self.background_service.status_bar.set_status(
@@ -2679,27 +2663,27 @@ class LLMSummaryService:
             }
 
         def on_summary_complete(current_paper, tracking, result, error):
+            tracking["completed"] += 1
+
             if error:
-                tracking["completed"] += 1
+                # Add to failed queue for detailed error tracking
+                tracking["failed"].append((current_paper.id, str(error)))
                 if self.log_callback:
                     self.log_callback(
                         f"{tracking['operation_prefix']}_error_{current_paper.id}",
                         f"Failed to generate summary for '{current_paper.title[:50]}...': {error}",
                     )
-                self._check_completion(tracking)
-                return
-
-            tracking["queue"].append(
-                (result["paper_id"], result["summary"], result["paper_title"])
-            )
-
-            if self.log_callback:
-                self.log_callback(
-                    tracking["operation_prefix"],
-                    f"Successfully generated summary for '{result['paper_title']}'",
+            else:
+                # Add to success queue
+                tracking["queue"].append(
+                    (result["paper_id"], result["summary"], result["paper_title"])
                 )
+                if self.log_callback:
+                    self.log_callback(
+                        tracking["operation_prefix"],
+                        f"Successfully generated summary for '{result['paper_title']}'",
+                    )
 
-            tracking["completed"] += 1
             self._check_completion(tracking)
 
         self.background_service.run_operation(
@@ -2711,85 +2695,96 @@ class LLMSummaryService:
 
     def _check_completion(self, tracking):
         """Check if all summaries are complete and process the queue."""
-        # Update status
-        if tracking["completed"] >= tracking["total"]:
-            # All completed - process queue
-            if tracking["queue"]:
-                if self.log_callback:
-                    self.log_callback(
-                        f"{tracking['operation_prefix']}_queue_processing",
-                        f"Processing queue with {len(tracking['queue'])} summaries to save",
-                    )
-
-                def process_queue():
-                    for paper_id, summary, paper_title in tracking["queue"]:
-                        try:
-                            updated_paper, error_msg = self.paper_service.update_paper(
-                                paper_id, {"notes": summary}
-                            )
-
-                            if updated_paper and not error_msg:
-                                if self.log_callback:
-                                    self.log_callback(
-                                        f"{tracking['operation_prefix']}_saved_{paper_id}",
-                                        f"Summary saved to database for: {paper_title[:50]}...",
-                                    )
-                            else:
-                                if self.log_callback:
-                                    self.log_callback(
-                                        f"{tracking['operation_prefix']}_save_error_{paper_id}",
-                                        f"Failed to save summary for {paper_title[:50]}...: {error_msg or 'Unknown error'}",
-                                    )
-                        except Exception as e:
-                            if self.log_callback:
-                                self.log_callback(
-                                    f"{tracking['operation_prefix']}_save_exception_{paper_id}",
-                                    f"Exception saving summary for {paper_title[:50]}...: {e}",
-                                )
-
-                    # Schedule UI update
-                    def update_ui():
-                        if self.background_service.status_bar:
-                            if tracking["total"] == 1:
-                                self.background_service.status_bar.set_success(
-                                    "Summary generated and saved successfully"
-                                )
-                            else:
-                                self.background_service.status_bar.set_success(
-                                    f"All {tracking['total']} summaries generated and saved successfully"
-                                )
-
-                        # Call completion callback
-                        if tracking["on_all_complete"]:
-                            tracking["on_all_complete"](tracking)
-
-                        get_app().invalidate()
-
-                    get_app().loop.call_soon_threadsafe(update_ui)
-
-                # Process in background
-                threading.Thread(target=process_queue, daemon=True).start()
-            else:
-                # No summaries to save
-                if self.background_service.status_bar:
-                    self.background_service.status_bar.set_success(
-                        "Summary generation completed"
-                    )
-                if tracking["on_all_complete"]:
-                    tracking["on_all_complete"](tracking)
-        else:
+        if tracking["completed"] < tracking["total"]:
             # Still in progress
             if self.background_service.status_bar:
-                if tracking["total"] == 1:
-                    self.background_service.status_bar.set_status(
-                        "Generating summary...", "loading"
+                status_msg = f"Generating summaries... ({tracking['completed']}/{tracking['total']} completed)"
+                self.background_service.status_bar.set_status(status_msg, "loading")
+            return
+
+        # All operations are complete, now process results
+        success_count = len(tracking["queue"])
+        failed_count = len(tracking["failed"])
+
+        if success_count > 0:
+            # Process successful summaries
+            self._process_summary_queue(tracking)
+        else:
+            # No successful summaries, just show final status
+            self._finalize_status(tracking)
+
+    def _process_summary_queue(self, tracking):
+        """Process the queue of successfully generated summaries."""
+        if self.log_callback:
+            self.log_callback(
+                f"{tracking['operation_prefix']}_queue_processing",
+                f"Processing queue with {len(tracking['queue'])} summaries to save",
+            )
+
+        def process_queue():
+            for paper_id, summary, paper_title in tracking["queue"]:
+                try:
+                    updated_paper, error_msg = self.paper_service.update_paper(
+                        paper_id, {"notes": summary}
+                    )
+                    if error_msg:
+                        if self.log_callback:
+                            self.log_callback(
+                                f"{tracking['operation_prefix']}_save_error_{paper_id}",
+                                f"Failed to save summary for {paper_title[:50]}...: {error_msg}",
+                            )
+                except Exception as e:
+                    if self.log_callback:
+                        self.log_callback(
+                            f"{tracking['operation_prefix']}_save_exception_{paper_id}",
+                            f"Exception saving summary for {paper_title[:50]}...: {e}",
+                        )
+
+            # Schedule UI update after processing the whole queue
+            get_app().loop.call_soon_threadsafe(lambda: self._finalize_status(tracking))
+
+        # Process in background
+        threading.Thread(target=process_queue, daemon=True).start()
+
+    def _finalize_status(self, tracking):
+        """Set the final status message based on the outcome."""
+        success_count = len(tracking["queue"])
+        failed_count = len(tracking["failed"])
+        total_count = tracking["total"]
+
+        if self.background_service.status_bar:
+            if total_count == 1:
+                if success_count == 1:
+                    self.background_service.status_bar.set_success(
+                        "Summary generated and saved successfully"
+                    )
+                else:
+                    self.background_service.status_bar.set_error(
+                        "Failed to generate summary"
+                    )
+            else:
+                if success_count > 0 and failed_count > 0:
+                    self.background_service.status_bar.set_warning(
+                        f"Completed: {success_count} succeeded, {failed_count} failed"
+                    )
+                elif success_count > 0:
+                    self.background_service.status_bar.set_success(
+                        f"All {success_count} summaries generated and saved successfully"
+                    )
+                elif failed_count > 0:
+                    self.background_service.status_bar.set_error(
+                        f"Failed to generate summaries for all {failed_count} papers"
                     )
                 else:
                     self.background_service.status_bar.set_status(
-                        f"Generating summaries... ({tracking['completed']}/{tracking['total']} completed)",
-                        "loading",
+                        "Summary generation finished with no results"
                     )
 
+        # Call completion callback
+        if tracking["on_all_complete"]:
+            tracking["on_all_complete"](tracking)
+
+        get_app().invalidate()
 
 class PDFMetadataExtractionService:
     """Service for extracting metadata from PDF files for multiple papers."""
@@ -2844,7 +2839,7 @@ class PDFMetadataExtractionService:
             if tracking["total"] == 1:
                 title = papers_with_pdfs[0].title[:50]
                 self.background_service.status_bar.set_status(
-                    f"Extracting metadata from '{title}...'", "loading"
+                    f"Extracting metadata from '{title}'...", "loading"
                 )
             else:
                 self.background_service.status_bar.set_status(
@@ -2915,6 +2910,12 @@ class PDFMetadataExtractionService:
                             "extract_error",
                             f"Failed to extract from {paper.title}: {e}",
                         )
+                    # Display error in status bar
+                    if self.background_service.status_bar:
+                        self.background_service.status_bar.set_error(
+                            f"Error extracting from {paper.title}..."
+                        )
+                    return  # Stop further processing
 
             # Show confirmation dialog if there are changes
             if not all_changes:

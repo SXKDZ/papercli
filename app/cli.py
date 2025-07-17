@@ -235,73 +235,73 @@ PaperCLI Help
 
 Core Commands:
 --------------
-/add      Open add dialog or add paper directly (e.g., /add arxiv 2307.10635)
-/filter   Filter papers by criteria or search all fields (e.g., /filter all keyword)
-/sort     Open sort dialog or sort directly (e.g., /sort title asc)
-/all      Show all papers in the database
-/select   Enter multi-selection mode to act on multiple papers
-/clear    Clear all selected papers
-/help     Show this help panel
-/log      Show the error log panel
-/exit     Exit the application (or press Ctrl+C)
+/add           Open add dialog or add paper directly (e.g., /add arxiv 2307.10635)
+/filter        Filter papers by criteria or search all fields (e.g., /filter all keyword)
+/sort          Open sort dialog or sort directly (e.g., /sort title asc)
+/all           Show all papers in the database
+/select        Enter multi-selection mode to act on multiple papers
+/clear         Clear all selected papers
+/help          Show this help panel
+/log           Show the error log panel
+/exit          Exit the application (or press Ctrl+C)
 
 Paper Operations (work on the paper under the cursor ► or selected papers ✓):
 -----------------------------------------------------------------------------
 /chat             Open chat window with ChatGPT (local interface)
 /chat [provider]  Open browser-based chat interface
-  claude        Open Claude AI in browser
-  chatgpt       Open ChatGPT in browser  
-  gemini        Open Google Gemini in browser
-/edit     Open edit dialog or edit field directly (e.g., /edit title ...)
-/open     Open the PDF for the paper(s)
-/detail   Show detailed metadata for the paper(s)
-/export   Export paper(s) to a file or clipboard (BibTeX, Markdown, etc.)
-/delete   Delete the paper(s) from the library
+  claude          Open Claude AI in browser
+  chatgpt         Open ChatGPT in browser  
+  gemini          Open Google Gemini in browser
+/edit             Open edit dialog or edit field directly (e.g., /edit title ...)
+/open             Open the PDF for the paper(s)
+/detail           Show detailed metadata for the paper(s)
+/export           Export paper(s) to a file or clipboard (BibTeX, Markdown, etc.)
+/delete           Delete the paper(s) from the library
 
 Collection Management:
 ---------------------
-/collect       Manage collections
-/collect purge Delete all empty collections
-/add-to        Add selected paper(s) to a collection
-/remove-from   Remove selected paper(s) from a collection
+/collect          Manage collections
+/collect purge    Delete all empty collections
+/add-to           Add selected paper(s) to a collection
+/remove-from      Remove selected paper(s) from a collection
 
 System Commands:
 ---------------
-/doctor      Diagnose and fix database/system issues
-  diagnose   Run full diagnostic check (default)
-  clean      Clean orphaned database records and PDF files
-  help       Show doctor command help
-/version     Show version info and check for updates
-  check      Check for available updates
-  update     Update to latest version (if possible)
-  info       Show detailed version information
+/doctor           Diagnose and fix database/system issues
+  diagnose        Run full diagnostic check (default)
+  clean           Clean orphaned database records and PDF files
+  help            Show doctor command help
+/version          Show version info and check for updates
+  check           Check for available updates
+  update          Update to latest version (if possible)
+  info            Show detailed version information
 
 Navigation & Interaction:
 -------------------------
-↑/↓       Navigate the paper list or scroll panels
-PageUp/↓  Scroll panels by a full page
-Space     Toggle selection for a paper (only in /select mode)
-Enter     Execute a command from the input bar
-ESC       Close panels (Help, Error), exit selection mode, or clear input
-Tab       Trigger and cycle through auto-completions
+↑/↓               Navigate the paper list or scroll panels
+PageUp/↓          Scroll panels by a full page
+Space             Toggle selection for a paper (only in /select mode)
+Enter             Execute a command from the input bar
+ESC               Close panels (Help, Error), exit selection mode, or clear input
+Tab               Trigger and cycle through auto-completions
 
 Chat Interface Shortcuts (when using /chat):
 --------------------------------------------
-Enter     Send message
-Ctrl+J    Insert newline in message
-Ctrl+S    Send message (alternative)
-↑/↓       Navigate input history (when focused on input)
-↑/↓       Scroll chat display (when focused on chat)
-PageUp/↓  Scroll chat display by page
-ESC       Close chat interface
+Enter             Send message
+Ctrl+J            Insert newline in message
+Ctrl+S            Send message (alternative)
+↑/↓               Navigate input history (when focused on input)
+↑/↓               Scroll chat display by page
+PageUp/↓          Scroll chat display by page
+ESC               Close chat interface
 
 Indicators (in the first column):
 ---------------------------------
-►         Indicates the current line (cursor).
-  ✓       Indicates a selected paper.
-  □       Indicates an unselected paper (in /select mode).
-► ✓       Indicates that the current line is also selected.
-► □       Indicates the current line is not selected (in /select mode).
+►                 Indicates the current line (cursor).
+  ✓               Indicates a selected paper.
+  □               Indicates an unselected paper (in /select mode).
+► ✓               Indicates that the current line is also selected.
+► □               Indicates the current line is not selected (in /select mode).
 """
 
     def __init__(self, db_path: str):
@@ -509,7 +509,7 @@ The doctor command helps maintain database health by:
         if "disk_space" in sys_checks and "free_mb" in sys_checks["disk_space"]:
             lines.append(f"  Free disk space: {sys_checks['disk_space']['free_mb']} MB")
 
-        lines.extend(["", "🖥️  TERMINAL SETUP:"])
+        lines.extend(["", "🖥️ TERMINAL SETUP:"])
         term_checks = report["terminal_checks"]
         lines.extend(
             [
@@ -674,17 +674,6 @@ The doctor command helps maintain database health by:
         # Command input
         @self.kb.add("enter")
         def handle_enter(event):
-            # If an edit dialog is open and a multiline TextArea is focused, insert a newline.
-            if self.edit_dialog and hasattr(event.app.layout.current_control, "buffer"):
-                current_buffer = event.app.layout.current_control.buffer
-                if (
-                    current_buffer
-                    in [f.buffer for f in self.edit_dialog.input_fields.values()]
-                    and current_buffer.multiline()
-                ):
-                    current_buffer.insert_text("\n")
-                    return  # Consume the event
-
             # If completion menu is open and a completion is selected, accept it
             if (
                 self.input_buffer.complete_state
@@ -3080,10 +3069,10 @@ The doctor command helps maintain database health by:
                 "add_to_collection",
                 f"Added {added_count} paper(s) to '{collection_name}': {', '.join(paper_titles)}",
             )
+            self.load_papers()
             self.status_bar.set_success(
                 f"Added {added_count} paper(s) to collection '{collection_name}'."
             )
-            self.load_papers()
         else:
             self.status_bar.set_status(
                 "No papers were added to the collection (they may have already been in it)."
@@ -3120,10 +3109,10 @@ The doctor command helps maintain database health by:
                 "remove_from_collection",
                 f"Removed {removed_count} paper(s) from '{collection_name}': {', '.join(paper_titles)}",
             )
+            self.load_papers()
             self.status_bar.set_success(
                 f"Removed {removed_count} paper(s) from collection '{collection_name}'."
             )
-            self.load_papers()
         elif not errors:
             self.status_bar.set_status("No papers were removed from the collection.")
 
