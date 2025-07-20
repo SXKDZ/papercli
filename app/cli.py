@@ -63,7 +63,8 @@ from .version import VersionManager, get_version
 class SmartCompleter(Completer):
     """Smart command completer with subcommand and description support."""
 
-    def __init__(self):
+    def __init__(self, cli=None):
+        self.cli = cli
         self.commands = {
             "/add": {
                 "description": "Open add dialog or add paper directly (e.g., /add arxiv 2307.10635)",
@@ -200,6 +201,58 @@ class SmartCompleter(Completer):
                         display_meta=data["description"],
                     )
 
+        # Collection name completion for /add-to and /remove-from
+        elif len(words) >= 1 and words[0] in ["/add-to", "/remove-from"]:
+            if not self.cli:
+                return
+            
+            # Get the partial collection name (everything after the command)
+            partial_name = " ".join(words[1:]) if len(words) > 1 else ""
+            if text.endswith(" ") and len(words) > 1:
+                partial_name = ""
+            
+            try:
+                collections = self.cli.collection_service.get_all_collections()
+                
+                if words[0] == "/remove-from":
+                    # For /remove-from, prioritize collections containing selected papers
+                    selected_papers = self.cli._get_target_papers()
+                    paper_ids = {p.id for p in selected_papers}
+                    
+                    # Separate collections into those containing papers and those that don't
+                    containing_collections = []
+                    other_collections = []
+                    
+                    for collection in collections:
+                        collection_paper_ids = {p.id for p in collection.papers}
+                        if paper_ids.intersection(collection_paper_ids):
+                            containing_collections.append(collection)
+                        else:
+                            other_collections.append(collection)
+                    
+                    # Yield containing collections first, then others
+                    all_ordered_collections = containing_collections + other_collections
+                else:
+                    # For /add-to, use normal order
+                    all_ordered_collections = collections
+                
+                for collection in all_ordered_collections:
+                    if collection.name.lower().startswith(partial_name.lower()):
+                        # Calculate the correct start position
+                        if text.endswith(" ") and len(words) == 1:
+                            start_pos = 0
+                        else:
+                            start_pos = -len(partial_name)
+                        
+                        yield Completion(
+                            collection.name,
+                            start_position=start_pos,
+                            display_meta=f"Collection ({len(collection.papers)} papers)"
+                        )
+            except Exception:
+                # Silently fail if collections can't be loaded
+                pass
+
         # Completion for subcommands
         elif len(words) == 1 and text.endswith(" "):
             cmd = words[0]
@@ -322,7 +375,7 @@ Indicators (in the first column):
         self.background_service = None
 
         # UI state
-        self.smart_completer = SmartCompleter()
+        self.smart_completer = SmartCompleter(cli=self)
         self.current_papers: List[Paper] = []
         self.paper_list_control = PaperListControl([])
         self.status_bar = StatusBar()
