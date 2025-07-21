@@ -36,7 +36,7 @@ from prompt_toolkit.widgets import Button, Dialog, Frame, Label
 from .add_dialog import AddDialog
 from .chat_dialog import ChatDialog
 from .collect_dialog import CollectDialog
-from .database import get_pdf_directory
+from .database import get_db_session, get_pdf_directory
 from .edit_dialog import EditDialog
 from .filter_dialog import FilterDialog
 from .models import Paper
@@ -54,6 +54,7 @@ from .services import (
     PDFMetadataExtractionService,
     SearchService,
     SystemService,
+    normalize_paper_data,
 )
 from .sort_dialog import SortDialog
 from .ui_components import ErrorPanel, PaperListControl, StatusBar
@@ -73,6 +74,7 @@ class SmartCompleter(Completer):
                     "arxiv": "Add from an arXiv ID (e.g., 2307.10635)",
                     "dblp": "Add from a DBLP URL",
                     "openreview": "Add from an OpenReview ID (e.g., bq1JEgioLr)",
+                    "doi": "Add from a DOI (e.g., 10.1000/example)",
                     "bib": "Add papers from a BibTeX (.bib) file",
                     "ris": "Add papers from a RIS (.ris) file",
                     "manual": "Add a paper with manual entry",
@@ -134,6 +136,7 @@ class SmartCompleter(Completer):
                 "description": "Export selected paper(s) to a file or clipboard",
                 "subcommands": {
                     "bibtex": "Export to BibTeX format",
+                    "ieee": "Export to IEEE reference format",
                     "markdown": "Export to Markdown format",
                     "html": "Export to HTML format",
                     "json": "Export to JSON format",
@@ -205,54 +208,58 @@ class SmartCompleter(Completer):
         elif len(words) >= 1 and words[0] in ["/add-to", "/remove-from"]:
             if not self.cli:
                 return
-            
+
             # Get the partial collection name (the current word being typed)
             if text.endswith(" "):
                 partial_name = ""
             else:
                 partial_name = words[-1] if len(words) > 1 else ""
-            
+
             # Get already typed collection names to exclude them from completion
-            already_typed = set(words[1:-1]) if len(words) > 2 and not text.endswith(" ") else set(words[1:])
-            
+            already_typed = (
+                set(words[1:-1])
+                if len(words) > 2 and not text.endswith(" ")
+                else set(words[1:])
+            )
+
             try:
                 collections = self.cli.collection_service.get_all_collections()
-                
+
                 if words[0] == "/remove-from":
                     # For /remove-from, prioritize collections containing selected papers
                     selected_papers = self.cli._get_target_papers()
                     paper_ids = {p.id for p in selected_papers}
-                    
+
                     # Separate collections into those containing papers and those that don't
                     containing_collections = []
                     other_collections = []
-                    
+
                     for collection in collections:
                         collection_paper_ids = {p.id for p in collection.papers}
                         if paper_ids.intersection(collection_paper_ids):
                             containing_collections.append(collection)
                         else:
                             other_collections.append(collection)
-                    
+
                     # Yield containing collections first, then others
                     all_ordered_collections = containing_collections + other_collections
                 else:
                     # For /add-to, use normal order
                     all_ordered_collections = collections
-                
+
                 for collection in all_ordered_collections:
                     # Skip collections that have already been typed
                     if collection.name in already_typed:
                         continue
-                        
+
                     if collection.name.lower().startswith(partial_name.lower()):
                         # Calculate the correct start position
                         start_pos = -len(partial_name)
-                        
+
                         yield Completion(
                             collection.name,
                             start_position=start_pos,
-                            display_meta=f"Collection ({len(collection.papers)} papers)"
+                            display_meta=f"Collection ({len(collection.papers)} papers)",
                         )
             except Exception:
                 # Silently fail if collections can't be loaded
@@ -374,7 +381,7 @@ Indicators (in the first column):
         self.export_service = ExportService()
         self.chat_service = ChatService(self._add_log)
         self.system_service = SystemService()
-        self.db_health_service = DatabaseHealthService()
+        self.db_health_service = DatabaseHealthService(log_callback=self._add_log)
 
         # Background operation service (initialized after status_bar)
         self.background_service = None
@@ -460,14 +467,16 @@ Indicators (in the first column):
                 if total_cleaned_records > 0 or total_cleaned_pdfs > 0:
                     details = []
                     if total_cleaned_records > 0:
-                        details.append(f"• Records: {total_cleaned_records}")
+                        details.append(f"Records: {total_cleaned_records}")
                     if total_cleaned_pdfs > 0:
-                        details.append(f"• PDF files: {total_cleaned_pdfs}")
+                        details.append(f"PDF files: {total_cleaned_pdfs}")
 
-                    # Log detailed cleanup results
-                    self._add_log("database_cleanup", "Database cleanup completed:")
-                    for detail in details:
-                        self._add_log("database_cleanup", detail)
+                    # Log detailed cleanup results on one line
+                    cleanup_details = " • ".join(details)
+                    self._add_log(
+                        "database_cleanup",
+                        f"Database cleanup completed: {cleanup_details}",
+                    )
 
                     # Show cleanup results in status bar
                     cleanup_summary = []
@@ -688,6 +697,75 @@ The doctor command helps maintain database health by:
                 # Otherwise, navigate the paper list
                 self.paper_list_control.move_down()
                 event.app.invalidate()
+
+        # Page navigation keys
+        @self.kb.add(
+            "pageup",
+            filter=~has_focus(self.help_control)
+            & ~has_focus(self.details_control)
+            & Condition(
+                lambda: self.edit_dialog is None
+                or not (
+                    hasattr(get_app().layout.current_control, "buffer")
+                    and get_app().layout.current_control.buffer
+                    in [f.buffer for f in self.edit_dialog.input_fields.values()]
+                )
+            ),
+        )
+        def move_page_up(event):
+            self.paper_list_control.move_page_up()
+            event.app.invalidate()
+
+        @self.kb.add(
+            "pagedown",
+            filter=~has_focus(self.help_control)
+            & ~has_focus(self.details_control)
+            & Condition(
+                lambda: self.edit_dialog is None
+                or not (
+                    hasattr(get_app().layout.current_control, "buffer")
+                    and get_app().layout.current_control.buffer
+                    in [f.buffer for f in self.edit_dialog.input_fields.values()]
+                )
+            ),
+        )
+        def move_page_down(event):
+            self.paper_list_control.move_page_down()
+            event.app.invalidate()
+
+        @self.kb.add(
+            "home",
+            filter=~has_focus(self.help_control)
+            & ~has_focus(self.details_control)
+            & Condition(
+                lambda: self.edit_dialog is None
+                or not (
+                    hasattr(get_app().layout.current_control, "buffer")
+                    and get_app().layout.current_control.buffer
+                    in [f.buffer for f in self.edit_dialog.input_fields.values()]
+                )
+            ),
+        )
+        def move_to_top(event):
+            self.paper_list_control.move_to_top()
+            event.app.invalidate()
+
+        @self.kb.add(
+            "end",
+            filter=~has_focus(self.help_control)
+            & ~has_focus(self.details_control)
+            & Condition(
+                lambda: self.edit_dialog is None
+                or not (
+                    hasattr(get_app().layout.current_control, "buffer")
+                    and get_app().layout.current_control.buffer
+                    in [f.buffer for f in self.edit_dialog.input_fields.values()]
+                )
+            ),
+        )
+        def move_to_bottom(event):
+            self.paper_list_control.move_to_bottom()
+            event.app.invalidate()
 
         # Selection (in select mode) - smart space key handling
         @self.kb.add(
@@ -1589,6 +1667,8 @@ The doctor command helps maintain database health by:
                     )  # Support URLs with parameters
                 elif args[0] == "openreview" and len(args) > 1:
                     self._quick_add_openreview(args[1])
+                elif args[0] == "doi" and len(args) > 1:
+                    self._quick_add_doi(" ".join(args[1:]))
                 elif args[0] == "pdf" and len(args) > 1:
                     self._quick_add_pdf(" ".join(args[1:]))
                 elif args[0] == "bib" and len(args) > 1:
@@ -1599,7 +1679,7 @@ The doctor command helps maintain database health by:
                     self._add_manual_paper()
                 else:
                     self.status_bar.set_status(
-                        "Usage: /add [arxiv <id>|dblp <url>|openreview <id>|pdf <path>|bib <path>|ris <path>|manual]",
+                        "Usage: /add [arxiv <id>|dblp <url>|openreview <id>|doi <doi>|pdf <path>|bib <path>|ris <path>|manual]",
                         "info",
                     )
             else:
@@ -1620,6 +1700,7 @@ The doctor command helps maintain database health by:
             paper_data = {
                 "title": metadata["title"],
                 "abstract": metadata.get("abstract", ""),
+                "authors": metadata.get("authors", ""),
                 "year": metadata.get("year"),
                 "venue_full": metadata.get("venue_full", ""),
                 "venue_acronym": metadata.get("venue_acronym", ""),
@@ -1629,18 +1710,24 @@ The doctor command helps maintain database health by:
                 "url": f"https://arxiv.org/pdf/{arxiv_id}.pdf",
             }
 
+            paper_data = normalize_paper_data(paper_data)
+
             # Add to database first (without PDF)
-            authors = metadata.get("authors", [])
+            authors = paper_data.pop("authors", [])
             collections = []
 
             paper = self.paper_service.add_paper_from_metadata(
                 paper_data, authors, collections
             )
 
-            # Download PDF
+            # Download PDF - create paper_data with authors for filename generation
             pdf_dir = get_pdf_directory()
+            paper_data_for_pdf = paper_data.copy()
+            paper_data_for_pdf["authors"] = (
+                authors  # Restore authors for filename generation
+            )
             pdf_path, pdf_error = self.system_service.download_pdf(
-                "arxiv", arxiv_id, pdf_dir, paper_data
+                "arxiv", arxiv_id, pdf_dir, paper_data_for_pdf
             )
 
             return {"paper": paper, "pdf_path": pdf_path, "pdf_error": pdf_error}
@@ -1660,22 +1747,26 @@ The doctor command helps maintain database health by:
 
             if pdf_path:
                 self._add_log("add_arxiv", f"PDF download successful: {pdf_path}")
-                # Update paper with local PDF path
-                updated_paper, update_error = self.paper_service.update_paper(
-                    paper.id, {"pdf_path": pdf_path}
-                )
-                if update_error:
+                # Update paper with local PDF path in database only (no file processing)
+                try:
+                    # Direct database update to avoid duplicate PDF processing
+                    with get_db_session() as session:
+                        paper_obj = session.get(Paper, paper.id)
+                        if paper_obj:
+                            paper_obj.pdf_path = pdf_path
+                            session.commit()
+                            self._add_log(
+                                "add_arxiv",
+                                f"Database updated with PDF path: {pdf_path}",
+                            )
+                except Exception as e:
                     self.status_bar.set_error(
-                        f"Failed to update PDF path for '{paper.title}': {update_error}"
+                        f"Failed to update PDF path for '{paper.title}': {e}"
                     )
                     self.show_error_panel_with_message(
                         "Database Update Error",
                         f"Failed to update PDF path for '{paper.title}'",
-                        str(update_error),
-                    )
-                else:
-                    self._add_log(
-                        "add_arxiv", f"Database updated with PDF path: {pdf_path}"
+                        str(e),
                     )
             else:
                 # Continue without PDF but show warning
@@ -1713,6 +1804,7 @@ The doctor command helps maintain database health by:
             paper_data = {
                 "title": metadata.get("title", "Unknown Title"),
                 "abstract": metadata.get("abstract", ""),
+                "authors": metadata.get("authors", ""),
                 "year": metadata.get("year"),
                 "venue_full": metadata.get("venue_full", ""),
                 "venue_acronym": metadata.get("venue_acronym", ""),
@@ -1721,8 +1813,10 @@ The doctor command helps maintain database health by:
                 "url": metadata.get("url", dblp_url),
             }
 
+            paper_data = normalize_paper_data(paper_data)
+
             # Add to database
-            authors = metadata.get("authors", [])
+            authors = paper_data.pop("authors", [])
             collections = []
 
             paper = self.paper_service.add_paper_from_metadata(
@@ -1767,6 +1861,7 @@ The doctor command helps maintain database health by:
             paper_data = {
                 "title": metadata.get("title", "Unknown Title"),
                 "abstract": metadata.get("abstract", ""),
+                "authors": metadata.get("authors", ""),
                 "year": metadata.get("year"),
                 "venue_full": metadata.get("venue_full", ""),
                 "venue_acronym": metadata.get("venue_acronym", ""),
@@ -1777,8 +1872,10 @@ The doctor command helps maintain database health by:
                 ),
             }
 
+            paper_data = normalize_paper_data(paper_data)
+
             # Add to database
-            authors = metadata.get("authors", [])
+            authors = paper_data.pop("authors", [])
             collections = []
 
             paper = self.paper_service.add_paper_from_metadata(
@@ -1885,6 +1982,7 @@ The doctor command helps maintain database health by:
             paper_data = {
                 "title": metadata.get("title", "Unknown Title"),
                 "abstract": metadata.get("abstract", ""),
+                "authors": metadata.get("authors", ""),
                 "year": metadata.get("year"),
                 "venue_full": metadata.get("venue_full", ""),
                 "venue_acronym": metadata.get("venue_acronym", ""),
@@ -1894,8 +1992,10 @@ The doctor command helps maintain database health by:
                 "pdf_path": target_path,
             }
 
-            # Add to database
-            authors = metadata.get("authors", [])
+            paper_data = normalize_paper_data(paper_data)
+
+            # Extract normalized authors
+            authors = paper_data.pop("authors", [])
             collections = []
 
             paper = self.paper_service.add_paper_from_metadata(
@@ -1961,6 +2061,7 @@ The doctor command helps maintain database health by:
                 paper_data = {
                     "title": metadata.get("title", "Unknown Title"),
                     "abstract": metadata.get("abstract", ""),
+                    "authors": metadata.get("authors", ""),
                     "year": metadata.get("year"),
                     "venue_full": metadata.get("venue_full", ""),
                     "venue_acronym": metadata.get("venue_acronym", ""),
@@ -1975,8 +2076,11 @@ The doctor command helps maintain database health by:
                     "pages": metadata.get("pages"),
                 }
 
+                # Normalize paper data for database storage
+                paper_data = normalize_paper_data(paper_data)
+
                 # Add to database
-                authors = metadata.get("authors", [])
+                authors = paper_data.pop("authors", [])
                 collections = []
 
                 try:
@@ -2036,6 +2140,7 @@ The doctor command helps maintain database health by:
                 paper_data = {
                     "title": metadata.get("title", "Unknown Title"),
                     "abstract": metadata.get("abstract", ""),
+                    "authors": metadata.get("authors", ""),
                     "year": metadata.get("year"),
                     "venue_full": metadata.get("venue_full", ""),
                     "venue_acronym": metadata.get("venue_acronym", ""),
@@ -2050,8 +2155,11 @@ The doctor command helps maintain database health by:
                     "pages": metadata.get("pages"),
                 }
 
+                # Normalize paper data for database storage
+                paper_data = normalize_paper_data(paper_data)
+
                 # Add to database
-                authors = metadata.get("authors", [])
+                authors = paper_data.pop("authors", [])
                 collections = []
 
                 try:
@@ -2098,6 +2206,9 @@ The doctor command helps maintain database health by:
                 "notes": "Added manually - please update metadata",
             }
 
+            # Normalize paper data for database storage
+            paper_data = normalize_paper_data(paper_data)
+
             authors = ["Manual User"]
             collections = []
 
@@ -2119,6 +2230,64 @@ The doctor command helps maintain database health by:
                 "Failed to add manual paper",
                 traceback.format_exc(),
             )
+
+    def _quick_add_doi(self, doi: str):
+        """Quickly add a paper from DOI using background operation."""
+
+        def complete_doi_operation():
+            # Extract metadata from DOI using Crossref API
+            metadata = self.metadata_extractor.extract_from_doi(doi)
+
+            # Prepare paper data
+            paper_data = {
+                "title": metadata.get("title", "Unknown Title"),
+                "abstract": metadata.get("abstract", ""),
+                "authors": metadata.get("authors", ""),
+                "year": metadata.get("year"),
+                "venue_full": metadata.get("venue_full", ""),
+                "venue_acronym": metadata.get("venue_acronym", ""),
+                "paper_type": metadata.get("paper_type", "journal"),
+                "doi": metadata.get("doi"),
+                "url": metadata.get("url", ""),
+                "volume": metadata.get("volume"),
+                "issue": metadata.get("issue"),
+                "pages": metadata.get("pages"),
+            }
+            paper_data = normalize_paper_data(paper_data)
+
+            # Add to database
+            authors = paper_data.pop("authors", [])
+            collections = []
+
+            paper = self.paper_service.add_paper_from_metadata(
+                paper_data, authors, collections
+            )
+
+            return {"paper": paper}
+
+        def on_doi_complete(result, error):
+            if error:
+                self.show_error_panel_with_message(
+                    "Add DOI Paper Error",
+                    f"Failed to add DOI paper: {doi}",
+                    str(error),
+                )
+                return
+
+            paper = result["paper"]
+
+            # Refresh display
+            self.load_papers()
+            self._add_log("add_doi", f"Added DOI paper '{paper.title}'")
+            self.status_bar.set_success(f"Added: {paper.title[:50]}...")
+
+        # Run in background
+        self.background_service.run_operation(
+            operation_func=complete_doi_operation,
+            operation_name="add_doi",
+            initial_message=f"Fetching DOI paper {doi}...",
+            on_complete=on_doi_complete,
+        )
 
     def handle_filter_command(self, args: List[str]):
         """Handle /filter command."""
@@ -2377,7 +2546,12 @@ The doctor command helps maintain database health by:
                         self.status_bar.set_error("Year must be a number")
                         return
 
-                updates = {field: value}
+                # Apply normalization to the update
+                temp_data = {field: value}
+                normalized_data = normalize_paper_data(temp_data)
+                normalized_value = normalized_data.get(field, value)
+
+                updates = {field: normalized_value}
                 self.status_bar.set_status(
                     f"Updating {len(papers_to_update)} paper(s)...", "edit"
                 )
@@ -2553,9 +2727,9 @@ The doctor command helps maintain database health by:
             log_callback=self._add_log,
         )
         summary_service.generate_summaries(
-            papers=papers, 
+            papers=papers,
             operation_prefix="summarize",
-            on_all_complete=lambda tracking: self.load_papers()
+            on_all_complete=lambda tracking: self.load_papers(),
         )
 
     def show_add_dialog(self):
@@ -2584,6 +2758,9 @@ The doctor command helps maintain database health by:
                         "arxiv",
                         "dblp",
                         "openreview",
+                        "doi",
+                        "bib",
+                        "ris",
                         "manual",
                     ]:
                         # Handle subcommand-style addition
@@ -2687,9 +2864,9 @@ The doctor command helps maintain database health by:
                 # Quick export: /export bibtex [filename]
                 export_format = args[0].lower()
 
-                if export_format not in ["bibtex", "markdown", "html", "json"]:
+                if export_format not in ["bibtex", "ieee", "markdown", "html", "json"]:
                     self.status_bar.set_status(
-                        "Usage: /export <format> [filename]. Formats: bibtex, markdown, html, json",
+                        "Usage: /export <format> [filename]. Formats: bibtex, ieee, markdown, html, json",
                         "info",
                     )
                     return
@@ -2710,7 +2887,7 @@ The doctor command helps maintain database health by:
             else:
                 # Show usage instead of interactive dialog
                 self.status_bar.set_status(
-                    "Usage: /export <format> [filename]. Formats: bibtex, markdown, html, json",
+                    "Usage: /export <format> [filename]. Formats: bibtex, ieee, markdown, html, json",
                     "info",
                 )
                 return
@@ -2723,6 +2900,8 @@ The doctor command helps maintain database health by:
 
             if export_format == "bibtex":
                 content = self.export_service.export_to_bibtex(papers_to_export)
+            elif export_format == "ieee":
+                content = self.export_service.export_to_ieee(papers_to_export)
             elif export_format == "markdown":
                 content = self.export_service.export_to_markdown(papers_to_export)
             elif export_format == "html":
@@ -3111,7 +3290,9 @@ The doctor command helps maintain database health by:
     def handle_add_to_command(self, args: List[str]):
         """Handle /add-to command."""
         if not args:
-            self.status_bar.set_error("Usage: /add-to <collection_name1> [collection_name2] ...")
+            self.status_bar.set_error(
+                "Usage: /add-to <collection_name1> [collection_name2] ..."
+            )
             return
 
         collection_names = args  # Each argument is a separate collection name
@@ -3122,7 +3303,7 @@ The doctor command helps maintain database health by:
 
         paper_ids = [p.id for p in papers_to_add]
         paper_titles = [p.title for p in papers_to_add]
-        
+
         successful_collections = []
         failed_collections = []
 
@@ -3154,7 +3335,7 @@ The doctor command helps maintain database health by:
                 self.status_bar.set_success(
                     f"Added {len(papers_to_add)} paper(s) to {len(successful_collections)} collections: {', '.join(successful_collections)}"
                 )
-        
+
         if failed_collections:
             if not successful_collections:
                 self.status_bar.set_error(
@@ -3168,7 +3349,9 @@ The doctor command helps maintain database health by:
     def handle_remove_from_command(self, args: List[str]):
         """Handle /remove-from command."""
         if not args:
-            self.status_bar.set_error("Usage: /remove-from <collection_name1> [collection_name2] ...")
+            self.status_bar.set_error(
+                "Usage: /remove-from <collection_name1> [collection_name2] ..."
+            )
             return
 
         collection_names = args  # Each argument is a separate collection name
@@ -3179,7 +3362,7 @@ The doctor command helps maintain database health by:
 
         paper_ids = [p.id for p in papers_to_remove]
         paper_titles = [p.title for p in papers_to_remove]
-        
+
         successful_collections = []
         failed_collections = []
         total_removed = 0
@@ -3187,14 +3370,18 @@ The doctor command helps maintain database health by:
 
         for collection_name in collection_names:
             try:
-                removed_count, errors = self.collection_service.remove_papers_from_collection(
-                    paper_ids, collection_name
+                removed_count, errors = (
+                    self.collection_service.remove_papers_from_collection(
+                        paper_ids, collection_name
+                    )
                 )
-                
+
                 if errors:
-                    all_errors.extend([f"{collection_name}: {error}" for error in errors])
+                    all_errors.extend(
+                        [f"{collection_name}: {error}" for error in errors]
+                    )
                     failed_collections.append(collection_name)
-                
+
                 if removed_count > 0:
                     total_removed += removed_count
                     successful_collections.append(collection_name)

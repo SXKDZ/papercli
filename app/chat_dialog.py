@@ -3,7 +3,11 @@ Chat dialog for interacting with LLMs about selected papers.
 """
 
 import os
+import platform
+import subprocess
 import threading
+from datetime import datetime
+from pathlib import Path
 from typing import Any, Callable, Dict, List
 
 import PyPDF2
@@ -213,9 +217,9 @@ class ChatDialog:
             handler=self._handle_send,
         )
 
-        self.close_button = Button(
-            text="Close",
-            handler=self._handle_close,
+        self.save_button = Button(
+            text="Save",
+            handler=self._handle_save,
         )
 
         # Button layout (vertical)
@@ -223,7 +227,7 @@ class ChatDialog:
             [
                 self.send_button,
                 Window(height=Dimension.exact(1)),  # Spacer
-                self.close_button,
+                self.save_button,
             ]
         )
 
@@ -262,7 +266,7 @@ class ChatDialog:
 
         @kb.add("c-s")
         def _(event):
-            self._handle_send()
+            self._handle_save()
 
         @kb.add("enter")
         def _(event):
@@ -631,6 +635,123 @@ IMPORTANT: Only provide information that is explicitly present in the paper info
                     "pdf_extract_error", f"Failed to extract PDF text: {e}"
                 )
             return ""
+
+    def _handle_save(self):
+        """Handle saving the chat to a file."""
+        try:
+            # Get data directory
+            data_dir_env = os.getenv("PAPERCLI_DATA_DIR")
+            if data_dir_env:
+                data_dir = Path(data_dir_env).expanduser().resolve()
+            else:
+                data_dir = Path.home() / ".papercli"
+            
+            # Create chats directory if it doesn't exist
+            chats_dir = data_dir / "chats"
+            chats_dir.mkdir(exist_ok=True, parents=True)
+            
+            # Generate filename with timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            paper_titles = []
+            for paper in self.papers:
+                title = getattr(paper, "title", "Unknown")
+                # Clean title for filename
+                clean_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).rstrip()
+                paper_titles.append(clean_title[:30])  # Limit length
+            
+            if paper_titles:
+                filename = f"chat_{timestamp}_{'-'.join(paper_titles[:2])}.md"
+            else:
+                filename = f"chat_{timestamp}.md"
+            
+            filepath = chats_dir / filename
+            
+            # Format chat content for file
+            content = self._format_chat_for_file()
+            
+            # Write to file
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(content)
+            
+            # Open file in system explorer/finder
+            self._open_file_in_explorer(filepath)
+            
+            # Log success
+            if self.log_callback:
+                self.log_callback("chat_save", f"Chat saved to: {filepath}")
+            
+            # Update status
+            if self.status_bar:
+                self.status_bar.set_success(f"Chat saved to {filepath.name}")
+            
+        except Exception as e:
+            # Log error
+            if self.log_callback:
+                self.log_callback("chat_save_error", f"Failed to save chat: {str(e)}")
+            
+            # Update status
+            if self.status_bar:
+                self.status_bar.set_error(f"Failed to save chat: {str(e)}")
+
+    def _format_chat_for_file(self) -> str:
+        """Format the chat history for saving to a file."""
+        lines = []
+        
+        # Add header
+        lines.append("# Chat Session")
+        lines.append(f"**Date**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        lines.append(f"**Model**: {self.model_name}")
+        lines.append("")
+        
+        # Add paper information
+        if self.papers:
+            lines.append("## Papers Discussed")
+            for i, paper in enumerate(self.papers, 1):
+                fields = self._get_paper_fields(paper)
+                lines.append(f"**Paper {i}**: {fields['title']}")
+                lines.append(f"- Authors: {fields['authors']}")
+                lines.append(f"- Venue: {fields['venue']} ({fields['year']})")
+                if fields['abstract']:
+                    lines.append(f"- Abstract: {fields['abstract']}")
+                lines.append("")
+        
+        # Add chat history
+        lines.append("## Chat History")
+        lines.append("")
+        
+        for entry in self.chat_history:
+            role = entry["role"]
+            content = entry["content"]
+            
+            if role == "user":
+                lines.append(f"**You**: {content}")
+            elif role == "assistant":
+                provider_name = self._get_provider_display_name()
+                lines.append(f"**{provider_name}**: {content}")
+            elif role == "system":
+                lines.append(f"**System**: {content}")
+            
+            lines.append("")
+        
+        return "\n".join(lines)
+
+    def _open_file_in_explorer(self, filepath: Path):
+        """Open the file in the system's default file explorer."""
+        try:
+            system = platform.system()
+            if system == "Darwin":  # macOS
+                # Use 'open' command to reveal file in Finder
+                subprocess.run(["open", "-R", str(filepath)], check=False)
+            elif system == "Windows":  # Windows
+                # Use 'explorer' command to select file in Explorer
+                subprocess.run(["explorer", "/select,", str(filepath)], check=False)
+            else:  # Linux and other Unix-like systems
+                # Try to open the directory containing the file
+                subprocess.run(["xdg-open", str(filepath.parent)], check=False)
+        except Exception as e:
+            # Log error but don't fail the save operation
+            if self.log_callback:
+                self.log_callback("explorer_open_error", f"Failed to open file in explorer: {str(e)}")
 
     def _handle_close(self):
         """Handle closing the dialog."""

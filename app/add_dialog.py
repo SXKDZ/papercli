@@ -30,6 +30,7 @@ class AddDialog:
             ("arxiv", "arXiv - Add from an arXiv ID (e.g., 2307.10635)"),
             ("dblp", "DBLP - Add from a DBLP URL"),
             ("openreview", "OpenReview - Add from an OpenReview ID (e.g., bq1JEgioLr)"),
+            ("doi", "DOI - Add from a DOI (e.g., 10.1000/example)"),
             ("bib", "BibTeX File - Add papers from a .bib file"),
             ("ris", "RIS File - Add papers from a .ris file"),
             ("pdf", "PDF File - Add from a local PDF file"),
@@ -70,6 +71,8 @@ class AddDialog:
                 return "DBLP URL:"
             elif source == "openreview":
                 return "OpenReview ID:"
+            elif source == "doi":
+                return "DOI:"
             elif source == "bib":
                 return "BibTeX Path:"
             elif source == "ris":
@@ -163,6 +166,10 @@ class AddDialog:
         kb = KeyBindings()
 
         @kb.add("c-s")
+        def _(event):
+            self._handle_add()
+
+        @kb.add("enter")
         def _(event):
             self._handle_add()
 

@@ -132,6 +132,27 @@ class PaperListControl:
         if self.selected_index < len(self.papers) - 1:
             self.selected_index += 1
 
+    def move_page_up(self):
+        """Move selection up by a page (approximately 10 items)."""
+        page_size = 10
+        new_index = max(0, self.selected_index - page_size)
+        self.selected_index = new_index
+
+    def move_page_down(self):
+        """Move selection down by a page (approximately 10 items)."""
+        page_size = 10
+        new_index = min(len(self.papers) - 1, self.selected_index + page_size)
+        self.selected_index = new_index
+
+    def move_to_top(self):
+        """Move selection to the first item."""
+        self.selected_index = 0
+
+    def move_to_bottom(self):
+        """Move selection to the last item."""
+        if self.papers:
+            self.selected_index = len(self.papers) - 1
+
     def toggle_selection(self):
         """Toggle selection of current paper (in select mode)."""
         if self.in_select_mode:

@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import threading
 import traceback
+import unicodedata
 import webbrowser
 import xml.etree.ElementTree as ET
 from datetime import datetime
@@ -23,6 +24,7 @@ import PyPDF2
 import pyperclip
 import requests
 import rispy
+from bibtexparser.customization import string_to_latex
 from fuzzywuzzy import fuzz
 from openai import OpenAI
 from prompt_toolkit.application import get_app
@@ -159,6 +161,137 @@ def compare_extracted_metadata_with_paper(extracted_data, paper, paper_service=N
                 changes.append(f"{paper_field}: '{current_value}' → '{value}'")
 
     return changes
+
+
+def normalize_author_names(author_list):
+    """Normalize author names from various formats.
+
+    Handles formats like:
+    - "Lastname, Firstname Middle, Lastname2, Firstname2" (comma-separated pairs)
+    - "Lastname, Firstname M., Lastname2, Firstname2 K." (with middle initials)
+    - ["Name1", "Name2"] (already split list)
+    - "Name1 and Name2" (BibTeX format)
+
+    Returns:
+        List of normalized "Firstname Middle Lastname" strings
+    """
+    if not author_list:
+        return []
+
+    # If it's a single string, handle different formats
+    if isinstance(author_list, str):
+        author_text = author_list.strip()
+        # Normalize whitespace and newlines in author string
+        author_text = re.sub(r'\s+', ' ', author_text)
+
+        # Check if it looks like "Lastname, Firstname, Lastname, Firstname" format
+        # This happens when comma-separated pairs without " and " separators
+        parts = [part.strip() for part in author_text.split(",")]
+
+        # If we have an even number of parts, try parsing as lastname-firstname pairs
+        if len(parts) >= 2 and len(parts) % 2 == 0:
+            # Check if this looks like lastname-firstname pairs
+            # Improved heuristic: check if alternating pattern makes sense
+            looks_like_lastname_firstname = True
+
+            for i in range(0, len(parts), 2):
+                if i + 1 < len(parts):
+                    potential_lastname = parts[i].strip()
+                    potential_firstname = parts[i + 1].strip()
+
+                    # Last names are usually single words or hyphenated
+                    lastname_words = potential_lastname.split()
+                    # First names can include middle names/initials
+                    firstname_words = potential_firstname.split()
+
+                    # If lastname has too many words or firstname is empty, probably not the right format
+                    if len(lastname_words) > 2 or len(firstname_words) == 0:
+                        looks_like_lastname_firstname = False
+                        break
+
+            if looks_like_lastname_firstname:
+                normalized_authors = []
+                for i in range(0, len(parts), 2):
+                    if i + 1 < len(parts):
+                        lastname = parts[i].strip()
+                        firstname_middle = parts[i + 1].strip()
+                        if lastname and firstname_middle:
+                            # Combine first name, middle names/initials, and last name
+                            normalized_authors.append(f"{firstname_middle} {lastname}")
+
+                if normalized_authors:
+                    return normalized_authors
+
+        # Fall back to standard BibTeX " and " splitting
+        if " and " in author_text:
+            authors = []
+            for author in author_text.split(" and "):
+                author = author.strip()
+                if author:
+                    # Check if this author is in "Lastname, Firstname" format
+                    if "," in author:
+                        parts = [p.strip() for p in author.split(",", 1)]
+                        if len(parts) == 2:
+                            lastname, firstname = parts
+                            author = f"{firstname} {lastname}"
+                    authors.append(author)
+            return authors
+        else:
+            # Single author or simple comma separation
+            if author_text:
+                # Check if single author is in "Lastname, Firstname" format
+                if "," in author_text:
+                    parts = [p.strip() for p in author_text.split(",", 1)]
+                    if len(parts) == 2:
+                        lastname, firstname = parts
+                        return [f"{firstname} {lastname}"]
+                return [author_text]
+            return []
+
+    # If it's already a list, just clean it up
+    elif isinstance(author_list, list):
+        return [str(author).strip() for author in author_list if str(author).strip()]
+
+    return []
+
+
+def normalize_paper_data(paper_data: dict) -> dict:
+    """Normalize paper data for database storage.
+
+    Applies various normalizations:
+    - Title: Fixes broken lines and converts to proper title case
+    - Pages: Converts double dashes (--) and en-dashes (–) to single dashes (-)
+    - Abstract: Fixes broken lines and formatting
+    - Authors: Normalizes author names to consistent format
+
+    Args:
+        paper_data: Dictionary containing paper fields
+
+    Returns:
+        Normalized paper data dictionary
+    """
+    normalized_data = paper_data.copy()
+
+    # Normalize title: fix broken lines and convert to title case
+    if normalized_data.get("title"):
+        normalized_data["title"] = fix_broken_lines(normalized_data["title"])
+        normalized_data["title"] = titlecase(normalized_data["title"])
+
+    # Normalize pages: convert double dashes and en-dashes to single dashes
+    if normalized_data.get("pages"):
+        normalized_data["pages"] = (
+            normalized_data["pages"].replace("--", "-").replace("–", "-")
+        )
+
+    # Normalize abstract: fix broken lines
+    if normalized_data.get("abstract"):
+        normalized_data["abstract"] = fix_broken_lines(normalized_data["abstract"])
+
+    # Normalize authors
+    if normalized_data.get("authors"):
+        normalized_data["authors"] = normalize_author_names(normalized_data["authors"])
+
+    return normalized_data
 
 
 class PaperService:
@@ -321,10 +454,18 @@ class PaperService:
                 return None, f"Failed to update paper: {str(e)}"
 
     def delete_paper(self, paper_id: int) -> bool:
-        """Delete a paper."""
+        """Delete a paper and its associated PDF file."""
         with get_db_session() as session:
             paper = session.query(Paper).filter(Paper.id == paper_id).first()
             if paper:
+                # Delete associated PDF file if it exists
+                if paper.pdf_path and os.path.exists(paper.pdf_path):
+                    try:
+                        os.remove(paper.pdf_path)
+                    except Exception:
+                        # Log this error, but don't prevent db deletion
+                        pass
+                
                 session.delete(paper)
                 session.commit()
                 return True
@@ -833,9 +974,9 @@ class MetadataExtractor:
 
     def extract_from_arxiv(self, arxiv_id: str) -> Dict[str, Any]:
         """Extract metadata from arXiv."""
-        # Clean arXiv ID
+        # Clean arXiv ID while preserving version numbers
         arxiv_id = re.sub(r"arxiv[:\s]*", "", arxiv_id, flags=re.IGNORECASE)
-        arxiv_id = re.sub(r"[^\d\.]", "", arxiv_id)
+        arxiv_id = re.sub(r"[^\d\.v]", "", arxiv_id)  # Allow digits, dots, and 'v' for versions
 
         try:
             url = f"http://export.arxiv.org/api/query?id_list={arxiv_id}"
@@ -901,7 +1042,7 @@ class MetadataExtractor:
             return {
                 "title": title,
                 "abstract": abstract,
-                "authors": authors,
+                "authors": " and ".join(authors) if authors else "",  # Convert to string format for consistency
                 "year": year,
                 "preprint_id": f"arXiv {arxiv_id}",  # Store as "arXiv 2505.15134"
                 "category": category,
@@ -917,7 +1058,7 @@ class MetadataExtractor:
             raise Exception(f"Failed to parse arXiv response: {e}")
 
     def extract_from_dblp(self, dblp_url: str) -> Dict[str, Any]:
-        """Extract metadata from DBLP URL using BibTeX endpoint and LLM processing."""
+        """Extract metadata from DBLP URL using BibTeX endpoint with LLM venue enhancement."""
         try:
             # Convert DBLP HTML URL to BibTeX URL
             bib_url = self._convert_dblp_url_to_bib(dblp_url)
@@ -933,77 +1074,41 @@ class MetadataExtractor:
             if not bibtex_content:
                 raise Exception("Empty BibTeX response")
 
-            # Parse BibTeX using bibtexparser
-            parser = bibtexparser.bparser.BibTexParser(common_strings=True)
-            bib_database = bibtexparser.loads(bibtex_content, parser=parser)
+            # Write to temporary file and use existing BibTeX extraction
+            import tempfile
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.bib', delete=False, encoding='utf-8') as tmp_file:
+                tmp_file.write(bibtex_content)
+                tmp_file_path = tmp_file.name
 
-            if not bib_database.entries:
-                raise Exception("No entries found in BibTeX data")
+            try:
+                # Use existing BibTeX extraction logic
+                papers_metadata = self.extract_from_bibtex(tmp_file_path)
+                if not papers_metadata:
+                    raise Exception("No metadata extracted from BibTeX")
+                
+                # Take the first entry
+                metadata = papers_metadata[0]
 
-            entry = bib_database.entries[0]  # Take the first entry
+                # Enhance with LLM venue extraction if venue field exists
+                venue_field = metadata.get("venue_full", "")
+                if venue_field:
+                    venue_info = self._extract_venue_with_llm(venue_field)
+                    metadata["venue_full"] = venue_info.get("venue_full", venue_field)
+                    metadata["venue_acronym"] = venue_info.get("venue_acronym", "")
 
-            # Get venue field based on entry type
-            venue_field = ""
-            paper_type = "conference"
-            if "booktitle" in entry:
-                venue_field = entry["booktitle"]
-                paper_type = "conference"
-            elif "journal" in entry:
-                venue_field = entry["journal"]
-                paper_type = "journal"
+                # Ensure we have the DBLP URL
+                if not metadata.get("url"):
+                    metadata["url"] = dblp_url
 
-            # Extract venue names using LLM
-            venue_info = self._extract_venue_with_llm(venue_field)
+                return metadata
 
-            # Parse authors
-            authors = []
-            if "author" in entry:
-                # Split by 'and' and clean up, handling multiline authors
-                author_text = re.sub(
-                    r"\s+", " ", entry["author"]
-                )  # Normalize whitespace
-                for author in author_text.split(" and "):
-                    author = author.strip()
-                    if author:
-                        authors.append(author)
-
-            # Extract year
-            year = None
-            if "year" in entry:
+            finally:
+                # Clean up temporary file
+                import os
                 try:
-                    year = int(entry["year"])
-                except ValueError:
+                    os.unlink(tmp_file_path)
+                except OSError:
                     pass
-
-            # Extract and clean title
-            title = entry.get("title", "Unknown Title")
-            title = fix_broken_lines(title)  # Fix any line breaks in title
-            title = titlecase(title)  # Apply title case
-
-            # Extract and clean abstract if present (though DBLP usually doesn't have abstracts)
-            abstract = ""
-            if "abstract" in entry:
-                abstract = fix_broken_lines(entry["abstract"])
-
-            # Build result
-            result = {
-                "title": title,
-                "abstract": abstract,
-                "authors": authors,
-                "year": year,
-                "venue_full": venue_info.get("venue_full", venue_field),
-                "venue_acronym": venue_info.get("venue_acronym", ""),
-                "paper_type": paper_type,
-                "url": entry.get(
-                    "url", dblp_url
-                ),  # Use BibTeX URL if available, fallback to DBLP URL
-                "pages": entry.get("pages"),
-                "doi": entry.get("doi"),
-                "volume": entry.get("volume"),
-                "issue": entry.get("number"),
-            }
-
-            return result
 
         except requests.RequestException as e:
             raise Exception(f"Failed to fetch DBLP metadata: {e}")
@@ -1214,7 +1319,7 @@ Respond in this exact JSON format:
         return {
             "title": title,
             "abstract": abstract,
-            "authors": authors,
+            "authors": " and ".join(authors) if authors else "",  # Convert to string format for consistency
             "year": year,
             "venue_full": venue_data.get("venue_full", venue_info),
             "venue_acronym": venue_data.get("venue_acronym", ""),
@@ -1279,7 +1384,7 @@ Respond in this exact JSON format:
         return {
             "title": title,
             "abstract": abstract,
-            "authors": authors,
+            "authors": " and ".join(authors) if authors else "",  # Convert to string format for consistency
             "year": year,
             "venue_full": venue_data.get("venue_full", venue_info),
             "venue_acronym": venue_data.get("venue_acronym", ""),
@@ -1398,22 +1503,12 @@ Respond in this exact JSON format:
                     "category": "",
                 }
 
-            # Clean up author names if they're strings
-            if isinstance(metadata.get("authors"), list):
-                metadata["authors"] = [
-                    name.strip()
-                    for name in metadata["authors"]
-                    if name and name.strip()
-                ]
-            elif isinstance(metadata.get("authors"), str):
-                # Split comma-separated authors
-                metadata["authors"] = [
-                    name.strip()
-                    for name in metadata["authors"].split(",")
-                    if name.strip()
-                ]
-            else:
-                metadata["authors"] = []
+            # Ensure authors is a consistent format for normalization
+            if not metadata.get("authors"):
+                metadata["authors"] = ""
+
+            # Apply centralized normalization before returning
+            metadata = normalize_paper_data(metadata)
 
             return metadata
 
@@ -1546,13 +1641,7 @@ Paper text:
                 }
 
                 # Extract authors
-                authors_str = entry.get("author", "")
-                if authors_str:
-                    # Split by "and" and clean up
-                    authors = [author.strip() for author in authors_str.split(" and ")]
-                    metadata["authors"] = authors
-                else:
-                    metadata["authors"] = []
+                metadata["authors"] = entry.get("author", "")
 
                 papers_metadata.append(metadata)
 
@@ -1592,10 +1681,10 @@ Paper text:
                     ),
                 }
 
-                # Extract authors
+                # Extract authors - convert to string format for normalization
                 authors = entry.get("authors", []) or entry.get("first_authors", [])
                 if authors:
-                    metadata["authors"] = [
+                    author_names = [
                         (
                             f"{author.get('given', '')} {author.get('family', '')}".strip()
                             if isinstance(author, dict)
@@ -1603,8 +1692,10 @@ Paper text:
                         )
                         for author in authors
                     ]
+                    # Convert to string format that normalize_author_names expects
+                    metadata["authors"] = " and ".join(author_names)
                 else:
-                    metadata["authors"] = []
+                    metadata["authors"] = ""
 
                 papers_metadata.append(metadata)
 
@@ -1643,55 +1734,396 @@ Paper text:
         else:
             return "other"
 
+    def extract_from_doi(self, doi: str) -> Dict[str, Any]:
+        """Extract metadata from DOI using Crossref API."""
+        # Clean DOI input - remove common prefixes/URLs
+        doi = doi.strip()
+        if doi.startswith("http"):
+            # Extract DOI from URL like https://doi.org/10.1000/example
+            match = re.search(r"10\.\d+/[^\s]+", doi)
+            if match:
+                doi = match.group(0)
+        elif doi.startswith("doi:"):
+            doi = doi[4:]
+
+        try:
+            # Query Crossref API
+            url = f"https://api.crossref.org/works/{doi}"
+            headers = {
+                "User-Agent": "PaperCLI/1.0 (https://github.com/your-repo) mailto:your-email@example.com"
+            }
+
+            response = requests.get(url, headers=headers, timeout=10)
+            response.raise_for_status()
+
+            data = response.json()
+            work = data.get("message", {})
+
+            # Extract metadata
+            metadata = {}
+
+            # Title
+            titles = work.get("title", [])
+            if titles:
+                metadata["title"] = titles[0]
+
+            # Authors
+            authors = []
+            for author in work.get("author", []):
+                given = author.get("given", "")
+                family = author.get("family", "")
+                if given and family:
+                    authors.append(f"{given} {family}")
+                elif family:
+                    authors.append(family)
+            metadata["authors"] = " and ".join(authors) if authors else ""  # Convert to string format for consistency
+
+            # Abstract
+            if "abstract" in work:
+                metadata["abstract"] = work["abstract"]
+
+            # Publication year
+            published_date = work.get("published-print") or work.get("published-online")
+            if published_date and "date-parts" in published_date:
+                date_parts = published_date["date-parts"][0]
+                if date_parts:
+                    metadata["year"] = date_parts[0]
+
+            # Venue information
+            if "container-title" in work:
+                container_titles = work["container-title"]
+                if container_titles:
+                    metadata["venue_full"] = container_titles[0]
+                    # Try to extract acronym from short-container-title
+                    if "short-container-title" in work:
+                        short_titles = work["short-container-title"]
+                        if short_titles:
+                            metadata["venue_acronym"] = short_titles[0]
+
+            # DOI
+            metadata["doi"] = work.get("DOI", doi)
+
+            # URL
+            if "URL" in work:
+                metadata["url"] = work["URL"]
+
+            # Pages
+            if "page" in work:
+                metadata["pages"] = work["page"]
+
+            # Volume and issue
+            if "volume" in work:
+                metadata["volume"] = work["volume"]
+            if "issue" in work:
+                metadata["issue"] = work["issue"]
+
+            # Infer paper type
+            work_type = work.get("type", "").lower()
+            if "journal" in work_type:
+                metadata["paper_type"] = "journal"
+            elif "proceedings" in work_type or "conference" in work_type:
+                metadata["paper_type"] = "conference"
+            elif "preprint" in work_type or "posted-content" in work_type:
+                metadata["paper_type"] = "preprint"
+            else:
+                metadata["paper_type"] = "journal"  # Default for most DOIs
+
+            return metadata
+
+        except requests.exceptions.RequestException as e:
+            raise Exception(f"Failed to fetch DOI metadata: {e}")
+        except Exception as e:
+            raise Exception(f"Failed to extract metadata from DOI: {e}")
+
 
 class ExportService:
     """Service for exporting papers to various formats."""
 
     def export_to_bibtex(self, papers: List[Paper]) -> str:
-        """Export papers to BibTeX format."""
-        entries = []
+        """Export papers to BibTeX format using bibtexparser v1."""
+        # Create a new BibTeX database
+        bib_database = bibtexparser.bibdatabase.BibDatabase()
 
         for paper in papers:
+            # Create entry dictionary
+            entry = {}
+
             # Generate BibTeX key
-            ordered_authors = paper.get_ordered_authors()
-            first_author = (
-                ordered_authors[0].full_name.split()[-1]
-                if ordered_authors
-                else "Unknown"
+            entry["ID"] = self._generate_bibtex_key(paper)
+
+            # Determine if this is a preprint
+            is_preprint = self._is_preprint(paper)
+
+            # Set entry type
+            entry["ENTRYTYPE"] = (
+                "article"
+                if is_preprint or paper.paper_type == "journal"
+                else "inproceedings"
             )
-            year = paper.year or "Unknown"
-            key = f"{first_author}{year}"
 
-            # Determine entry type
-            entry_type = "article" if paper.paper_type == "journal" else "inproceedings"
+            # Add title with double braces to preserve case and LaTeX encoding
+            entry["title"] = "{" + string_to_latex(paper.title) + "}"
 
-            entry = f"@{entry_type}{{{key},\n"
-            entry += f"  title = {{{paper.title}}},\n"
-
+            # Add authors with Unicode to LaTeX conversion
             ordered_authors = paper.get_ordered_authors()
             if ordered_authors:
-                authors = " and ".join([author.full_name for author in ordered_authors])
-                entry += f"  author = {{{authors}}},\n"
+                latex_authors = [
+                    string_to_latex(author.full_name) for author in ordered_authors
+                ]
+                entry["author"] = " and ".join(latex_authors)
 
-            if paper.venue_full:
+            # Handle venue/journal based on type
+            if is_preprint:
+                # For preprints, always use journal = arXiv.org
+                entry["journal"] = "arXiv.org"
+            elif paper.venue_full:
                 if paper.paper_type == "journal":
-                    entry += f"  journal = {{{paper.venue_full}}},\n"
+                    entry["journal"] = string_to_latex(paper.venue_full)
                 else:
-                    entry += f"  booktitle = {{{paper.venue_full}}},\n"
+                    # For conference proceedings, prefer acronym if available
+                    venue_name = (
+                        paper.venue_acronym if paper.venue_acronym else paper.venue_full
+                    )
+                    entry["booktitle"] = string_to_latex(venue_name)
 
+            # Add year
             if paper.year:
-                entry += f"  year = {{{paper.year}}},\n"
+                entry["year"] = str(paper.year)
+
+            # Add preprint-specific fields
+            if is_preprint and paper.preprint_id:
+                # Extract arXiv ID (remove "arXiv " prefix if present)
+                arxiv_id = paper.preprint_id.replace("arXiv ", "").strip()
+                entry["eprint"] = arxiv_id
+                entry["eprinttype"] = "arxiv"
+
+                # Add category if available
+                if paper.category:
+                    entry["eprintclass"] = paper.category
+
+            # Add other fields
+            if paper.volume:
+                entry["volume"] = str(paper.volume)
+
+            if paper.issue:
+                entry["number"] = str(paper.issue)
 
             if paper.pages:
-                entry += f"  pages = {{{paper.pages}}},\n"
+                # Convert single dash to double dash for BibTeX (LaTeX en-dash)
+                pages_bibtex = (
+                    paper.pages.replace("-", "--")
+                    if "-" in paper.pages
+                    else paper.pages
+                )
+                entry["pages"] = pages_bibtex
 
-            if paper.doi:
-                entry += f"  doi = {{{paper.doi}}},\n"
+            bib_database.entries.append(entry)
 
-            entry += "}\n"
-            entries.append(entry)
+        # Use bibtexparser writer with custom formatting
+        writer = bibtexparser.bwriter.BibTexWriter()
+        writer.indent = "  "  # Use 2 spaces for indentation
+        writer.align_values = True  # Align values
+        writer.order_entries_by = "ID"  # Order by citation key
+        writer.add_trailing_comma = False  # No trailing commas
 
-        return "\n".join(entries)
+        return bibtexparser.dumps(bib_database, writer)
+
+    def export_to_ieee(self, papers: List[Paper]) -> str:
+        """Export papers to IEEE reference format."""
+        references = []
+
+        for i, paper in enumerate(papers, 1):
+            # Start with reference number only if more than one paper
+            if len(papers) > 1:
+                ref = f"[{i}]    "
+            else:
+                ref = ""
+
+            # Add authors
+            ordered_authors = paper.get_ordered_authors()
+            if ordered_authors:
+                # Format authors: First initials + Last name
+                author_list = []
+                for author in ordered_authors:
+                    # Split name and format as "F. M. Lastname"
+                    parts = author.full_name.strip().split()
+                    if len(parts) >= 2:
+                        # Last name is the last part
+                        last_name = parts[-1]
+                        # All other parts become initials
+                        initials = ". ".join([part[0] for part in parts[:-1]]) + "."
+                        author_list.append(f"{initials} {last_name}")
+                    else:
+                        author_list.append(author.full_name)
+
+                # Join authors with commas and "and" before last
+                if len(author_list) == 1:
+                    authors_str = author_list[0]
+                elif len(author_list) == 2:
+                    authors_str = f"{author_list[0]} and {author_list[1]}"
+                else:
+                    authors_str = (
+                        ", ".join(author_list[:-1]) + f", and {author_list[-1]}"
+                    )
+
+                ref += authors_str + ", "
+
+            # Add title in quotes
+            ref += f'"{paper.title}," '
+
+            # Determine if preprint
+            is_preprint = self._is_preprint(paper)
+
+            if is_preprint:
+                # For preprints: "arXiv.org, vol. category. date."
+                ref += "arXiv.org"
+                if paper.category:
+                    ref += f", vol. {paper.category}"
+                if paper.year:
+                    # For arXiv, try to format as date (simplified to year for now)
+                    ref += f". {paper.year}."
+                else:
+                    ref += "."
+            elif paper.paper_type == "journal":
+                # For journals: "Journal Name, vol. X, no. Y, pp. Z, Year."
+                if paper.venue_full:
+                    ref += f"{paper.venue_full}"
+                if paper.volume:
+                    ref += f", vol. {paper.volume}"
+                if paper.issue:
+                    ref += f", no. {paper.issue}"
+                if paper.pages:
+                    # Convert single dash to en-dash for IEEE format
+                    pages_ieee = (
+                        paper.pages.replace("-", "–")
+                        if "-" in paper.pages
+                        else paper.pages
+                    )
+                    ref += f", pp. {pages_ieee}"
+                if paper.year:
+                    ref += f", {paper.year}"
+                ref += "."
+            else:
+                # For conferences: "in VENUE, Year, pp. pages."
+                ref += "in "
+                if paper.venue_acronym:
+                    ref += paper.venue_acronym
+                elif paper.venue_full:
+                    ref += paper.venue_full
+                else:
+                    ref += "Conference"
+
+                if paper.year:
+                    ref += f", {paper.year}"
+                if paper.pages:
+                    # Convert single dash to en-dash for IEEE format
+                    pages_ieee = (
+                        paper.pages.replace("-", "–")
+                        if "-" in paper.pages
+                        else paper.pages
+                    )
+                    ref += f", pp. {pages_ieee}"
+                ref += "."
+
+            references.append(ref)
+
+        return "\n".join(references)
+
+    def _generate_bibtex_key(self, paper) -> str:
+        """Generate BibTeX citation key in format: lastname+year+firstword."""
+        # Get first author's last name
+        ordered_authors = paper.get_ordered_authors()
+        if ordered_authors:
+            first_author_name = ordered_authors[0].full_name
+            # Handle Unicode names and extract last name
+            last_name = self._extract_last_name(first_author_name)
+        else:
+            last_name = "unknown"
+
+        # Get year
+        year = str(paper.year) if paper.year else "unknown"
+
+        # Get first significant word from title
+        first_word = self._extract_first_significant_word(paper.title)
+
+        # Combine and normalize
+        key = f"{last_name}{year}{first_word}".lower()
+
+        # Remove non-alphanumeric characters except hyphens and underscores
+        key = re.sub(r"[^a-z0-9_-]", "", key)
+
+        return key
+
+    def _extract_last_name(self, full_name: str) -> str:
+        """Extract last name from full name, handling Unicode characters."""
+        # Normalize Unicode characters
+        normalized = unicodedata.normalize("NFD", full_name)
+
+        # Remove accents/diacritics
+        ascii_name = "".join(c for c in normalized if unicodedata.category(c) != "Mn")
+
+        # Split and get last part
+        parts = ascii_name.strip().split()
+        if parts:
+            return parts[-1]
+        return "unknown"
+
+    def _extract_first_significant_word(self, title: str) -> str:
+        """Extract first significant word from title."""
+        # Skip common articles and prepositions
+        skip_words = {
+            "a",
+            "an",
+            "the",
+            "and",
+            "or",
+            "but",
+            "in",
+            "on",
+            "at",
+            "to",
+            "for",
+            "of",
+            "with",
+            "by",
+            "from",
+            "is",
+            "are",
+            "was",
+            "were",
+        }
+
+        words = title.lower().split()
+        for word in words:
+            # Clean the word
+            clean_word = re.sub(r"[^a-z0-9]", "", word)
+            if clean_word and clean_word not in skip_words and len(clean_word) > 2:
+                return clean_word
+
+        # If no significant word found, use first word
+        if words:
+            return re.sub(r"[^a-z0-9]", "", words[0].lower())
+
+        return "untitled"
+
+    def _is_preprint(self, paper) -> bool:
+        """Determine if paper is a preprint."""
+        # Check paper type
+        if paper.paper_type and paper.paper_type.lower() in ["preprint", "arxiv"]:
+            return True
+
+        # Check if it has arXiv ID
+        if paper.preprint_id and (
+            "arxiv" in paper.preprint_id.lower()
+            or re.match(r"^\d{4}\.\d{4,5}", paper.preprint_id)
+        ):
+            return True
+
+        # Check venue
+        if paper.venue_full and "arxiv" in paper.venue_full.lower():
+            return True
+
+        return False
 
     def export_to_markdown(self, papers: List[Paper]) -> str:
         """Export papers to Markdown format."""
@@ -1957,9 +2389,9 @@ class SystemService:
 
             # Generate URL based on source
             if source == "arxiv":
-                # Clean arXiv ID
+                # Clean arXiv ID while preserving version numbers
                 clean_id = re.sub(r"arxiv[:\s]*", "", identifier, flags=re.IGNORECASE)
-                clean_id = re.sub(r"[^\d\.]", "", clean_id)
+                clean_id = re.sub(r"[^\d\.v]", "", clean_id)  # Allow digits, dots, and 'v' for versions
                 pdf_url = f"https://arxiv.org/pdf/{clean_id}.pdf"
             elif source == "openreview":
                 pdf_url = f"https://openreview.net/pdf?id={identifier}"
@@ -1968,13 +2400,29 @@ class SystemService:
 
             # Use PDFManager to handle everything
             pdf_manager = PDFManager()
-            filename = pdf_manager._generate_pdf_filename(paper_data, pdf_url)
-            filepath = os.path.join(download_dir, filename)
+            
+            # First generate temporary filename for download
+            temp_filename = pdf_manager._generate_pdf_filename(paper_data, pdf_url)
+            temp_filepath = os.path.join(download_dir, temp_filename)
 
-            pdf_path, error_msg = pdf_manager._download_pdf_from_url(pdf_url, filepath)
+            # Download to temporary path
+            pdf_path, error_msg = pdf_manager._download_pdf_from_url(pdf_url, temp_filepath)
 
             if error_msg:
                 return None, error_msg
+
+            # Now regenerate filename with content-based hash
+            final_filename = pdf_manager._generate_pdf_filename(paper_data, pdf_path)
+            final_filepath = os.path.join(download_dir, final_filename)
+            
+            # If filename changed, rename the file
+            if temp_filepath != final_filepath:
+                try:
+                    shutil.move(temp_filepath, final_filepath)
+                    pdf_path = final_filepath
+                except Exception as e:
+                    # If move fails, keep the temporary file
+                    pass
 
             return pdf_path, ""
 
@@ -2054,7 +2502,7 @@ class PDFManager:
                 first_word = word
                 break
 
-        # Generate short hash from file content or path
+        # Generate short hash from file content only
         try:
             if os.path.exists(pdf_path):
                 # Hash from file content
@@ -2062,8 +2510,9 @@ class PDFManager:
                     content = f.read(8192)  # Read first 8KB for hash
                     file_hash = hashlib.md5(content).hexdigest()[:6]
             else:
-                # Hash from URL or path string
-                file_hash = hashlib.md5(pdf_path.encode()).hexdigest()[:6]
+                # For non-existent files (URLs), use a placeholder that will be replaced
+                # when the file is actually downloaded and processed
+                file_hash = "temp00"
         except Exception:
             # Fallback to random hash
             file_hash = secrets.token_hex(3)
@@ -2189,9 +2638,10 @@ class PDFManager:
 class DatabaseHealthService:
     """Service for diagnosing and fixing database health issues."""
 
-    def __init__(self):
+    def __init__(self, log_callback=None):
         self.issues_found = []
         self.fixes_applied = []
+        self.log_callback = log_callback
 
     def run_full_diagnostic(self) -> Dict[str, Any]:
         """Run comprehensive database and system diagnostics."""
@@ -2503,6 +2953,7 @@ class DatabaseHealthService:
     def clean_orphaned_pdfs(self) -> Dict[str, int]:
         """Clean up orphaned PDF files."""
         cleaned = {"pdf_files": 0}
+        cleaned_files = []
 
         try:
             report = self._check_orphaned_pdfs()
@@ -2510,14 +2961,20 @@ class DatabaseHealthService:
 
             for f in orphaned_files:
                 try:
+                    filename = os.path.basename(f)
                     os.remove(f)
                     cleaned["pdf_files"] += 1
+                    cleaned_files.append(filename)
+                    
+                    # Log individual file deletion if log callback is available
+                    if hasattr(self, 'log_callback') and self.log_callback:
+                        self.log_callback("database_cleanup", f"Deleted orphaned PDF: {filename}")
                 except Exception:
                     pass  # ignore errors on individual file deletions
 
             if cleaned["pdf_files"] > 0:
                 self.fixes_applied.append(
-                    f"Cleaned {cleaned['pdf_files']} orphaned PDF files"
+                    f"Cleaned {cleaned['pdf_files']} orphaned PDF files: {', '.join(cleaned_files)}"
                 )
 
         except Exception as e:
