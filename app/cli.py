@@ -162,11 +162,11 @@ class SmartCompleter(Completer):
                 },
             },
             "/add-to": {
-                "description": "Add selected paper(s) to a collection",
+                "description": "Add selected paper(s) to one or more collections",
                 "subcommands": {},
             },
             "/remove-from": {
-                "description": "Remove selected paper(s) from a collection",
+                "description": "Remove selected paper(s) from one or more collections",
                 "subcommands": {},
             },
             "/collect": {
@@ -206,10 +206,14 @@ class SmartCompleter(Completer):
             if not self.cli:
                 return
             
-            # Get the partial collection name (everything after the command)
-            partial_name = " ".join(words[1:]) if len(words) > 1 else ""
-            if text.endswith(" ") and len(words) > 1:
+            # Get the partial collection name (the current word being typed)
+            if text.endswith(" "):
                 partial_name = ""
+            else:
+                partial_name = words[-1] if len(words) > 1 else ""
+            
+            # Get already typed collection names to exclude them from completion
+            already_typed = set(words[1:-1]) if len(words) > 2 and not text.endswith(" ") else set(words[1:])
             
             try:
                 collections = self.cli.collection_service.get_all_collections()
@@ -237,12 +241,13 @@ class SmartCompleter(Completer):
                     all_ordered_collections = collections
                 
                 for collection in all_ordered_collections:
+                    # Skip collections that have already been typed
+                    if collection.name in already_typed:
+                        continue
+                        
                     if collection.name.lower().startswith(partial_name.lower()):
                         # Calculate the correct start position
-                        if text.endswith(" ") and len(words) == 1:
-                            start_pos = 0
-                        else:
-                            start_pos = -len(partial_name)
+                        start_pos = -len(partial_name)
                         
                         yield Completion(
                             collection.name,
@@ -315,8 +320,8 @@ Collection Management:
 ---------------------
 /collect          Manage collections
 /collect purge    Delete all empty collections
-/add-to           Add selected paper(s) to a collection
-/remove-from      Remove selected paper(s) from a collection
+/add-to           Add selected paper(s) to one or more collections
+/remove-from      Remove selected paper(s) from one or more collections
 
 System Commands:
 ---------------
@@ -3106,10 +3111,10 @@ The doctor command helps maintain database health by:
     def handle_add_to_command(self, args: List[str]):
         """Handle /add-to command."""
         if not args:
-            self.status_bar.set_error("Usage: /add-to <collection_name>")
+            self.status_bar.set_error("Usage: /add-to <collection_name1> [collection_name2] ...")
             return
 
-        collection_name = " ".join(args)
+        collection_names = args  # Each argument is a separate collection name
         papers_to_add = self._get_target_papers()
 
         if not papers_to_add:
@@ -3117,31 +3122,56 @@ The doctor command helps maintain database health by:
 
         paper_ids = [p.id for p in papers_to_add]
         paper_titles = [p.title for p in papers_to_add]
-        added_count = self.collection_service.add_papers_to_collection(
-            paper_ids, collection_name
-        )
+        
+        successful_collections = []
+        failed_collections = []
 
-        if added_count > 0:
-            self._add_log(
-                "add_to_collection",
-                f"Added {added_count} paper(s) to '{collection_name}': {', '.join(paper_titles)}",
-            )
+        for collection_name in collection_names:
+            try:
+                added_count = self.collection_service.add_papers_to_collection(
+                    paper_ids, collection_name
+                )
+                if added_count > 0:
+                    successful_collections.append(collection_name)
+                    self._add_log(
+                        "add_to_collection",
+                        f"Added {added_count} paper(s) to '{collection_name}': {', '.join(paper_titles)}",
+                    )
+            except Exception as e:
+                failed_collections.append(collection_name)
+                self._add_log(
+                    "add_to_collection_error",
+                    f"Failed to add papers to collection '{collection_name}': {str(e)}",
+                )
+
+        if successful_collections:
             self.load_papers()
-            self.status_bar.set_success(
-                f"Added {added_count} paper(s) to collection '{collection_name}'."
-            )
-        else:
-            self.status_bar.set_status(
-                "No papers were added to the collection (they may have already been in it)."
-            )
+            if len(successful_collections) == 1:
+                self.status_bar.set_success(
+                    f"Added {len(papers_to_add)} paper(s) to collection '{successful_collections[0]}'."
+                )
+            else:
+                self.status_bar.set_success(
+                    f"Added {len(papers_to_add)} paper(s) to {len(successful_collections)} collections: {', '.join(successful_collections)}"
+                )
+        
+        if failed_collections:
+            if not successful_collections:
+                self.status_bar.set_error(
+                    f"Failed to add papers to collections: {', '.join(failed_collections)}"
+                )
+            else:
+                self.status_bar.set_error(
+                    f"Some collections failed: {', '.join(failed_collections)}"
+                )
 
     def handle_remove_from_command(self, args: List[str]):
         """Handle /remove-from command."""
         if not args:
-            self.status_bar.set_error("Usage: /remove-from <collection_name>")
+            self.status_bar.set_error("Usage: /remove-from <collection_name1> [collection_name2] ...")
             return
 
-        collection_name = " ".join(args)
+        collection_names = args  # Each argument is a separate collection name
         papers_to_remove = self._get_target_papers()
 
         if not papers_to_remove:
@@ -3149,29 +3179,57 @@ The doctor command helps maintain database health by:
 
         paper_ids = [p.id for p in papers_to_remove]
         paper_titles = [p.title for p in papers_to_remove]
-        removed_count, errors = self.collection_service.remove_papers_from_collection(
-            paper_ids, collection_name
-        )
+        
+        successful_collections = []
+        failed_collections = []
+        total_removed = 0
+        all_errors = []
 
-        if errors:
-            # Show only the first error in the status bar for clarity
+        for collection_name in collection_names:
+            try:
+                removed_count, errors = self.collection_service.remove_papers_from_collection(
+                    paper_ids, collection_name
+                )
+                
+                if errors:
+                    all_errors.extend([f"{collection_name}: {error}" for error in errors])
+                    failed_collections.append(collection_name)
+                
+                if removed_count > 0:
+                    total_removed += removed_count
+                    successful_collections.append(collection_name)
+                    self._add_log(
+                        "remove_from_collection",
+                        f"Removed {removed_count} paper(s) from '{collection_name}': {', '.join(paper_titles)}",
+                    )
+            except Exception as e:
+                failed_collections.append(collection_name)
+                all_errors.append(f"{collection_name}: {str(e)}")
+                self._add_log(
+                    "remove_from_collection_error",
+                    f"Failed to remove papers from collection '{collection_name}': {str(e)}",
+                )
+
+        # Show errors if any
+        if all_errors:
             self.show_error_panel_with_message(
                 "Remove from Collection Error",
-                f"Encountered {len(errors)} error(s).",
-                "\n".join(errors),
+                f"Encountered {len(all_errors)} error(s).",
+                "\n".join(all_errors),
             )
 
-        if removed_count > 0:
-            self._add_log(
-                "remove_from_collection",
-                f"Removed {removed_count} paper(s) from '{collection_name}': {', '.join(paper_titles)}",
-            )
+        if successful_collections:
             self.load_papers()
-            self.status_bar.set_success(
-                f"Removed {removed_count} paper(s) from collection '{collection_name}'."
-            )
-        elif not errors:
-            self.status_bar.set_status("No papers were removed from the collection.")
+            if len(successful_collections) == 1:
+                self.status_bar.set_success(
+                    f"Removed {len(papers_to_remove)} paper(s) from collection '{successful_collections[0]}'."
+                )
+            else:
+                self.status_bar.set_success(
+                    f"Removed {len(papers_to_remove)} paper(s) from {len(successful_collections)} collections: {', '.join(successful_collections)}"
+                )
+        elif not all_errors:
+            self.status_bar.set_status("No papers were removed from any collection.")
 
     def handle_collect_command(self, args):
         """Handle /collect command with optional subcommands."""
