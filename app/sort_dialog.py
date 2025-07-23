@@ -36,7 +36,6 @@ class SortDialog:
         ]
 
         self._create_layout()
-        self._add_key_bindings()
 
     def _create_layout(self):
         """Creates the dialog layout."""
@@ -143,10 +142,6 @@ class SortDialog:
     def get_initial_focus(self):
         """Returns the initial focus element."""
         return self.field_list
-
-    def _add_key_bindings(self):
-        """Key bindings are now handled in _create_layout after dialog creation."""
-        pass
 
     def __pt_container__(self):
         return self.dialog

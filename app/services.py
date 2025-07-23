@@ -38,6 +38,7 @@ from titlecase import titlecase
 
 from .database import get_db_manager, get_db_session, get_pdf_directory
 from .models import Author, Collection, Paper, PaperAuthor
+from .prompts import ChatPrompts, SummaryPrompts, MetadataPrompts
 
 
 def fix_broken_lines(text: str) -> str:
@@ -1155,6 +1156,17 @@ Please extract:
 Respond in this exact JSON format:
 {{"venue_full": "...", "venue_acronym": "..."}} """
 
+            # Log the LLM request
+            if hasattr(self, "log_callback") and self.log_callback:
+                self.log_callback(
+                    "llm_venue_request",
+                    f"Requesting venue extraction for: {venue_field}",
+                )
+                self.log_callback(
+                    "llm_venue_prompt",
+                    f"Full prompt sent to gpt-4o:\n{prompt}",
+                )
+
             response = client.chat.completions.create(
                 model="gpt-4o",
                 messages=[
@@ -1169,6 +1181,17 @@ Respond in this exact JSON format:
             )
 
             response_text = response.choices[0].message.content.strip()
+
+            # Log the LLM response
+            if hasattr(self, "log_callback") and self.log_callback:
+                self.log_callback(
+                    "llm_venue_response",
+                    f"GPT-4o response received ({len(response_text)} chars)",
+                )
+                self.log_callback(
+                    "llm_venue_content",
+                    f"Raw response:\n{response_text}",
+                )
 
             # Clean up markdown code blocks if present
             if response_text.startswith("```json"):
@@ -1428,36 +1451,25 @@ Respond in this exact JSON format:
             # Use LLM to extract metadata
             client = OpenAI()
 
-            prompt = f"""
-            Extract the following metadata from this academic paper text. Return your response as a JSON object with these exact keys:
-            
-            - title: The paper title
-            - authors: List of author names as strings
-            - abstract: The abstract text (if available)
-            - year: Publication year as integer (if available)
-            - venue_full: Full venue/conference/journal name following these guidelines:
-              * For journals: Use full journal name (e.g., "Journal of Chemical Information and Modeling")
-              * For conferences: Use full name without "Proceedings of" or ordinal numbers (e.g., "International Conference on Machine Learning" for Proceedings of the 41st International Conference on Machine Learning)
-            - venue_acronym: Venue abbreviation following these guidelines:
-              * For journals: Use ISO 4 abbreviated format with periods (e.g., "J. Chem. Inf. Model." for Journal of Chemical Information and Modeling)
-              * For conferences: Use common name (e.g., "NeurIPS" for Conference on Neural Information Processing Systems, not "NIPS")
-            - paper_type: One of "conference", "journal", "workshop", "preprint", "other"
-            - doi: DOI (if available)
-            - url: URL of the PDF to the paper itself mentioned (if available, not the link to the supplementary material or the code repository)
-            - category: Subject category like "cs.LG" (if available)
-            
-            If any field is not available, use null for that field.
-            
-            Paper text:
-            {text_content[:8000]}
-            """
+            prompt = MetadataPrompts.extraction_prompt(text_content)
+
+            # Log the LLM request
+            if self.log_callback:
+                self.log_callback(
+                    "llm_metadata_request",
+                    f"Requesting metadata extraction for PDF: {pdf_path}",
+                )
+                self.log_callback(
+                    "llm_metadata_prompt",
+                    f"Full prompt sent to gpt-4o-mini:\n{prompt}",
+                )
 
             response = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are an expert at extracting metadata from academic papers. Always respond with valid JSON.",
+                        "content": MetadataPrompts.system_message(),
                     },
                     {"role": "user", "content": prompt},
                 ],
@@ -1466,6 +1478,17 @@ Respond in this exact JSON format:
 
             # Parse the JSON response
             response_content = response.choices[0].message.content.strip()
+
+            # Log the LLM response
+            if self.log_callback:
+                self.log_callback(
+                    "llm_metadata_response",
+                    f"GPT-4o-mini response received ({len(response_content)} chars)",
+                )
+                self.log_callback(
+                    "llm_metadata_content",
+                    f"Raw response:\n{response_content}",
+                )
 
             # Clean up potential markdown code blocks
             if response_content.startswith("```json"):
@@ -1548,28 +1571,7 @@ Respond in this exact JSON format:
             # Use LLM to generate academic summary
             client = OpenAI()
 
-            prompt = f"""You are an excellent academic paper reviewer. You conduct paper summarization on the full paper text provided, with following instructions:
-
-IMPORTANT: Only include information that is explicitly present in the paper text. Do not hallucinate or make up information. If a section is not applicable (e.g., a theory paper may not have experiments), clearly state "Not applicable" or "Not described in the provided text".
-
-Motivation: Explain the motivation behind this research - what problem or gap in knowledge motivated the authors to conduct this study. Only include if explicitly mentioned.
-
-Objective: Begin by clearly stating the primary objective of the research presented in the academic paper. Describe the core idea or hypothesis that underpins the study in simple, accessible language.
-
-Technical Approach: Provide a detailed explanation of the methodology used in the research. Focus on describing how the study was conducted, including any specific techniques, models, or algorithms employed. Only describe what is actually present in the text.
-
-Distinctive Features: Identify and elaborate on what sets this research apart from other studies in the same field. Only mention features that are explicitly highlighted by the authors.
-
-Experimental Setup and Results: Describe the experimental design and data collection process used in the study. Summarize the results obtained or key findings. If this is a theoretical paper without experiments, state "Not applicable - theoretical work".
-
-Advantages and Limitations: Concisely discuss the strengths of the proposed approach and limitations mentioned by the authors. Only include what is explicitly stated in the paper.
-
-Conclusion: Sum up the key points made about the paper's technical approach, its uniqueness, and its comparative advantages and limitations. Base this only on information present in the text.
-
-Please provide your analysis in clear, readable text format (not markdown). Use the exact headers provided above. Be honest about missing information rather than making assumptions.
-
-Paper text:
-{full_text[:16000]}"""  # Limit to ~16k characters to avoid token limits
+            prompt = SummaryPrompts.academic_summary(full_text)
 
             # Log the LLM request
             if self.log_callback:
@@ -1579,7 +1581,7 @@ Paper text:
                 )
                 self.log_callback(
                     "llm_summarization_prompt",
-                    f"Prompt sent to gpt-4o:\n{prompt[:500]}...",
+                    f"Full prompt sent to gpt-4o:\n{prompt}",
                 )
 
             response = client.chat.completions.create(
@@ -1587,7 +1589,7 @@ Paper text:
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are an expert academic paper reviewer specializing in technical paper analysis and summarization. You are extremely careful to only report information that is explicitly present in the provided text and never hallucinate or make assumptions.",
+                        "content": SummaryPrompts.system_message(),
                     },
                     {"role": "user", "content": prompt},
                 ],
@@ -2231,9 +2233,55 @@ class ChatService:
     def __init__(self, log_callback=None):
         self.log_callback = log_callback
 
-    def open_chat_interface(self, papers: List[Paper], provider: str = "claude"):
-        """Open specified LLM provider in browser and show PDF files in Finder/File Explorer."""
+    def copy_prompt_to_clipboard(self, papers: List[Paper]) -> Dict[str, Any]:
+        """Generate and copy paper prompt to clipboard for external LLM use."""
         try:
+            # Build paper context using the same format as chat
+            context_parts = []
+            for i, paper in enumerate(papers, 1):
+                paper_context = f"Paper {i}: {paper.title}\n"
+                paper_context += f"Authors: {paper.author_names}\n"
+                paper_context += f"Venue: {paper.venue_display} ({paper.year or 'N/A'})\n"
+
+                if paper.abstract:
+                    paper_context += f"Abstract: {paper.abstract}\n"
+
+                if paper.notes:
+                    paper_context += f"Notes: {paper.notes}\n"
+
+                context_parts.append(paper_context)
+
+            # Create simple prompt for external LLM use
+            full_prompt = ChatPrompts.clipboard_prompt(len(papers), chr(10).join(context_parts))
+
+            # Copy to clipboard
+            pyperclip.copy(full_prompt)
+            
+            return {
+                "success": True,
+                "message": f"Prompt for {len(papers)} paper(s) copied to clipboard",
+                "prompt_length": len(full_prompt)
+            }
+
+        except ImportError:
+            return {
+                "success": False,
+                "message": "Clipboard functionality unavailable (pyperclip not installed)",
+                "prompt_length": 0
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"Error copying prompt to clipboard: {str(e)}",
+                "prompt_length": 0
+            }
+
+    def open_chat_interface(self, papers: List[Paper], provider: str = "claude"):
+        """Copy paper prompt to clipboard and open LLM provider in browser."""
+        try:
+            # First, copy the prompt to clipboard
+            clipboard_result = self.copy_prompt_to_clipboard(papers)
+            
             # Open provider-specific homepage in browser
             provider_urls = {
                 "claude": "https://claude.ai",
@@ -2276,25 +2324,35 @@ class ChatService:
             # Prepare result message
             result_parts = []
             provider_name = provider.title()
-            if opened_files:
-                result_parts.append(
-                    f"Opened {provider_name} and {len(opened_files)} PDF file(s)"
-                )
+            
+            # Include clipboard result
+            if clipboard_result["success"]:
+                result_parts.append(clipboard_result["message"])
             else:
-                result_parts.append(
-                    f"Opened {provider_name} (no local PDF files found)"
-                )
+                result_parts.append(f"Warning: {clipboard_result['message']}")
+            
+            # Add browser/PDF opening results
+            if opened_files:
+                result_parts.append(f"Opened {provider_name} and {len(opened_files)} PDF file(s)")
+            else:
+                result_parts.append(f"Opened {provider_name}")
 
             if failed_files:
                 result_parts.append(f"Failed to open {len(failed_files)} file(s)")
-                # Return error details for logging by CLI
+                # Return combined results
                 return {
                     "success": True,
                     "message": "; ".join(result_parts),
                     "errors": failed_files,
+                    "clipboard_success": clipboard_result["success"]
                 }
 
-            return {"success": True, "message": result_parts[0], "errors": []}
+            return {
+                "success": True, 
+                "message": "; ".join(result_parts), 
+                "errors": [],
+                "clipboard_success": clipboard_result["success"]
+            }
 
         except Exception as e:
             return {

@@ -27,6 +27,7 @@ from prompt_toolkit.layout.containers import (
     ScrollOffsets,
 )
 from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
+from prompt_toolkit.layout.margins import ScrollbarMargin
 from prompt_toolkit.layout.menus import CompletionsMenu
 from prompt_toolkit.layout.processors import BeforeInput
 from prompt_toolkit.shortcuts import set_title
@@ -107,12 +108,16 @@ class SmartCompleter(Completer):
             },
             "/clear": {"description": "Clear all selected papers", "subcommands": {}},
             "/chat": {
-                "description": "Open chat interface (local OpenAI window or browser)",
+                "description": "Open chat interface (local OpenAI window or copy prompt to clipboard)",
                 "subcommands": {
-                    "claude": "Open Claude AI in browser",
-                    "chatgpt": "Open ChatGPT in browser",
-                    "gemini": "Open Google Gemini in browser",
+                    "claude": "Copy prompt to clipboard and open Claude AI in browser",
+                    "chatgpt": "Copy prompt to clipboard and open ChatGPT in browser",
+                    "gemini": "Copy prompt to clipboard and open Google Gemini in browser",
                 },
+            },
+            "/copy-prompt": {
+                "description": "Copy paper prompt to clipboard for use with any LLM",
+                "subcommands": {},
             },
             "/edit": {
                 "description": "Open edit dialog or edit field directly (e.g., /edit title ...)",
@@ -313,10 +318,11 @@ Core Commands:
 Paper Operations (work on the paper under the cursor ► or selected papers ✓):
 -----------------------------------------------------------------------------
 /chat             Open chat window with ChatGPT (local interface)
-/chat [provider]  Open browser-based chat interface
-  claude          Open Claude AI in browser
-  chatgpt         Open ChatGPT in browser  
-  gemini          Open Google Gemini in browser
+/chat [provider]  Copy prompt to clipboard and open LLM in browser
+  claude          Copy prompt to clipboard and open Claude AI in browser
+  chatgpt         Copy prompt to clipboard and open ChatGPT in browser  
+  gemini          Copy prompt to clipboard and open Google Gemini in browser
+/copy-prompt      Copy paper prompt to clipboard for use with any LLM
 /edit             Open edit dialog or edit field directly (e.g., /edit title ...)
 /open             Open the PDF for the paper(s)
 /detail           Show detailed metadata for the paper(s)
@@ -434,12 +440,36 @@ Indicators (in the first column):
         if not self.logs:
             log_content = "No activities logged in this session."
         else:
+            # Limit to last 500 entries to prevent scrolling issues
+            recent_logs = self.logs[-500:] if len(self.logs) > 500 else self.logs
+
             log_entries = []
-            for log in reversed(self.logs):
+            # Show most recent first
+            for log in reversed(recent_logs):
+                # Limit each log entry to ~500 characters to keep the log readable
+                details = log["details"]
+                if len(details) > 500:
+                    details = details[:500] + "... [truncated]"
+
                 log_entries.append(
-                    f"[{log['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}] {log['action']}: {log['details']}"
+                    f"[{log['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}] {log['action']}: {details}"
                 )
-            log_content = "\n".join(log_entries)
+
+            # Add header if we're showing limited entries
+            if len(self.logs) > 500:
+                header = (
+                    f"Activity Log (showing last 500 of {len(self.logs)} entries)\n"
+                    + "=" * 60
+                    + "\n\n"
+                )
+                log_content = header + "\n".join(log_entries)
+            else:
+                log_content = (
+                    f"Activity Log ({len(self.logs)} entries)\n"
+                    + "=" * 40
+                    + "\n\n"
+                    + "\n".join(log_entries)
+                )
 
         self.show_help_dialog(log_content, "Activity Log")
         self.status_bar.set_status("Activity log opened - Press ESC to close", "open")
@@ -1166,6 +1196,8 @@ The doctor command helps maintain database health by:
                 wrap_lines=True,
                 dont_extend_height=False,
                 always_hide_cursor=True,
+                scroll_offsets=ScrollOffsets(top=1, bottom=1),
+                right_margins=[ScrollbarMargin(display_arrows=True)],
             ),
             with_background=False,
             modal=True,
@@ -1278,19 +1310,59 @@ The doctor command helps maintain database health by:
 
         @kb.add("up")
         def _(event):
-            scroll.scroll_one_line_up(event)
+            # Direct buffer manipulation for reliable scrolling
+            if hasattr(event.app.layout, "current_control") and hasattr(
+                event.app.layout.current_control, "buffer"
+            ):
+                buffer = event.app.layout.current_control.buffer
+                buffer.cursor_up()
 
         @kb.add("down")
         def _(event):
-            scroll.scroll_one_line_down(event)
+            # Direct buffer manipulation for reliable scrolling
+            if hasattr(event.app.layout, "current_control") and hasattr(
+                event.app.layout.current_control, "buffer"
+            ):
+                buffer = event.app.layout.current_control.buffer
+                buffer.cursor_down()
 
         @kb.add("pageup")
         def _(event):
-            scroll.scroll_page_up(event)
+            # Move cursor up by ~10 lines (page-like scrolling)
+            if hasattr(event.app.layout, "current_control") and hasattr(
+                event.app.layout.current_control, "buffer"
+            ):
+                buffer = event.app.layout.current_control.buffer
+                for _ in range(10):
+                    buffer.cursor_up()
 
         @kb.add("pagedown")
         def _(event):
-            scroll.scroll_page_down(event)
+            # Move cursor down by ~10 lines (page-like scrolling)
+            if hasattr(event.app.layout, "current_control") and hasattr(
+                event.app.layout.current_control, "buffer"
+            ):
+                buffer = event.app.layout.current_control.buffer
+                for _ in range(10):
+                    buffer.cursor_down()
+
+        @kb.add("home")
+        def _(event):
+            # Jump to the beginning of the document
+            if hasattr(event.app.layout, "current_control") and hasattr(
+                event.app.layout.current_control, "buffer"
+            ):
+                buffer = event.app.layout.current_control.buffer
+                buffer.cursor_position = 0
+
+        @kb.add("end")
+        def _(event):
+            # Jump to the end of the document
+            if hasattr(event.app.layout, "current_control") and hasattr(
+                event.app.layout.current_control, "buffer"
+            ):
+                buffer = event.app.layout.current_control.buffer
+                buffer.cursor_position = len(buffer.text)
 
         @kb.add("<any>")
         def _(event):
@@ -1592,6 +1664,8 @@ The doctor command helps maintain database health by:
                 elif cmd == "/chat":
                     provider = parts[1] if len(parts) > 1 else None
                     self.handle_chat_command(provider)
+                elif cmd == "/copy-prompt":
+                    self.handle_copy_prompt_command()
                 elif cmd == "/edit":
                     self.handle_edit_command(parts[1:])
                 elif cmd == "/export":
@@ -2467,7 +2541,8 @@ The doctor command helps maintain database health by:
                     return
 
                 self.status_bar.set_status(
-                    f"Opening {provider.title()} in browser...", "chat"
+                    f"Copying prompt to clipboard and opening {provider.title()}...",
+                    "chat",
                 )
 
                 # Open browser interface with provider-specific behavior
@@ -2487,6 +2562,29 @@ The doctor command helps maintain database health by:
 
         except Exception as e:
             self.status_bar.set_error(f"Error opening chat: {e}")
+
+    def handle_copy_prompt_command(self):
+        """Handle /copy-prompt command - copy paper prompt to clipboard."""
+        papers_to_copy = self._get_target_papers()
+        if not papers_to_copy:
+            return
+
+        try:
+            self.status_bar.set_status("Copying prompt to clipboard...", "info")
+
+            result = self.chat_service.copy_prompt_to_clipboard(papers_to_copy)
+
+            if result["success"]:
+                self.status_bar.set_success(result["message"])
+            else:
+                self.status_bar.set_error(result["message"])
+                self.show_error_panel_with_message(
+                    "Copy Prompt Error",
+                    result["message"],
+                    "Failed to copy prompt to clipboard.",
+                )
+        except Exception as e:
+            self.status_bar.set_error(f"Error copying prompt: {e}")
 
     def _on_chat_complete(self, result):
         """Callback for when chat dialog is closed."""
@@ -3274,8 +3372,12 @@ The doctor command helps maintain database health by:
     def show_help_dialog(self, content: str = None, title: str = "PaperCLI Help"):
         """Show help dialog with optional custom content and title."""
         if content is not None:
+            # Ensure proper cursor positioning for scrolling
             doc = Document(content, 0)
             self.help_buffer.set_document(doc, bypass_readonly=True)
+
+            # Reset cursor to top and ensure scrolling works properly
+            self.help_buffer.cursor_position = 0
 
         # Update dialog title
         self.help_dialog.title = title

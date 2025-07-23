@@ -18,7 +18,8 @@ from prompt_toolkit.layout.containers import HSplit, VSplit, Window
 from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.widgets import Button, Dialog, TextArea
 
-from .services import BackgroundOperationService, PaperService
+from .prompts import ChatPrompts
+from .services import BackgroundOperationService, LLMSummaryService, PaperService
 
 
 class ChatDialog:
@@ -79,8 +80,6 @@ class ChatDialog:
 
         # Generate summaries using the shared service
         if papers_needing_summaries:
-            from .services import LLMSummaryService
-
             summary_service = LLMSummaryService(
                 paper_service=self.paper_service,
                 background_service=self.background_service,
@@ -130,9 +129,11 @@ class ChatDialog:
 
             paper_details.append(paper_info)
 
-        # Add initial system message with paper details
+        # Add initial system message with paper details (UI only, not sent to LLM)
         initial_content = self._build_initial_content(paper_details)
-        self.chat_history.append({"role": "assistant", "content": initial_content})
+        self.chat_history.append(
+            {"role": "assistant", "content": initial_content, "ui_only": True}
+        )
 
     def _get_paper_fields(self, paper):
         """Extract common paper fields."""
@@ -162,17 +163,10 @@ class ChatDialog:
     def _build_initial_content(self, paper_details):
         """Build the initial content message for the chat."""
         if len(self.papers) == 1:
-            return (
-                f"Here is the selected paper for discussion:\n\n{paper_details[0]}\n\n"
-                "(You can ask questions about this paper or request specific analyses.)"
-            )
+            return ChatPrompts.initial_single_paper(paper_details[0])
         else:
-            content = (
-                f"Here are the {len(self.papers)} selected papers for discussion:\n\n"
-                + "\n\n---\n\n".join(paper_details)
-            )
-            content += f"\n\n(You can refer to papers by their numbers, e.g., 'Paper 1', 'Paper 2', etc.)"
-            return content
+            paper_content = "\n\n---\n\n".join(paper_details)
+            return ChatPrompts.initial_multiple_papers(len(self.papers), paper_content)
 
     def _refresh_chat_display(self):
         """Refresh the chat display by rebuilding the initial content with updated paper info."""
@@ -185,8 +179,12 @@ class ChatDialog:
         updated_content = self._build_initial_content(paper_details)
 
         # Update the initial assistant message in chat history
-        if len(self.chat_history) > 0 and self.chat_history[-1]["role"] == "assistant":
-            self.chat_history[-1]["content"] = updated_content
+        if (
+            len(self.chat_history) > 0
+            and self.chat_history[0]["role"] == "assistant"
+            and self.chat_history[0].get("ui_only", False)
+        ):
+            self.chat_history[0]["content"] = updated_content
 
         # Refresh the display
         self.chat_display.text = self._format_chat_history()
@@ -520,29 +518,42 @@ class ChatDialog:
             messages.append(
                 {
                     "role": "system",
-                    "content": f"""You are an AI assistant helping to discuss and analyze academic papers. 
-
-{paper_context}
-
-IMPORTANT: Only provide information that is explicitly present in the paper information provided above. Do not hallucinate or make up information. If you cannot answer a question based on the provided information, say "I don't know" or "This information is not available in the provided paper content." You can reference papers by their numbers (e.g., "Paper 1", "Paper 2").""",
+                    "content": ChatPrompts.system_message(paper_context),
                 }
             )
 
             # Add conversation history (last 6 messages to stay within token limits)
-            # Skip the last entry since it's our streaming placeholder
+            # Skip the last TWO entries since the last is our streaming placeholder and second-to-last is the current user message we'll add separately
             recent_history = (
-                self.chat_history[-7:-1]
-                if len(self.chat_history) > 7
-                else self.chat_history[:-1]
+                self.chat_history[-8:-2]
+                if len(self.chat_history) > 8
+                else self.chat_history[:-2]
             )
             for entry in recent_history:
-                if entry["role"] in ["user", "assistant"] and entry["content"].strip():
+                if (
+                    entry["role"] in ["user", "assistant"]
+                    and entry["content"].strip()
+                    and not entry.get("ui_only", False)
+                ):
                     messages.append(
                         {"role": entry["role"], "content": entry["content"]}
                     )
 
             # Add current user message
             messages.append({"role": "user", "content": user_message})
+
+            # Log the complete LLM request
+            if self.log_callback:
+                self.log_callback(
+                    "chat_llm_request",
+                    f"Sending request to {self.model_name} with {len(messages)} messages",
+                )
+                # Log all messages in the conversation
+                for i, msg in enumerate(messages):
+                    self.log_callback(
+                        "chat_llm_messages",
+                        f"Message {i+1} ({msg['role']}): {msg['content']}",
+                    )
 
             # Call OpenAI API with streaming
             stream = self.openai_client.chat.completions.create(
@@ -589,10 +600,8 @@ IMPORTANT: Only provide information that is explicitly present in the paper info
             if fields["abstract"]:
                 paper_context += f"Abstract: {fields['abstract']}\n"
 
-            if fields["notes"]:
-                paper_context += f"Notes: {fields['notes']}\n"
-
             # Extract first 10 pages from PDF if available
+            pdf_content_added = False
             if fields["pdf_path"] and os.path.exists(fields["pdf_path"]):
                 try:
                     pdf_text = self._extract_first_pages(
@@ -602,6 +611,7 @@ IMPORTANT: Only provide information that is explicitly present in the paper info
                         paper_context += (
                             f"First 10 pages attached to this chat:\n{pdf_text}\n"
                         )
+                        pdf_content_added = True
                 except Exception as e:
                     if self.log_callback:
                         self.log_callback(
@@ -609,9 +619,13 @@ IMPORTANT: Only provide information that is explicitly present in the paper info
                             f"Failed to extract PDF pages for '{fields['title']}': {e}",
                         )
 
+            # Only include notes/summary if we don't have PDF content (to avoid redundancy)
+            if not pdf_content_added and fields["notes"]:
+                paper_context += f"Notes: {fields['notes']}\n"
+
             context_parts.append(paper_context)
 
-        return "Papers for discussion:\n\n" + "\n".join(context_parts)
+        return ChatPrompts.paper_context_header() + "\n".join(context_parts)
 
     def _extract_first_pages(self, pdf_path: str, max_pages: int = 10) -> str:
         """Extract text from the first N pages of a PDF."""
@@ -645,50 +659,52 @@ IMPORTANT: Only provide information that is explicitly present in the paper info
                 data_dir = Path(data_dir_env).expanduser().resolve()
             else:
                 data_dir = Path.home() / ".papercli"
-            
+
             # Create chats directory if it doesn't exist
             chats_dir = data_dir / "chats"
             chats_dir.mkdir(exist_ok=True, parents=True)
-            
+
             # Generate filename with timestamp
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             paper_titles = []
             for paper in self.papers:
                 title = getattr(paper, "title", "Unknown")
                 # Clean title for filename
-                clean_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).rstrip()
+                clean_title = "".join(
+                    c for c in title if c.isalnum() or c in (" ", "-", "_")
+                ).rstrip()
                 paper_titles.append(clean_title[:30])  # Limit length
-            
+
             if paper_titles:
                 filename = f"chat_{timestamp}_{'-'.join(paper_titles[:2])}.md"
             else:
                 filename = f"chat_{timestamp}.md"
-            
+
             filepath = chats_dir / filename
-            
+
             # Format chat content for file
             content = self._format_chat_for_file()
-            
+
             # Write to file
-            with open(filepath, 'w', encoding='utf-8') as f:
+            with open(filepath, "w", encoding="utf-8") as f:
                 f.write(content)
-            
+
             # Open file in system explorer/finder
             self._open_file_in_explorer(filepath)
-            
+
             # Log success
             if self.log_callback:
                 self.log_callback("chat_save", f"Chat saved to: {filepath}")
-            
+
             # Update status
             if self.status_bar:
                 self.status_bar.set_success(f"Chat saved to {filepath.name}")
-            
+
         except Exception as e:
             # Log error
             if self.log_callback:
                 self.log_callback("chat_save_error", f"Failed to save chat: {str(e)}")
-            
+
             # Update status
             if self.status_bar:
                 self.status_bar.set_error(f"Failed to save chat: {str(e)}")
@@ -696,13 +712,13 @@ IMPORTANT: Only provide information that is explicitly present in the paper info
     def _format_chat_for_file(self) -> str:
         """Format the chat history for saving to a file."""
         lines = []
-        
+
         # Add header
         lines.append("# Chat Session")
         lines.append(f"**Date**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         lines.append(f"**Model**: {self.model_name}")
         lines.append("")
-        
+
         # Add paper information
         if self.papers:
             lines.append("## Papers Discussed")
@@ -711,18 +727,18 @@ IMPORTANT: Only provide information that is explicitly present in the paper info
                 lines.append(f"**Paper {i}**: {fields['title']}")
                 lines.append(f"- Authors: {fields['authors']}")
                 lines.append(f"- Venue: {fields['venue']} ({fields['year']})")
-                if fields['abstract']:
+                if fields["abstract"]:
                     lines.append(f"- Abstract: {fields['abstract']}")
                 lines.append("")
-        
+
         # Add chat history
         lines.append("## Chat History")
         lines.append("")
-        
+
         for entry in self.chat_history:
             role = entry["role"]
             content = entry["content"]
-            
+
             if role == "user":
                 lines.append(f"**You**: {content}")
             elif role == "assistant":
@@ -730,9 +746,9 @@ IMPORTANT: Only provide information that is explicitly present in the paper info
                 lines.append(f"**{provider_name}**: {content}")
             elif role == "system":
                 lines.append(f"**System**: {content}")
-            
+
             lines.append("")
-        
+
         return "\n".join(lines)
 
     def _open_file_in_explorer(self, filepath: Path):
@@ -751,7 +767,9 @@ IMPORTANT: Only provide information that is explicitly present in the paper info
         except Exception as e:
             # Log error but don't fail the save operation
             if self.log_callback:
-                self.log_callback("explorer_open_error", f"Failed to open file in explorer: {str(e)}")
+                self.log_callback(
+                    "explorer_open_error", f"Failed to open file in explorer: {str(e)}"
+                )
 
     def _handle_close(self):
         """Handle closing the dialog."""
