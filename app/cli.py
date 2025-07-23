@@ -1451,7 +1451,7 @@ The doctor command helps maintain database health by:
             "F8: Filter",
             "F9: All",
             "F10: Sort",
-            "F11: Select",
+            "F11: Toggle Select",
             "F12: Clear",
             "↑↓: Nav",
         ]
@@ -2406,12 +2406,20 @@ The doctor command helps maintain database health by:
             self.status_bar.set_error(f"Error filtering papers: {e}")
 
     def handle_select_command(self):
-        """Handle /select command."""
-        self.in_select_mode = True
-        self.paper_list_control.in_select_mode = True
-        self.status_bar.set_status(
-            "Entered multi-selection mode. Use Space to select, ESC to exit.", "select"
-        )
+        """Handle /select command - toggle multi-selection mode."""
+        if self.in_select_mode:
+            # Exit select mode
+            self.in_select_mode = False
+            self.paper_list_control.in_select_mode = False
+            self.status_bar.set_status("Exited multi-selection mode.", "info")
+        else:
+            # Enter select mode
+            self.in_select_mode = True
+            self.paper_list_control.in_select_mode = True
+            self.status_bar.set_status(
+                "Entered multi-selection mode. Use Space to select, F11 or ESC to exit.",
+                "select",
+            )
 
     def handle_chat_command(self, provider: str = None):
         """Handle /chat command with optional provider."""
@@ -3064,7 +3072,7 @@ The doctor command helps maintain database health by:
         """Handle /sort command - sort papers by field."""
         if not args:
             self.status_bar.set_status(
-                "Usage: /sort <field> [asc|desc]. Fields: title, authors, venue, year",
+                "Usage: /sort <field> [asc|desc]. Fields: title, authors, venue, year, paper_type, added_date, modified_date",
                 "warning",
             )
             return
@@ -3072,7 +3080,15 @@ The doctor command helps maintain database health by:
         field = args[0].lower()
         order = args[1].lower() if len(args) > 1 else "asc"
 
-        valid_fields = ["title", "authors", "venue", "year"]
+        valid_fields = [
+            "title",
+            "authors",
+            "venue",
+            "year",
+            "paper_type",
+            "added_date",
+            "modified_date",
+        ]
         valid_orders = ["asc", "desc", "ascending", "descending"]
 
         if field not in valid_fields:
@@ -3108,6 +3124,14 @@ The doctor command helps maintain database health by:
                 )
             elif field == "year":
                 self.current_papers.sort(key=lambda p: p.year or 0, reverse=reverse)
+            elif field == "paper_type":
+                self.current_papers.sort(
+                    key=lambda p: p.paper_type or "", reverse=reverse
+                )
+            elif field == "added_date":
+                self.current_papers.sort(key=lambda p: p.added_date, reverse=reverse)
+            elif field == "modified_date":
+                self.current_papers.sort(key=lambda p: p.modified_date, reverse=reverse)
 
             # Update paper list control
             self.paper_list_control = PaperListControl(self.current_papers)

@@ -10,6 +10,7 @@ import re
 import secrets
 import shutil
 import subprocess
+import tempfile
 import threading
 import traceback
 import unicodedata
@@ -182,7 +183,7 @@ def normalize_author_names(author_list):
     if isinstance(author_list, str):
         author_text = author_list.strip()
         # Normalize whitespace and newlines in author string
-        author_text = re.sub(r'\s+', ' ', author_text)
+        author_text = re.sub(r"\s+", " ", author_text)
 
         # Check if it looks like "Lastname, Firstname, Lastname, Firstname" format
         # This happens when comma-separated pairs without " and " separators
@@ -465,7 +466,7 @@ class PaperService:
                     except Exception:
                         # Log this error, but don't prevent db deletion
                         pass
-                
+
                 session.delete(paper)
                 session.commit()
                 return True
@@ -976,7 +977,9 @@ class MetadataExtractor:
         """Extract metadata from arXiv."""
         # Clean arXiv ID while preserving version numbers
         arxiv_id = re.sub(r"arxiv[:\s]*", "", arxiv_id, flags=re.IGNORECASE)
-        arxiv_id = re.sub(r"[^\d\.v]", "", arxiv_id)  # Allow digits, dots, and 'v' for versions
+        arxiv_id = re.sub(
+            r"[^\d\.v]", "", arxiv_id
+        )  # Allow digits, dots, and 'v' for versions
 
         try:
             url = f"http://export.arxiv.org/api/query?id_list={arxiv_id}"
@@ -1042,7 +1045,9 @@ class MetadataExtractor:
             return {
                 "title": title,
                 "abstract": abstract,
-                "authors": " and ".join(authors) if authors else "",  # Convert to string format for consistency
+                "authors": (
+                    " and ".join(authors) if authors else ""
+                ),  # Convert to string format for consistency
                 "year": year,
                 "preprint_id": f"arXiv {arxiv_id}",  # Store as "arXiv 2505.15134"
                 "category": category,
@@ -1075,8 +1080,9 @@ class MetadataExtractor:
                 raise Exception("Empty BibTeX response")
 
             # Write to temporary file and use existing BibTeX extraction
-            import tempfile
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.bib', delete=False, encoding='utf-8') as tmp_file:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".bib", delete=False, encoding="utf-8"
+            ) as tmp_file:
                 tmp_file.write(bibtex_content)
                 tmp_file_path = tmp_file.name
 
@@ -1085,7 +1091,7 @@ class MetadataExtractor:
                 papers_metadata = self.extract_from_bibtex(tmp_file_path)
                 if not papers_metadata:
                     raise Exception("No metadata extracted from BibTeX")
-                
+
                 # Take the first entry
                 metadata = papers_metadata[0]
 
@@ -1104,7 +1110,6 @@ class MetadataExtractor:
 
             finally:
                 # Clean up temporary file
-                import os
                 try:
                     os.unlink(tmp_file_path)
                 except OSError:
@@ -1319,7 +1324,9 @@ Respond in this exact JSON format:
         return {
             "title": title,
             "abstract": abstract,
-            "authors": " and ".join(authors) if authors else "",  # Convert to string format for consistency
+            "authors": (
+                " and ".join(authors) if authors else ""
+            ),  # Convert to string format for consistency
             "year": year,
             "venue_full": venue_data.get("venue_full", venue_info),
             "venue_acronym": venue_data.get("venue_acronym", ""),
@@ -1384,7 +1391,9 @@ Respond in this exact JSON format:
         return {
             "title": title,
             "abstract": abstract,
-            "authors": " and ".join(authors) if authors else "",  # Convert to string format for consistency
+            "authors": (
+                " and ".join(authors) if authors else ""
+            ),  # Convert to string format for consistency
             "year": year,
             "venue_full": venue_data.get("venue_full", venue_info),
             "venue_acronym": venue_data.get("venue_acronym", ""),
@@ -1776,7 +1785,9 @@ Paper text:
                     authors.append(f"{given} {family}")
                 elif family:
                     authors.append(family)
-            metadata["authors"] = " and ".join(authors) if authors else ""  # Convert to string format for consistency
+            metadata["authors"] = (
+                " and ".join(authors) if authors else ""
+            )  # Convert to string format for consistency
 
             # Abstract
             if "abstract" in work:
@@ -2391,7 +2402,9 @@ class SystemService:
             if source == "arxiv":
                 # Clean arXiv ID while preserving version numbers
                 clean_id = re.sub(r"arxiv[:\s]*", "", identifier, flags=re.IGNORECASE)
-                clean_id = re.sub(r"[^\d\.v]", "", clean_id)  # Allow digits, dots, and 'v' for versions
+                clean_id = re.sub(
+                    r"[^\d\.v]", "", clean_id
+                )  # Allow digits, dots, and 'v' for versions
                 pdf_url = f"https://arxiv.org/pdf/{clean_id}.pdf"
             elif source == "openreview":
                 pdf_url = f"https://openreview.net/pdf?id={identifier}"
@@ -2400,13 +2413,15 @@ class SystemService:
 
             # Use PDFManager to handle everything
             pdf_manager = PDFManager()
-            
+
             # First generate temporary filename for download
             temp_filename = pdf_manager._generate_pdf_filename(paper_data, pdf_url)
             temp_filepath = os.path.join(download_dir, temp_filename)
 
             # Download to temporary path
-            pdf_path, error_msg = pdf_manager._download_pdf_from_url(pdf_url, temp_filepath)
+            pdf_path, error_msg = pdf_manager._download_pdf_from_url(
+                pdf_url, temp_filepath
+            )
 
             if error_msg:
                 return None, error_msg
@@ -2414,7 +2429,7 @@ class SystemService:
             # Now regenerate filename with content-based hash
             final_filename = pdf_manager._generate_pdf_filename(paper_data, pdf_path)
             final_filepath = os.path.join(download_dir, final_filename)
-            
+
             # If filename changed, rename the file
             if temp_filepath != final_filepath:
                 try:
@@ -2965,10 +2980,12 @@ class DatabaseHealthService:
                     os.remove(f)
                     cleaned["pdf_files"] += 1
                     cleaned_files.append(filename)
-                    
+
                     # Log individual file deletion if log callback is available
-                    if hasattr(self, 'log_callback') and self.log_callback:
-                        self.log_callback("database_cleanup", f"Deleted orphaned PDF: {filename}")
+                    if hasattr(self, "log_callback") and self.log_callback:
+                        self.log_callback(
+                            "database_cleanup", f"Deleted orphaned PDF: {filename}"
+                        )
                 except Exception:
                     pass  # ignore errors on individual file deletions
 

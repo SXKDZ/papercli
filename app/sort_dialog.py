@@ -21,12 +21,12 @@ class SortDialog:
         # Available fields for sorting
         self.sort_fields = [
             ("title", "Title"),
-            ("author_names", "Authors"),
-            ("venue_full", "Venue"),
+            ("authors", "Authors"),
+            ("venue", "Venue"),
             ("year", "Year"),
             ("paper_type", "Type"),
-            ("created_at", "Date Added"),
-            ("updated_at", "Date Modified"),
+            ("added_date", "Date Added"),
+            ("modified_date", "Date Modified"),
         ]
 
         # Sort order options
@@ -54,6 +54,21 @@ class SortDialog:
             default="asc",
         )
         self.order_list.show_scrollbar = False
+
+        # Add custom key bindings to override RadioList defaults
+        kb_override = KeyBindings()
+
+        @kb_override.add("enter")
+        def _(event):
+            self._handle_ok()
+
+        # Apply to both RadioList controls
+        self.field_list.control.key_bindings = merge_key_bindings(
+            [self.field_list.control.key_bindings or KeyBindings(), kb_override]
+        )
+        self.order_list.control.key_bindings = merge_key_bindings(
+            [self.order_list.control.key_bindings or KeyBindings(), kb_override]
+        )
 
         # Labels and lists in columns
         field_column = HSplit(
@@ -130,21 +145,8 @@ class SortDialog:
         return self.field_list
 
     def _add_key_bindings(self):
-        """Add key bindings for the dialog."""
-        kb = KeyBindings()
-
-        @kb.add("enter")
-        def _(event):
-            self._handle_ok()
-
-        @kb.add("escape")
-        def _(event):
-            self._handle_cancel()
-
-        # Apply key bindings like EditDialog does
-        self.body_container.key_bindings = merge_key_bindings(
-            [self.body_container.key_bindings or KeyBindings(), kb]
-        )
+        """Key bindings are now handled in _create_layout after dialog creation."""
+        pass
 
     def __pt_container__(self):
         return self.dialog

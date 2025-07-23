@@ -12,7 +12,7 @@ from typing import Dict, Optional, Tuple
 import requests
 from packaging import version
 
-__version__ = "1.1.4"
+__version__ = "1.1.5"
 
 
 class VersionManager:
