@@ -22,7 +22,10 @@ IMPORTANT: Only provide information that is explicitly present in the paper info
 
 {context_parts}
 
-You can reference these papers by their numbers (e.g., "Paper 1", "Paper 2"). Please help me analyze and understand these papers, compare different approaches, explain key concepts, or discuss how they relate to each other."""
+You can reference these papers by their numbers (e.g., "Paper 1", "Paper 2"). Please help me analyze and understand these papers, compare different approaches, explain key concepts, or discuss how they relate to each other.
+
+IMPORTANT: Only provide information that is explicitly present in the paper information provided above. Do not hallucinate or make up information. If you cannot answer a question based on the provided information, say "I don't know" or "This information is not available in the provided paper content."
+"""
 
     @staticmethod
     def initial_single_paper(paper_details: str) -> str:

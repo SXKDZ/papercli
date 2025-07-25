@@ -1330,8 +1330,14 @@ Respond in this exact JSON format:
         # Extract authors
         authors = []
         authors_data = content.get("authors", {}).get("value", [])
+        
         if authors_data:
             authors = [author.strip() for author in authors_data if author.strip()]
+        else:
+            # Fallback: try to extract authors from _bibtex field
+            bibtex_content = content.get("_bibtex", {}).get("value", "")
+            if bibtex_content:
+                authors = self._extract_authors_from_bibtex(bibtex_content)
 
         # Extract venue information using LLM
         venue_info = content.get("venue", {}).get("value", "")
@@ -1358,6 +1364,38 @@ Respond in this exact JSON format:
             "category": None,
             "pdf_path": None,
         }
+
+    def _extract_authors_from_bibtex(self, bibtex_content: str) -> List[str]:
+        """Extract authors from BibTeX content."""
+        try:
+            import re
+            
+            # Look for author field in bibtex
+            author_match = re.search(r'author\s*=\s*\{([^}]+)\}', bibtex_content, re.IGNORECASE)
+            if not author_match:
+                return []
+            
+            author_string = author_match.group(1).strip()
+            
+            # Skip if it's just "Anonymous" (common in workshop submissions)
+            if author_string.lower() in ['anonymous', 'anon']:
+                return []
+            
+            # Split by " and " (standard BibTeX format)
+            if " and " in author_string:
+                authors = [author.strip() for author in author_string.split(" and ")]
+            else:
+                # Single author
+                authors = [author_string]
+            
+            # Filter out empty authors
+            authors = [author for author in authors if author.strip()]
+            
+            return authors
+            
+        except Exception:
+            # Silently fail if bibtex parsing fails
+            return []
 
     def _parse_openreview_v1_response(
         self, data: Dict[str, Any], openreview_id: str
@@ -1393,10 +1431,20 @@ Respond in this exact JSON format:
         # Extract authors
         authors = []
         authors_data = content.get("authors", [])
+        
         if isinstance(authors_data, dict):
             authors_data = authors_data.get("value", [])
+        
         if authors_data:
             authors = [author.strip() for author in authors_data if author.strip()]
+        else:
+            # Fallback: try to extract authors from _bibtex field
+            bibtex_content = content.get("_bibtex", "")
+            if isinstance(bibtex_content, dict):
+                bibtex_content = bibtex_content.get("value", "")
+            
+            if bibtex_content:
+                authors = self._extract_authors_from_bibtex(bibtex_content)
 
         # Extract venue information using LLM
         venue_info = content.get("venue", "")
@@ -2242,13 +2290,6 @@ class ChatService:
                 paper_context = f"Paper {i}: {paper.title}\n"
                 paper_context += f"Authors: {paper.author_names}\n"
                 paper_context += f"Venue: {paper.venue_display} ({paper.year or 'N/A'})\n"
-
-                if paper.abstract:
-                    paper_context += f"Abstract: {paper.abstract}\n"
-
-                if paper.notes:
-                    paper_context += f"Notes: {paper.notes}\n"
-
                 context_parts.append(paper_context)
 
             # Create simple prompt for external LLM use

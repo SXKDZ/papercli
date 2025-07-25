@@ -608,12 +608,9 @@ class EditDialog:
                         }
                         # Rebuild form
                         self.body_container.children = self._build_body_components()
-                        # Restore values that weren't overwritten
+                        # Restore ALL current values first
                         for field_name, field_value in current_values.items():
-                            if (
-                                field_name in self.input_fields
-                                and field_name not in field_mapping.values()
-                            ):
+                            if field_name in self.input_fields:
                                 self.input_fields[field_name].text = field_value
                         get_app().invalidate()
                     continue
