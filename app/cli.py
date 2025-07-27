@@ -1564,6 +1564,10 @@ The doctor command helps maintain database health by:
                 # Paper list
                 ("selected", "bold #f8f8f2 bg:#44475a"),  # Current paper row
                 (
+                    "selected-bg",
+                    "bold #f8f8f2 bg:#888888",
+                ),  # Selected item with much lighter gray background
+                (
                     "editing",
                     "bold #ffffff bg:#bd93f9",
                 ),  # Edit mode with white text on purple background

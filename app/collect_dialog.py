@@ -6,9 +6,10 @@ import traceback
 from typing import List, Optional
 
 from prompt_toolkit.application import get_app
+from prompt_toolkit.data_structures import Point
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout.containers import HSplit, VSplit, Window
+from prompt_toolkit.layout.containers import HSplit, ScrollOffsets, VSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.widgets import Button, Dialog, Frame, TextArea
@@ -35,9 +36,12 @@ class EditableList:
             key_bindings=self._get_key_bindings(),
             focusable=True,
             show_cursor=False,
+            get_cursor_position=self._get_cursor_position,
         )
         self.window = Window(
-            content=self.control, height=Dimension(min=16, preferred=18)
+            content=self.control,
+            height=Dimension(min=16, preferred=18),
+            scroll_offsets=ScrollOffsets(top=2, bottom=2),
         )
 
     def set_items(self, items: List[str]):
@@ -46,10 +50,12 @@ class EditableList:
             min(self.selected_index, len(self.items) - 1) if self.items else 0
         )
         self._trigger_select()
+        self._scroll_to_selected()
 
     def add_item(self, item: str):
         self.items.append(item)
         self._trigger_select()
+        self._scroll_to_selected()
 
     def remove_current_item(self):
         if 0 <= self.selected_index < len(self.items):
@@ -57,6 +63,7 @@ class EditableList:
             if self.selected_index >= len(self.items):
                 self.selected_index = len(self.items) - 1
             self._trigger_select()
+            self._scroll_to_selected()
 
     def get_current_item(self) -> Optional[str]:
         if 0 <= self.selected_index < len(self.items):
@@ -66,6 +73,25 @@ class EditableList:
     def _trigger_select(self):
         if self.on_select:
             self.on_select(self)
+
+    def _get_cursor_position(self):
+        """Return the cursor position for the currently selected item."""
+        if self.editing_mode:
+            # During editing, show cursor within the edit text
+            edit_prefix_len = 2  # Length of "✎ " prefix
+            cursor_col = edit_prefix_len + self.cursor_position
+            return Point(x=cursor_col, y=self.selected_index)
+        # For non-editing mode, still return position for scrolling but cursor won't show
+        if len(self.items) > 0 and 0 <= self.selected_index < len(self.items):
+            return Point(x=2, y=self.selected_index)
+        return Point(x=0, y=0)
+
+    def _scroll_to_selected(self):
+        """Scroll the window to make the selected item visible."""
+        # Force a redraw to update the cursor position and trigger scrolling
+        app = get_app()
+        if app:
+            app.invalidate()
 
     def _get_formatted_text(self):
         if not self.items:
@@ -90,19 +116,22 @@ class EditableList:
 
             if i == self.selected_index:
                 if self.editing_mode:
-                    # Show edit cursor with special edit styling and cursor indicator at the correct position
-                    text_before_cursor = self.edit_text[: self.cursor_position]
-                    text_after_cursor = self.edit_text[self.cursor_position :]
-                    display_text = f"✎ {text_before_cursor}|{text_after_cursor}"
-                    # Pad the text to highlight the full row width
-                    padding = " " * max(0, 40 - len(display_text))
+                    # Show edit mode without the cursor indicator (real cursor handles this)
+                    display_text = f"✎ {self.edit_text}"
+                    # Pad the text to highlight the full row width (same as selection)
+                    padding = " " * max(0, 50 - len(display_text))
                     result.append(("class:editing", display_text + padding))
                 else:
-                    # Show selection with italic if pending change
+                    # Show selection with > symbol, background color and italic if pending change
+                    display_text = f"> {item}"
+                    # Pad the text to highlight the full row width
+                    padding = " " * max(0, 50 - len(display_text))
                     if is_pending_change:
-                        result.append(("class:selected italic", f"> {item}"))
+                        result.append(
+                            ("class:selected-bg italic", display_text + padding)
+                        )
                     else:
-                        result.append(("class:selected", f"> {item}"))
+                        result.append(("class:selected-bg", display_text + padding))
             else:
                 # Show regular item with italic if pending change
                 if is_pending_change:
@@ -120,12 +149,14 @@ class EditableList:
             if not self.editing_mode and self.selected_index > 0:
                 self.selected_index -= 1
                 self._trigger_select()
+                self._scroll_to_selected()
 
         @kb.add("down")
         def move_down(event):
             if not self.editing_mode and self.selected_index < len(self.items) - 1:
                 self.selected_index += 1
                 self._trigger_select()
+                self._scroll_to_selected()
 
         @kb.add("enter")
         def handle_enter(event):
@@ -140,6 +171,7 @@ class EditableList:
                     self.editing_mode = False
                     self.edit_text = ""
                     self.cursor_position = 0
+                    self.control.show_cursor = False  # Hide cursor when done editing
                     self._trigger_select()
             elif self.editable:
                 # Enter edit mode when not editing
@@ -148,6 +180,7 @@ class EditableList:
                     self.editing_mode = True
                     self.edit_text = current
                     self.cursor_position = len(current)  # Start cursor at end
+                    self.control.show_cursor = True  # Show cursor when editing
 
         @kb.add("escape")
         def escape_edit(event):
@@ -155,6 +188,7 @@ class EditableList:
                 self.editing_mode = False
                 self.edit_text = ""
                 self.cursor_position = 0
+                self.control.show_cursor = False  # Hide cursor when canceling edit
             else:
                 # Allow escape to propagate to parent dialog
                 pass
@@ -170,6 +204,7 @@ class EditableList:
                 self.editing_mode = False
                 self.edit_text = ""
                 self.cursor_position = 0
+                self.control.show_cursor = False  # Hide cursor when saving edit
                 self._trigger_select()
 
         @kb.add("left")
@@ -215,6 +250,7 @@ class EditableList:
                 self.editing_mode = False
                 self.edit_text = ""
                 self.cursor_position = 0
+                self.control.show_cursor = False  # Hide cursor when canceling edit
 
         # Handle text input during editing
         @kb.add("<any>")

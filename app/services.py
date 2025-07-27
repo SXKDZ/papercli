@@ -38,7 +38,7 @@ from titlecase import titlecase
 
 from .database import get_db_manager, get_db_session, get_pdf_directory
 from .models import Author, Collection, Paper, PaperAuthor
-from .prompts import ChatPrompts, SummaryPrompts, MetadataPrompts
+from .prompts import ChatPrompts, MetadataPrompts, SummaryPrompts
 
 
 def fix_broken_lines(text: str) -> str:
@@ -1330,7 +1330,7 @@ Respond in this exact JSON format:
         # Extract authors
         authors = []
         authors_data = content.get("authors", {}).get("value", [])
-        
+
         if authors_data:
             authors = [author.strip() for author in authors_data if author.strip()]
         else:
@@ -1369,30 +1369,32 @@ Respond in this exact JSON format:
         """Extract authors from BibTeX content."""
         try:
             import re
-            
+
             # Look for author field in bibtex
-            author_match = re.search(r'author\s*=\s*\{([^}]+)\}', bibtex_content, re.IGNORECASE)
+            author_match = re.search(
+                r"author\s*=\s*\{([^}]+)\}", bibtex_content, re.IGNORECASE
+            )
             if not author_match:
                 return []
-            
+
             author_string = author_match.group(1).strip()
-            
+
             # Skip if it's just "Anonymous" (common in workshop submissions)
-            if author_string.lower() in ['anonymous', 'anon']:
+            if author_string.lower() in ["anonymous", "anon"]:
                 return []
-            
+
             # Split by " and " (standard BibTeX format)
             if " and " in author_string:
                 authors = [author.strip() for author in author_string.split(" and ")]
             else:
                 # Single author
                 authors = [author_string]
-            
+
             # Filter out empty authors
             authors = [author for author in authors if author.strip()]
-            
+
             return authors
-            
+
         except Exception:
             # Silently fail if bibtex parsing fails
             return []
@@ -1431,10 +1433,10 @@ Respond in this exact JSON format:
         # Extract authors
         authors = []
         authors_data = content.get("authors", [])
-        
+
         if isinstance(authors_data, dict):
             authors_data = authors_data.get("value", [])
-        
+
         if authors_data:
             authors = [author.strip() for author in authors_data if author.strip()]
         else:
@@ -1442,7 +1444,7 @@ Respond in this exact JSON format:
             bibtex_content = content.get("_bibtex", "")
             if isinstance(bibtex_content, dict):
                 bibtex_content = bibtex_content.get("value", "")
-            
+
             if bibtex_content:
                 authors = self._extract_authors_from_bibtex(bibtex_content)
 
@@ -2289,32 +2291,36 @@ class ChatService:
             for i, paper in enumerate(papers, 1):
                 paper_context = f"Paper {i}: {paper.title}\n"
                 paper_context += f"Authors: {paper.author_names}\n"
-                paper_context += f"Venue: {paper.venue_display} ({paper.year or 'N/A'})\n"
+                paper_context += (
+                    f"Venue: {paper.venue_display} ({paper.year or 'N/A'})\n"
+                )
                 context_parts.append(paper_context)
 
             # Create simple prompt for external LLM use
-            full_prompt = ChatPrompts.clipboard_prompt(len(papers), chr(10).join(context_parts))
+            full_prompt = ChatPrompts.clipboard_prompt(
+                len(papers), chr(10).join(context_parts)
+            )
 
             # Copy to clipboard
             pyperclip.copy(full_prompt)
-            
+
             return {
                 "success": True,
                 "message": f"Prompt for {len(papers)} paper(s) copied to clipboard",
-                "prompt_length": len(full_prompt)
+                "prompt_length": len(full_prompt),
             }
 
         except ImportError:
             return {
                 "success": False,
                 "message": "Clipboard functionality unavailable (pyperclip not installed)",
-                "prompt_length": 0
+                "prompt_length": 0,
             }
         except Exception as e:
             return {
                 "success": False,
                 "message": f"Error copying prompt to clipboard: {str(e)}",
-                "prompt_length": 0
+                "prompt_length": 0,
             }
 
     def open_chat_interface(self, papers: List[Paper], provider: str = "claude"):
@@ -2322,7 +2328,7 @@ class ChatService:
         try:
             # First, copy the prompt to clipboard
             clipboard_result = self.copy_prompt_to_clipboard(papers)
-            
+
             # Open provider-specific homepage in browser
             provider_urls = {
                 "claude": "https://claude.ai",
@@ -2365,16 +2371,18 @@ class ChatService:
             # Prepare result message
             result_parts = []
             provider_name = provider.title()
-            
+
             # Include clipboard result
             if clipboard_result["success"]:
                 result_parts.append(clipboard_result["message"])
             else:
                 result_parts.append(f"Warning: {clipboard_result['message']}")
-            
+
             # Add browser/PDF opening results
             if opened_files:
-                result_parts.append(f"Opened {provider_name} and {len(opened_files)} PDF file(s)")
+                result_parts.append(
+                    f"Opened {provider_name} and {len(opened_files)} PDF file(s)"
+                )
             else:
                 result_parts.append(f"Opened {provider_name}")
 
@@ -2385,14 +2393,14 @@ class ChatService:
                     "success": True,
                     "message": "; ".join(result_parts),
                     "errors": failed_files,
-                    "clipboard_success": clipboard_result["success"]
+                    "clipboard_success": clipboard_result["success"],
                 }
 
             return {
-                "success": True, 
-                "message": "; ".join(result_parts), 
+                "success": True,
+                "message": "; ".join(result_parts),
                 "errors": [],
-                "clipboard_success": clipboard_result["success"]
+                "clipboard_success": clipboard_result["success"],
             }
 
         except Exception as e:
@@ -2453,31 +2461,25 @@ class SystemService:
     def copy_to_clipboard(self, text: str) -> bool:
         """Copy text to system clipboard."""
         try:
-            # Try using pyperclip if available
-            try:
-                pyperclip.copy(text)
-                return True
-            except ImportError:
-                pass
-
-            # Fallback to system commands
-            if os.name == "nt":  # Windows
-                subprocess.run(["clip"], input=text.encode(), check=True)
-            elif os.name == "posix":  # macOS and Linux
-                if os.uname().sysname == "Darwin":  # macOS
-                    subprocess.run(["pbcopy"], input=text.encode(), check=True)
-                else:  # Linux
-                    subprocess.run(
-                        ["xclip", "-selection", "clipboard"],
-                        input=text.encode(),
-                        check=True,
-                    )
-
+            pyperclip.copy(text)
             return True
+        except Exception:
+            pass
 
-        except Exception as e:
-            # Return False and let the caller handle the error message
-            return False
+        # Fallback to system commands
+        if os.name == "nt":  # Windows
+            subprocess.run(["clip"], input=text.encode(), check=True)
+        elif os.name == "posix":  # macOS and Linux
+            if os.uname().sysname == "Darwin":  # macOS
+                subprocess.run(["pbcopy"], input=text.encode(), check=True)
+            else:  # Linux
+                subprocess.run(
+                    ["xclip", "-selection", "clipboard"],
+                    input=text.encode(),
+                    check=True,
+                )
+
+        return True
 
     def download_pdf(
         self,
@@ -2534,7 +2536,7 @@ class SystemService:
                 try:
                     shutil.move(temp_filepath, final_filepath)
                     pdf_path = final_filepath
-                except Exception as e:
+                except Exception:
                     # If move fails, keep the temporary file
                     pass
 
