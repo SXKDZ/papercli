@@ -49,10 +49,6 @@ class ChatDialog:
         # Chat history
         self.chat_history = []
 
-        # Input history for Up/Down navigation
-        self.input_history = []
-        self.history_index = -1
-
         # Initialize the chat with paper details
         self._initialize_chat()
 
@@ -195,18 +191,20 @@ class ChatDialog:
         self.chat_display = TextArea(
             text=self._format_chat_history(),
             read_only=True,
-            wrap_lines=True,
+            wrap_lines=True,  # Enable word wrapping for better readability
             scrollbar=True,
             height=Dimension(
-                min=25, preferred=35, max=40
-            ),  # Longer height for better viewing
+                min=35, preferred=45, max=50
+            ),  # Larger height for better viewing
         )
 
         # User input area
         self.user_input = TextArea(
             text="",
             multiline=True,
-            wrap_lines=True,
+            wrap_lines=True,  # Enable word wrapping for better readability
+            scrollbar=True,
+            height=Dimension(min=5, max=5),  # Fixed height for input area
         )
 
         # Buttons
@@ -220,12 +218,19 @@ class ChatDialog:
             handler=self._handle_save,
         )
 
+        self.close_button = Button(
+            text="Close",
+            handler=self._handle_close,
+        )
+
         # Button layout (vertical)
         button_container = HSplit(
             [
                 self.send_button,
                 Window(height=Dimension.exact(1)),  # Spacer
                 self.save_button,
+                Window(height=Dimension.exact(1)),  # Spacer
+                self.close_button,
             ]
         )
 
@@ -255,7 +260,7 @@ class ChatDialog:
             body=self.container,
             with_background=False,
             modal=True,
-            width=Dimension(min=160, preferred=180),
+            width=Dimension(min=200, preferred=220),
         )
 
     def _setup_key_bindings(self):
@@ -280,8 +285,65 @@ class ChatDialog:
                 if hasattr(current_control, "buffer"):
                     current_control.buffer.insert_text("\n")
 
+        @kb.add("<any>")
+        def _(event):
+            # Handle all character input to prevent it from reaching main app
+            if event.data and len(event.data) == 1:
+                if event.data.isprintable():
+                    current_control = event.app.layout.current_control
+                    if hasattr(current_control, "buffer"):
+                        current_control.buffer.insert_text(event.data)
+                # For non-printable characters (like escape sequence remnants), just ignore them
+
+        @kb.add("up")
+        def _(event):
+            # Handle up arrow - move cursor up in current TextArea
+            current_control = event.app.layout.current_control
+            if hasattr(current_control, "buffer"):
+                current_control.buffer.cursor_up()
+
+        @kb.add("down")
+        def _(event):
+            # Handle down arrow - move cursor down in current TextArea
+            current_control = event.app.layout.current_control
+            if hasattr(current_control, "buffer"):
+                current_control.buffer.cursor_down()
+
+        @kb.add("home")
+        def _(event):
+            # Handle Home key - move cursor to beginning of line
+            current_control = event.app.layout.current_control
+            if hasattr(current_control, "buffer"):
+                current_control.buffer.cursor_position = (
+                    current_control.buffer.document.get_start_of_line_position()
+                )
+
+        @kb.add("end")
+        def _(event):
+            # Handle End key - move cursor to end of line
+            current_control = event.app.layout.current_control
+            if hasattr(current_control, "buffer"):
+                current_control.buffer.cursor_position = (
+                    current_control.buffer.document.get_end_of_line_position()
+                )
+
+        @kb.add("pageup")
+        def _(event):
+            # Handle Page Up - scroll up multiple lines
+            current_control = event.app.layout.current_control
+            if hasattr(current_control, "buffer"):
+                current_control.buffer.cursor_up(count=10)
+
+        @kb.add("pagedown")
+        def _(event):
+            # Handle Page Down - scroll down multiple lines
+            current_control = event.app.layout.current_control
+            if hasattr(current_control, "buffer"):
+                current_control.buffer.cursor_down(count=10)
+
         @kb.add("escape")
         def _(event):
+            # Close dialog on escape key
             self._handle_close()
 
         @kb.add("c-k")
@@ -305,62 +367,12 @@ class ChatDialog:
             if hasattr(current_control, "buffer"):
                 current_control.buffer.delete()
 
-        @kb.add("up")
-        def _(event):
-            # Navigate input history backward when in input field, otherwise scroll chat
-            if event.app.layout.current_window == self.user_input.window:
-                if (
-                    self.input_history
-                    and self.history_index < len(self.input_history) - 1
-                ):
-                    self.history_index += 1
-                    self.user_input.text = self.input_history[-(self.history_index + 1)]
-                    self.user_input.buffer.cursor_position = len(self.user_input.text)
-            else:
-                # Scroll chat display up
-                self.chat_display.buffer.cursor_up(count=1)
-
-        @kb.add("down")
-        def _(event):
-            # Navigate input history forward when in input field, otherwise scroll chat
-            if event.app.layout.current_window == self.user_input.window:
-                if self.history_index > 0:
-                    self.history_index -= 1
-                    self.user_input.text = self.input_history[-(self.history_index + 1)]
-                    self.user_input.buffer.cursor_position = len(self.user_input.text)
-                elif self.history_index == 0:
-                    self.history_index = -1
-                    self.user_input.text = ""
-            else:
-                # Scroll chat display down
-                self.chat_display.buffer.cursor_down(count=1)
-
-        @kb.add("pageup")
-        def _(event):
-            # Scroll chat display up
-            if event.app.layout.current_window == self.chat_display.window:
-                self.chat_display.buffer.cursor_up(count=10)
-
-        @kb.add("pagedown")
-        def _(event):
-            # Scroll chat display down
-            if event.app.layout.current_window == self.chat_display.window:
-                self.chat_display.buffer.cursor_down(count=10)
-
         @kb.add("space")
         def _(event):
             # Handle space key specifically
             current_control = event.app.layout.current_control
             if hasattr(current_control, "buffer"):
                 current_control.buffer.insert_text(" ")
-
-        @kb.add("<any>")
-        def _(event):
-            # Handle all character input to prevent it from reaching main app
-            if event.data and len(event.data) == 1 and event.data.isprintable():
-                current_control = event.app.layout.current_control
-                if hasattr(current_control, "buffer"):
-                    current_control.buffer.insert_text(event.data)
 
         # Apply key bindings to the container
         self.container.key_bindings = merge_key_bindings(
@@ -403,11 +415,6 @@ class ChatDialog:
         user_message = self.user_input.text.strip()
         if not user_message:
             return
-
-        # Add to input history for Up/Down navigation
-        if user_message not in self.input_history:
-            self.input_history.append(user_message)
-        self.history_index = -1
 
         # Add user message to history
         self.chat_history.append({"role": "user", "content": user_message})

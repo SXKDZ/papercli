@@ -78,6 +78,7 @@ class EditDialog:
                 "title",
                 "author_names",
                 "venue_full",
+                "venue_acronym",
                 "year",
                 "volume",
                 "issue",

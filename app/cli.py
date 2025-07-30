@@ -3,7 +3,6 @@ Main CLI application for PaperCLI.
 """
 
 import os
-import shutil
 import threading
 import traceback
 from datetime import datetime
@@ -37,11 +36,11 @@ from prompt_toolkit.widgets import Button, Dialog, Frame, Label
 from .add_dialog import AddDialog
 from .chat_dialog import ChatDialog
 from .collect_dialog import CollectDialog
-from .database import get_db_session, get_pdf_directory
 from .edit_dialog import EditDialog
 from .filter_dialog import FilterDialog
 from .models import Paper
 from .services import (
+    AddPaperService,
     AuthorService,
     BackgroundOperationService,
     ChatService,
@@ -51,7 +50,6 @@ from .services import (
     LLMSummaryService,
     MetadataExtractor,
     PaperService,
-    PDFManager,
     PDFMetadataExtractionService,
     SearchService,
     SystemService,
@@ -388,6 +386,9 @@ Indicators (in the first column):
         self.chat_service = ChatService(self._add_log)
         self.system_service = SystemService()
         self.db_health_service = DatabaseHealthService(log_callback=self._add_log)
+        self.add_paper_service = AddPaperService(
+            self.paper_service, self.metadata_extractor, self.system_service
+        )
 
         # Background operation service (initialized after status_bar)
         self.background_service = None
@@ -1738,21 +1739,21 @@ The doctor command helps maintain database health by:
             if len(args) > 0:
                 # Quick add from command line arguments
                 if args[0] == "arxiv" and len(args) > 1:
-                    self._quick_add_arxiv(args[1])
+                    self._add_arxiv_paper(args[1])
                 elif args[0] == "dblp" and len(args) > 1:
-                    self._quick_add_dblp(
+                    self._add_dblp_paper(
                         " ".join(args[1:])
                     )  # Support URLs with parameters
                 elif args[0] == "openreview" and len(args) > 1:
-                    self._quick_add_openreview(args[1])
+                    self._add_openreview_paper(args[1])
                 elif args[0] == "doi" and len(args) > 1:
-                    self._quick_add_doi(" ".join(args[1:]))
+                    self._add_doi_paper(" ".join(args[1:]))
                 elif args[0] == "pdf" and len(args) > 1:
-                    self._quick_add_pdf(" ".join(args[1:]))
+                    self._add_pdf_paper(" ".join(args[1:]))
                 elif args[0] == "bib" and len(args) > 1:
-                    self._quick_add_bib(" ".join(args[1:]))
+                    self._add_bib_papers(" ".join(args[1:]))
                 elif args[0] == "ris" and len(args) > 1:
-                    self._quick_add_ris(" ".join(args[1:]))
+                    self._add_ris_papers(" ".join(args[1:]))
                 elif args[0] == "manual":
                     self._add_manual_paper()
                 else:
@@ -1767,50 +1768,13 @@ The doctor command helps maintain database health by:
         except Exception as e:
             self.status_bar.set_error(f"Error adding paper: {e}")
 
-    def _quick_add_arxiv(self, arxiv_id: str):
-        """Quickly add a paper from arXiv using background operation."""
+    def _add_arxiv_paper(self, arxiv_id: str):
+        """Add a paper from arXiv using the add paper service."""
 
-        def complete_arxiv_operation():
-            # Extract metadata from arXiv
-            metadata = self.metadata_extractor.extract_from_arxiv(arxiv_id)
+        def complete_operation():
+            return self.add_paper_service.add_arxiv_paper(arxiv_id)
 
-            # Prepare paper data (without PDF initially)
-            paper_data = {
-                "title": metadata["title"],
-                "abstract": metadata.get("abstract", ""),
-                "authors": metadata.get("authors", ""),
-                "year": metadata.get("year"),
-                "venue_full": metadata.get("venue_full", ""),
-                "venue_acronym": metadata.get("venue_acronym", ""),
-                "paper_type": metadata.get("paper_type", "preprint"),
-                "preprint_id": metadata.get("preprint_id"),
-                "doi": metadata.get("doi"),
-                "url": f"https://arxiv.org/pdf/{arxiv_id}.pdf",
-            }
-
-            paper_data = normalize_paper_data(paper_data)
-
-            # Add to database first (without PDF)
-            authors = paper_data.pop("authors", [])
-            collections = []
-
-            paper = self.paper_service.add_paper_from_metadata(
-                paper_data, authors, collections
-            )
-
-            # Download PDF - create paper_data with authors for filename generation
-            pdf_dir = get_pdf_directory()
-            paper_data_for_pdf = paper_data.copy()
-            paper_data_for_pdf["authors"] = (
-                authors  # Restore authors for filename generation
-            )
-            pdf_path, pdf_error = self.system_service.download_pdf(
-                "arxiv", arxiv_id, pdf_dir, paper_data_for_pdf
-            )
-
-            return {"paper": paper, "pdf_path": pdf_path, "pdf_error": pdf_error}
-
-        def on_arxiv_complete(result, error):
+        def on_complete(result, error):
             if error:
                 self.show_error_panel_with_message(
                     "Add arXiv Paper Error",
@@ -1825,85 +1789,42 @@ The doctor command helps maintain database health by:
 
             if pdf_path:
                 self._add_log("add_arxiv", f"PDF download successful: {pdf_path}")
-                # Update paper with local PDF path in database only (no file processing)
                 try:
-                    # Direct database update to avoid duplicate PDF processing
-                    with get_db_session() as session:
-                        paper_obj = session.get(Paper, paper.id)
-                        if paper_obj:
-                            paper_obj.pdf_path = pdf_path
-                            session.commit()
-                            self._add_log(
-                                "add_arxiv",
-                                f"Database updated with PDF path: {pdf_path}",
-                            )
+                    updated_paper, update_error = self.paper_service.update_paper(
+                        paper.id, {"pdf_path": pdf_path}
+                    )
+                    if updated_paper:
+                        self._add_log(
+                            "add_arxiv", f"Database updated with PDF path: {pdf_path}"
+                        )
+                    else:
+                        self._add_log(
+                            "add_arxiv",
+                            f"Failed to update paper PDF path: {update_error}",
+                        )
                 except Exception as e:
-                    self.status_bar.set_error(
-                        f"Failed to update PDF path for '{paper.title}': {e}"
-                    )
-                    self.show_error_panel_with_message(
-                        "Database Update Error",
-                        f"Failed to update PDF path for '{paper.title}'",
-                        str(e),
-                    )
-            else:
-                # Continue without PDF but show warning
-                self.status_bar.set_error(f"PDF download failed for arXiv {arxiv_id}")
-                self.show_error_panel_with_message(
-                    "PDF Download Warning",
-                    f"Could not download PDF for arXiv paper: {arxiv_id}",
-                    pdf_error
-                    or "The paper metadata will still be added, but without the PDF file.",
-                )
+                    self._add_log("add_arxiv", f"Error updating paper PDF path: {e}")
+            elif pdf_error:
+                self._add_log("add_arxiv", f"PDF download failed: {pdf_error}")
 
-            # Refresh display and show success
-            self.load_papers()
             self._add_log("add_arxiv", f"Added arXiv paper '{paper.title}'")
-            self.status_bar.set_success(
-                f"Added: {paper.title[:50] + '...' if len(paper.title) > 50 else paper.title}"
-            )
+            self.load_papers()
+            self.status_bar.set_status(f"Added arXiv paper: {paper.title}", "add")
 
-        # Run in background
         self.background_service.run_operation(
-            operation_func=complete_arxiv_operation,
+            operation_func=complete_operation,
             operation_name="add_arxiv",
             initial_message=f"Fetching arXiv paper {arxiv_id}...",
-            on_complete=on_arxiv_complete,
+            on_complete=on_complete,
         )
 
-    def _quick_add_dblp(self, dblp_url: str):
-        """Quickly add a paper from DBLP URL using background operation."""
+    def _add_dblp_paper(self, dblp_url: str):
+        """Add a paper from DBLP using the add paper service."""
 
-        def complete_dblp_operation():
-            # Extract metadata from DBLP
-            metadata = self.metadata_extractor.extract_from_dblp(dblp_url)
+        def complete_operation():
+            return self.add_paper_service.add_dblp_paper(dblp_url)
 
-            # Prepare paper data
-            paper_data = {
-                "title": metadata.get("title", "Unknown Title"),
-                "abstract": metadata.get("abstract", ""),
-                "authors": metadata.get("authors", ""),
-                "year": metadata.get("year"),
-                "venue_full": metadata.get("venue_full", ""),
-                "venue_acronym": metadata.get("venue_acronym", ""),
-                "paper_type": metadata.get("paper_type", "conference"),
-                "doi": metadata.get("doi"),
-                "url": metadata.get("url", dblp_url),
-            }
-
-            paper_data = normalize_paper_data(paper_data)
-
-            # Add to database
-            authors = paper_data.pop("authors", [])
-            collections = []
-
-            paper = self.paper_service.add_paper_from_metadata(
-                paper_data, authors, collections
-            )
-
-            return {"paper": paper}
-
-        def on_dblp_complete(result, error):
+        def on_complete(result, error):
             if error:
                 self.show_error_panel_with_message(
                     "Add DBLP Paper Error",
@@ -1913,63 +1834,24 @@ The doctor command helps maintain database health by:
                 return
 
             paper = result["paper"]
-
-            # Refresh display and show success
-            self.load_papers()
             self._add_log("add_dblp", f"Added DBLP paper '{paper.title}'")
-            self.status_bar.set_success(f"Added: {paper.title[:50]}...")
+            self.load_papers()
+            self.status_bar.set_status(f"Added DBLP paper: {paper.title}", "add")
 
-        # Run in background
         self.background_service.run_operation(
-            operation_func=complete_dblp_operation,
+            operation_func=complete_operation,
             operation_name="add_dblp",
-            initial_message=f"Fetching DBLP paper from {dblp_url[:50]}...",
-            on_complete=on_dblp_complete,
+            initial_message=f"Fetching DBLP paper from {dblp_url}...",
+            on_complete=on_complete,
         )
 
-    def _quick_add_openreview(self, openreview_id: str):
-        """Quickly add a paper from OpenReview using background operation."""
+    def _add_openreview_paper(self, openreview_id: str):
+        """Add a paper from OpenReview using the add paper service."""
 
-        def complete_openreview_operation():
+        def complete_operation():
+            return self.add_paper_service.add_openreview_paper(openreview_id)
 
-            # Extract metadata from OpenReview
-            metadata = self.metadata_extractor.extract_from_openreview(openreview_id)
-
-            # Prepare paper data
-            paper_data = {
-                "title": metadata.get("title", "Unknown Title"),
-                "abstract": metadata.get("abstract", ""),
-                "authors": metadata.get("authors", ""),
-                "year": metadata.get("year"),
-                "venue_full": metadata.get("venue_full", ""),
-                "venue_acronym": metadata.get("venue_acronym", ""),
-                "paper_type": metadata.get("paper_type", "conference"),
-                "category": metadata.get("category"),
-                "url": metadata.get(
-                    "url", f"https://openreview.net/forum?id={openreview_id}"
-                ),
-            }
-
-            paper_data = normalize_paper_data(paper_data)
-
-            # Add to database
-            authors = paper_data.pop("authors", [])
-            collections = []
-
-            paper = self.paper_service.add_paper_from_metadata(
-                paper_data, authors, collections
-            )
-
-            # Download PDF
-            pdf_dir = get_pdf_directory()
-            self._add_log("add_openreview", f"Attempting to download PDF to {pdf_dir}")
-            pdf_path, pdf_error = self.system_service.download_pdf(
-                "openreview", openreview_id, pdf_dir, paper_data
-            )
-
-            return {"paper": paper, "pdf_path": pdf_path, "pdf_error": pdf_error}
-
-        def on_openreview_complete(result, error):
+        def on_complete(result, error):
             if error:
                 self.show_error_panel_with_message(
                     "Add OpenReview Paper Error",
@@ -1984,105 +1866,72 @@ The doctor command helps maintain database health by:
 
             if pdf_path:
                 self._add_log("add_openreview", f"PDF download successful: {pdf_path}")
-                # Update paper with local PDF path
-                updated_paper, update_error = self.paper_service.update_paper(
-                    paper.id, {"pdf_path": pdf_path}
-                )
-                if update_error:
-                    self.status_bar.set_error(
-                        f"Failed to update PDF path for '{paper.title}': {update_error}"
+                try:
+                    updated_paper, update_error = self.paper_service.update_paper(
+                        paper.id, {"pdf_path": pdf_path}
                     )
-                    self.show_error_panel_with_message(
-                        "Database Update Error",
-                        f"Failed to update PDF path for '{paper.title}'",
-                        str(update_error),
-                    )
-                else:
+                    if updated_paper:
+                        self._add_log(
+                            "add_openreview",
+                            f"Database updated with PDF path: {pdf_path}",
+                        )
+                    else:
+                        self._add_log(
+                            "add_openreview",
+                            f"Failed to update paper PDF path: {update_error}",
+                        )
+                except Exception as e:
                     self._add_log(
-                        "add_openreview", f"Database updated with PDF path: {pdf_path}"
+                        "add_openreview", f"Error updating paper PDF path: {e}"
                     )
-            else:
-                self.status_bar.set_error(f"PDF download failed for '{paper.title}'")
-                self.show_error_panel_with_message(
-                    "PDF Download Error",
-                    f"PDF download failed for '{paper.title}'",
-                    pdf_error
-                    or "Please check the network connection or the paper's availability.",
-                )
+            elif pdf_error:
+                self._add_log("add_openreview", f"PDF download failed: {pdf_error}")
 
-            # Refresh display and show success
-            self.load_papers()
             self._add_log("add_openreview", f"Added OpenReview paper '{paper.title}'")
-            self.status_bar.set_success(f"Added: {paper.title[:50]}...")
+            self.load_papers()
+            self.status_bar.set_status(f"Added OpenReview paper: {paper.title}", "add")
 
-        # Run in background
         self.background_service.run_operation(
-            operation_func=complete_openreview_operation,
+            operation_func=complete_operation,
             operation_name="add_openreview",
             initial_message=f"Fetching OpenReview paper {openreview_id}...",
-            on_complete=on_openreview_complete,
+            on_complete=on_complete,
         )
 
-    def _quick_add_pdf(self, pdf_path: str):
-        """Quickly add a paper from local PDF file using background operation."""
-        # Expand user path and resolve relative paths
-        pdf_path = os.path.expanduser(pdf_path)
-        pdf_path = os.path.abspath(pdf_path)
+    def _add_doi_paper(self, doi: str):
+        """Add a paper from DOI using the add paper service."""
 
-        # Check if file exists
-        if not os.path.exists(pdf_path):
-            self.status_bar.set_error(f"PDF file not found: {pdf_path}")
-            return
+        def complete_operation():
+            return self.add_paper_service.add_doi_paper(doi)
 
-        # Check if it's a PDF file
-        if not pdf_path.lower().endswith(".pdf"):
-            self.status_bar.set_error("File must be a PDF")
-            return
+        def on_complete(result, error):
+            if error:
+                self.show_error_panel_with_message(
+                    "Add DOI Paper Error",
+                    f"Failed to add DOI paper: {doi}",
+                    str(error),
+                )
+                return
 
-        def complete_pdf_operation():
-            # Extract metadata from PDF using LLM
-            metadata = self.metadata_extractor.extract_from_pdf(pdf_path)
-            if not metadata:
-                raise Exception("Failed to extract metadata from PDF")
+            paper = result["paper"]
+            self._add_log("add_doi", f"Added DOI paper '{paper.title}'")
+            self.load_papers()
+            self.status_bar.set_status(f"Added DOI paper: {paper.title}", "add")
 
-            # Copy PDF to pdfs folder
-            pdf_dir = get_pdf_directory()
+        self.background_service.run_operation(
+            operation_func=complete_operation,
+            operation_name="add_doi",
+            initial_message=f"Fetching DOI paper {doi}...",
+            on_complete=on_complete,
+        )
 
-            # Generate smart filename using PDFManager
-            pdf_manager = PDFManager()
-            filename = pdf_manager._generate_pdf_filename(metadata, pdf_path)
-            target_path = os.path.join(pdf_dir, filename)
+    def _add_pdf_paper(self, pdf_path: str):
+        """Add a paper from PDF using the add paper service."""
 
-            # Copy the file
-            shutil.copy2(pdf_path, target_path)
+        def complete_operation():
+            return self.add_paper_service.add_pdf_paper(pdf_path)
 
-            # Prepare paper data
-            paper_data = {
-                "title": metadata.get("title", "Unknown Title"),
-                "abstract": metadata.get("abstract", ""),
-                "authors": metadata.get("authors", ""),
-                "year": metadata.get("year"),
-                "venue_full": metadata.get("venue_full", ""),
-                "venue_acronym": metadata.get("venue_acronym", ""),
-                "paper_type": metadata.get("paper_type", "conference"),
-                "category": metadata.get("category"),
-                "url": metadata.get("url", ""),
-                "pdf_path": target_path,
-            }
-
-            paper_data = normalize_paper_data(paper_data)
-
-            # Extract normalized authors
-            authors = paper_data.pop("authors", [])
-            collections = []
-
-            paper = self.paper_service.add_paper_from_metadata(
-                paper_data, authors, collections
-            )
-
-            return {"paper": paper}
-
-        def on_pdf_complete(result, error):
+        def on_complete(result, error):
             if error:
                 self.show_error_panel_with_message(
                     "Add PDF Paper Error",
@@ -2092,177 +1941,130 @@ The doctor command helps maintain database health by:
                 return
 
             paper = result["paper"]
-
-            # Refresh display and show success
+            self._add_log("add_pdf", f"Added PDF paper '{paper.title}' from {pdf_path}")
             self.load_papers()
-            self._add_log("add_pdf", f"Added PDF paper '{paper.title}'")
-            self.status_bar.set_success(f"Added: {paper.title[:50]}...")
+            self.status_bar.set_status(f"Added PDF paper: {paper.title}", "add")
 
-        # Run in background
         self.background_service.run_operation(
-            operation_func=complete_pdf_operation,
+            operation_func=complete_operation,
             operation_name="add_pdf",
-            initial_message=f"Processing PDF: {os.path.basename(pdf_path)}...",
-            on_complete=on_pdf_complete,
+            initial_message=f"Processing PDF {pdf_path}...",
+            on_complete=on_complete,
         )
 
-    def _quick_add_bib(self, bib_path: str):
-        """Quickly add papers from .bib file."""
-        try:
-            # Expand user path and resolve relative paths
-            bib_path = os.path.expanduser(bib_path)
-            bib_path = os.path.abspath(bib_path)
+    def _add_bib_papers(self, bib_path: str):
+        """Add papers from BibTeX file using the add paper service."""
 
-            # Check if file exists
-            if not os.path.exists(bib_path):
-                self.status_bar.set_error(f"BibTeX file not found: {bib_path}")
+        def complete_operation():
+            return self.add_paper_service.add_bib_papers(bib_path)
+
+        def on_complete(result, error):
+            if error:
+                self.show_error_panel_with_message(
+                    "Add BibTeX Papers Error",
+                    f"Failed to process BibTeX file: {bib_path}",
+                    str(error),
+                )
                 return
 
-            # Check if it's a .bib file
-            if not bib_path.lower().endswith(".bib"):
-                self.status_bar.set_error("File must be a .bib file")
-                return
+            papers, errors = result
+            success_count = len(papers)
+            error_count = len(errors)
 
-            self.status_bar.set_status(
-                f"Processing BibTeX: {os.path.basename(bib_path)}...", "process"
-            )
+            # Log results
+            if success_count > 0:
+                paper_titles = [p.title for p in papers[:3]]  # Show first 3 titles
+                if success_count > 3:
+                    paper_titles.append(f"and {success_count - 3} more...")
+                titles_str = ", ".join(paper_titles)
+                self._add_log("add_bib", f"Added {success_count} papers: {titles_str}")
 
-            # Extract metadata from BibTeX file
-            papers_metadata = self.metadata_extractor.extract_from_bibtex(bib_path)
-            if not papers_metadata:
-                self.status_bar.set_error("Failed to extract metadata from BibTeX file")
-                return
+            if error_count > 0:
+                self._add_log("add_bib", f"Errors: {error_count} papers failed to add")
+                for error in errors[:5]:  # Show first 5 errors
+                    self._add_log("add_bib", f"  {error}")
+                if error_count > 5:
+                    self._add_log("add_bib", f"  ... and {error_count - 5} more errors")
 
-            added_count = 0
-            for metadata in papers_metadata:
-                # Prepare paper data
-                paper_data = {
-                    "title": metadata.get("title", "Unknown Title"),
-                    "abstract": metadata.get("abstract", ""),
-                    "authors": metadata.get("authors", ""),
-                    "year": metadata.get("year"),
-                    "venue_full": metadata.get("venue_full", ""),
-                    "venue_acronym": metadata.get("venue_acronym", ""),
-                    "paper_type": metadata.get("paper_type", "conference"),
-                    "category": metadata.get("category"),
-                    "url": metadata.get("url", ""),
-                    "pdf_path": metadata.get("pdf_path"),
-                    "doi": metadata.get("doi"),
-                    "preprint_id": metadata.get("preprint_id"),
-                    "volume": metadata.get("volume"),
-                    "issue": metadata.get("issue"),
-                    "pages": metadata.get("pages"),
-                }
-
-                # Normalize paper data for database storage
-                paper_data = normalize_paper_data(paper_data)
-
-                # Add to database
-                authors = paper_data.pop("authors", [])
-                collections = []
-
-                try:
-                    paper = self.paper_service.add_paper_from_metadata(
-                        paper_data, authors, collections
-                    )
-                    added_count += 1
-                    self._add_log("add_bib", f"Added paper '{paper.title}' from BibTeX")
-                except Exception as e:
-                    self.show_error_panel_with_message(
-                        "Add BibTeX Paper Error",
-                        f"Failed to add paper '{metadata.get('title', 'Unknown')}' from BibTeX",
-                        traceback.format_exc(),
-                    )
-
-            # Refresh display
             self.load_papers()
-            self.status_bar.set_success(f"Added {added_count} papers from BibTeX file")
 
-        except Exception as e:
-            self.show_error_panel_with_message(
-                "Add BibTeX Papers Error",
-                f"Failed to add papers from BibTeX file: {bib_path}",
-                traceback.format_exc(),
-            )
+            # Set status message
+            if success_count > 0 and error_count == 0:
+                self.status_bar.set_status(
+                    f"Added {success_count} papers from BibTeX file", "add"
+                )
+            elif success_count > 0 and error_count > 0:
+                self.status_bar.set_status(
+                    f"Added {success_count} papers, {error_count} failed", "edit"
+                )
+            else:
+                self.status_bar.set_status(
+                    f"Failed to add papers from BibTeX file", "error"
+                )
 
-    def _quick_add_ris(self, ris_path: str):
-        """Quickly add papers from .ris file."""
-        try:
-            # Expand user path and resolve relative paths
-            ris_path = os.path.expanduser(ris_path)
-            ris_path = os.path.abspath(ris_path)
+        self.background_service.run_operation(
+            operation_func=complete_operation,
+            operation_name="add_bib",
+            initial_message=f"Processing BibTeX file {bib_path}...",
+            on_complete=on_complete,
+        )
 
-            # Check if file exists
-            if not os.path.exists(ris_path):
-                self.status_bar.set_error(f"RIS file not found: {ris_path}")
+    def _add_ris_papers(self, ris_path: str):
+        """Add papers from RIS file using the add paper service."""
+
+        def complete_operation():
+            return self.add_paper_service.add_ris_papers(ris_path)
+
+        def on_complete(result, error):
+            if error:
+                self.show_error_panel_with_message(
+                    "Add RIS Papers Error",
+                    f"Failed to process RIS file: {ris_path}",
+                    str(error),
+                )
                 return
 
-            # Check if it's a .ris file
-            if not ris_path.lower().endswith(".ris"):
-                self.status_bar.set_error("File must be a .ris file")
-                return
+            papers, errors = result
+            success_count = len(papers)
+            error_count = len(errors)
 
-            self.status_bar.set_status(
-                f"Processing RIS: {os.path.basename(ris_path)}...", "process"
-            )
+            # Log results
+            if success_count > 0:
+                paper_titles = [p.title for p in papers[:3]]  # Show first 3 titles
+                if success_count > 3:
+                    paper_titles.append(f"and {success_count - 3} more...")
+                titles_str = ", ".join(paper_titles)
+                self._add_log("add_ris", f"Added {success_count} papers: {titles_str}")
 
-            # Extract metadata from RIS file
-            papers_metadata = self.metadata_extractor.extract_from_ris(ris_path)
-            if not papers_metadata:
-                self.status_bar.set_error("Failed to extract metadata from RIS file")
-                return
+            if error_count > 0:
+                self._add_log("add_ris", f"Errors: {error_count} papers failed to add")
+                for error in errors[:5]:  # Show first 5 errors
+                    self._add_log("add_ris", f"  {error}")
+                if error_count > 5:
+                    self._add_log("add_ris", f"  ... and {error_count - 5} more errors")
 
-            added_count = 0
-            for metadata in papers_metadata:
-                # Prepare paper data
-                paper_data = {
-                    "title": metadata.get("title", "Unknown Title"),
-                    "abstract": metadata.get("abstract", ""),
-                    "authors": metadata.get("authors", ""),
-                    "year": metadata.get("year"),
-                    "venue_full": metadata.get("venue_full", ""),
-                    "venue_acronym": metadata.get("venue_acronym", ""),
-                    "paper_type": metadata.get("paper_type", "conference"),
-                    "category": metadata.get("category"),
-                    "url": metadata.get("url", ""),
-                    "pdf_path": metadata.get("pdf_path"),
-                    "doi": metadata.get("doi"),
-                    "preprint_id": metadata.get("preprint_id"),
-                    "volume": metadata.get("volume"),
-                    "issue": metadata.get("issue"),
-                    "pages": metadata.get("pages"),
-                }
-
-                # Normalize paper data for database storage
-                paper_data = normalize_paper_data(paper_data)
-
-                # Add to database
-                authors = paper_data.pop("authors", [])
-                collections = []
-
-                try:
-                    paper = self.paper_service.add_paper_from_metadata(
-                        paper_data, authors, collections
-                    )
-                    added_count += 1
-                    self._add_log("add_ris", f"Added paper '{paper.title}' from RIS")
-                except Exception as e:
-                    self.show_error_panel_with_message(
-                        "Add RIS Paper Error",
-                        f"Failed to add paper '{metadata.get('title', 'Unknown')}' from RIS",
-                        traceback.format_exc(),
-                    )
-
-            # Refresh display
             self.load_papers()
-            self.status_bar.set_success(f"Added {added_count} papers from RIS file")
 
-        except Exception as e:
-            self.show_error_panel_with_message(
-                "Add RIS Papers Error",
-                f"Failed to add papers from RIS file: {ris_path}",
-                traceback.format_exc(),
-            )
+            # Set status message
+            if success_count > 0 and error_count == 0:
+                self.status_bar.set_status(
+                    f"Added {success_count} papers from RIS file", "add"
+                )
+            elif success_count > 0 and error_count > 0:
+                self.status_bar.set_status(
+                    f"Added {success_count} papers, {error_count} failed", "edit"
+                )
+            else:
+                self.status_bar.set_status(
+                    f"Failed to add papers from RIS file", "error"
+                )
+
+        self.background_service.run_operation(
+            operation_func=complete_operation,
+            operation_name="add_ris",
+            initial_message=f"Processing RIS file {ris_path}...",
+            on_complete=on_complete,
+        )
 
     def _add_manual_paper(self):
         """Add a paper manually with user input."""
@@ -2308,64 +2110,6 @@ The doctor command helps maintain database health by:
                 "Failed to add manual paper",
                 traceback.format_exc(),
             )
-
-    def _quick_add_doi(self, doi: str):
-        """Quickly add a paper from DOI using background operation."""
-
-        def complete_doi_operation():
-            # Extract metadata from DOI using Crossref API
-            metadata = self.metadata_extractor.extract_from_doi(doi)
-
-            # Prepare paper data
-            paper_data = {
-                "title": metadata.get("title", "Unknown Title"),
-                "abstract": metadata.get("abstract", ""),
-                "authors": metadata.get("authors", ""),
-                "year": metadata.get("year"),
-                "venue_full": metadata.get("venue_full", ""),
-                "venue_acronym": metadata.get("venue_acronym", ""),
-                "paper_type": metadata.get("paper_type", "journal"),
-                "doi": metadata.get("doi"),
-                "url": metadata.get("url", ""),
-                "volume": metadata.get("volume"),
-                "issue": metadata.get("issue"),
-                "pages": metadata.get("pages"),
-            }
-            paper_data = normalize_paper_data(paper_data)
-
-            # Add to database
-            authors = paper_data.pop("authors", [])
-            collections = []
-
-            paper = self.paper_service.add_paper_from_metadata(
-                paper_data, authors, collections
-            )
-
-            return {"paper": paper}
-
-        def on_doi_complete(result, error):
-            if error:
-                self.show_error_panel_with_message(
-                    "Add DOI Paper Error",
-                    f"Failed to add DOI paper: {doi}",
-                    str(error),
-                )
-                return
-
-            paper = result["paper"]
-
-            # Refresh display
-            self.load_papers()
-            self._add_log("add_doi", f"Added DOI paper '{paper.title}'")
-            self.status_bar.set_success(f"Added: {paper.title[:50]}...")
-
-        # Run in background
-        self.background_service.run_operation(
-            operation_func=complete_doi_operation,
-            operation_name="add_doi",
-            initial_message=f"Fetching DOI paper {doi}...",
-            on_complete=on_doi_complete,
-        )
 
     def handle_filter_command(self, args: List[str]):
         """Handle /filter command."""
@@ -2600,7 +2344,10 @@ The doctor command helps maintain database health by:
                 self.app.layout.container.floats.remove(self.chat_float)
             self.chat_float = None
             self.chat_dialog = None
+            # Restore focus to the main input buffer
+            self.app.layout.focus(self.input_buffer)
             self.status_bar.set_status("Closed chat dialog", "close")
+            self.app.invalidate()
         except Exception as e:
             self._add_log("chat_error", f"Error closing chat dialog: {e}")
 
