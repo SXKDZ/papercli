@@ -139,6 +139,20 @@ class SearchService:
                 joinedload(Paper.collections),
             )
 
+            if "all" in filters:
+                search_term = filters["all"]
+                query = query.filter(
+                    or_(
+                        Paper.title.ilike(f"%{search_term}%"),
+                        Paper.abstract.ilike(f"%{search_term}%"),
+                        Paper.venue_full.ilike(f"%{search_term}%"),
+                        Paper.venue_acronym.ilike(f"%{search_term}%"),
+                        Paper.paper_authors.any(
+                            Author.full_name.ilike(f"%{search_term}%")
+                        ),
+                    )
+                )
+
             if "year" in filters:
                 query = query.filter(Paper.year == filters["year"])
 

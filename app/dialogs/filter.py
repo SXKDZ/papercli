@@ -11,12 +11,15 @@ from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.widgets import Button, Dialog, RadioList, TextArea
 
+from ..services import CollectionService
+
 
 class FilterDialog:
     """A dialog for filtering papers by various criteria."""
 
-    def __init__(self, callback: Callable):
+    def __init__(self, callback: Callable, collection_service: CollectionService):
         self.callback = callback
+        self.collection_service = collection_service
         self.result = None
 
         # Available fields for filtering

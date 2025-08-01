@@ -169,7 +169,7 @@ class AddDialog:
         def _(event):
             self._handle_add()
 
-        @kb.add("enter")
+        @kb.add("enter", eager=True)
         def _(event):
             self._handle_add()
 

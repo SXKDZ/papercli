@@ -132,7 +132,7 @@ class SortDialog:
         """Handles the OK button press."""
         field = self.field_list.current_value
         order = self.order_list.current_value
-        self.result = (field, order)
+        self.result = {"field": field, "reverse": order == "desc"}
         self.callback(self.result)
 
     def _handle_cancel(self):

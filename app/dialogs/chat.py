@@ -7,19 +7,276 @@ import platform
 import subprocess
 import threading
 from datetime import datetime
+from io import StringIO
 from pathlib import Path
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Tuple
 
 import PyPDF2
 from openai import OpenAI
 from prompt_toolkit.application import get_app
+from prompt_toolkit.data_structures import Point
+from prompt_toolkit.filters import Condition
+from prompt_toolkit.formatted_text import ANSI
 from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
-from prompt_toolkit.layout.containers import HSplit, VSplit, Window
+from prompt_toolkit.layout import UIContent
+from prompt_toolkit.layout.containers import HSplit, ScrollOffsets, VSplit, Window
+from prompt_toolkit.layout.controls import UIControl
 from prompt_toolkit.layout.dimension import Dimension
+from prompt_toolkit.layout.margins import Margin, ScrollbarMargin
 from prompt_toolkit.widgets import Button, Dialog, TextArea
+from rich.console import Console
+from rich.markdown import Markdown
 
-from .prompts import ChatPrompts
-from .services import BackgroundOperationService, LLMSummaryService, PaperService
+from ..prompts import ChatPrompts
+from ..services import BackgroundOperationService, LLMSummaryService, PaperService
+
+
+class SpacingMargin(Margin):
+    """A simple margin that creates spacing with the specified number of spaces."""
+
+    def __init__(self, width: int = 1):
+        self.width = width
+
+    def get_width(self, ui_content):
+        return self.width
+
+    def create_margin(self, window_render_info, width, height):
+        return [" " * width for _ in range(height)]
+
+
+class ChatDisplayControl(UIControl):
+    def __init__(
+        self,
+        chat_history: List[Dict[str, Any]],
+        chat_width: int,
+        model_name: str = "gpt-4o",
+        log_callback: Callable = None,
+    ):
+        self.chat_history = chat_history
+        self.chat_width = chat_width
+        self.model_name = model_name
+        self.log_callback = log_callback
+        self._cursor_line = 0  # Current cursor position in content
+        self._content_height = 0  # To be calculated after rendering
+
+    def create_content(self, width: int, height: int) -> UIContent:
+        output = StringIO()
+        console = Console(
+            file=output,
+            force_terminal=True,  # Enable ANSI output
+            width=self.chat_width
+            - 5,  # Reduce by 5 to account for SpacingMargin(2) + ScrollbarMargin(3)
+            legacy_windows=False,
+            _environ={},  # Ensure clean environment for consistent output
+        )
+
+        for entry in self.chat_history:
+            role = entry["role"]
+            content = entry["content"]
+
+            if role == "user":
+                console.print(f"⏵ User", style="bold green")
+                console.print(content)
+            elif role == "assistant":
+                model_name = self.model_name
+                console.print(f"⏵ Model ({model_name})", style="bold blue")
+                # Render markdown with Rich using better code differentiation
+                md = Markdown(
+                    content,
+                    code_theme="friendly",
+                    inline_code_lexer="text",
+                    inline_code_theme="friendly",
+                )
+                console.print(md)
+            elif role == "system":
+                console.print(f"⏵ System", style="bold magenta")
+                console.print(f"{content}", style="italic")
+            console.print()  # Add blank line
+
+        # Get ANSI formatted output and return all lines (let Window handle scrolling)
+        ansi_output = output.getvalue()
+        all_lines = ansi_output.splitlines()
+        self._content_height = len(all_lines)
+
+        def get_line_tokens(i: int) -> List[Tuple[str, str]]:
+            if i < len(all_lines):
+                line_text = all_lines[i]
+                try:
+                    # Use ANSI to convert to prompt-toolkit formatted text
+                    ansi_formatted = ANSI(line_text)
+                    # Convert to list of tuples format expected by prompt-toolkit
+                    if hasattr(ansi_formatted, "__iter__"):
+                        try:
+                            return list(ansi_formatted)
+                        except:
+                            pass
+
+                    # More sophisticated ANSI parsing to handle mixed formatting
+                    import re
+
+                    segments = []
+                    current_pos = 0
+                    current_style = ""
+
+                    # Find all ANSI codes and their positions
+                    ansi_pattern = r"\x1b\[([0-9;]*)m"
+                    matches = list(re.finditer(ansi_pattern, line_text))
+
+                    for match in matches:
+                        # Add text before this ANSI code
+                        if match.start() > current_pos:
+                            text_segment = line_text[current_pos : match.start()]
+                            if text_segment:
+                                segments.append((current_style, text_segment))
+
+                        # Update style based on ANSI code
+                        code = match.group(1)
+                        if code == "1":  # Bold
+                            if "fg:" in current_style:
+                                current_style = "bold " + current_style
+                            else:
+                                current_style = "bold"
+                        elif code == "3":  # Italic
+                            current_style = "italic"
+                        elif code == "32":  # Green
+                            if "bold" in current_style:
+                                current_style = "bold fg:green"
+                            else:
+                                current_style = "fg:green"
+                        elif code == "34":  # Blue
+                            if "bold" in current_style:
+                                current_style = "bold fg:blue"
+                            else:
+                                current_style = "fg:blue"
+                        elif code == "33":  # Yellow -> Gray
+                            if "bold" in current_style:
+                                current_style = "bold fg:#606060"
+                            else:
+                                current_style = "fg:#606060"
+                        elif code == "35":  # Magenta
+                            if "bold" in current_style:
+                                current_style = "bold fg:magenta"
+                            else:
+                                current_style = "fg:magenta"
+                        elif code == "1;32":  # Bold Green -> Muted Green
+                            current_style = "bold fg:#228B22"
+                        elif code == "1;34":  # Bold Blue -> Muted Blue
+                            current_style = "bold fg:#4682B4"
+                        elif code == "1;33":  # Bold Yellow -> Bold Gray
+                            current_style = "bold fg:#606060"
+                        elif code == "1;35":  # Bold Magenta -> Muted Magenta
+                            current_style = "bold fg:#9932CC"
+                        elif code == "0" or code == "":  # Reset
+                            current_style = ""
+
+                        current_pos = match.end()
+
+                    # Add remaining text
+                    if current_pos < len(line_text):
+                        remaining_text = line_text[current_pos:]
+                        if remaining_text:
+                            segments.append((current_style, remaining_text))
+
+                    # If no segments were created, just return cleaned text
+                    if not segments:
+                        clean_text = re.sub(r"\x1b\[[0-9;]*m", "", line_text)
+                        return [("", clean_text)]
+
+                    return segments
+
+                except Exception as e:
+                    # Final fallback: plain text
+                    import re
+
+                    clean_text = re.sub(r"\x1b\[[0-9;]*m", "", line_text)
+                    return [("", clean_text)]
+            else:
+                return [("", "")]
+
+        # Ensure cursor is within bounds
+        if self._content_height > 0:
+            self._cursor_line = max(0, min(self._cursor_line, self._content_height - 1))
+        else:
+            self._cursor_line = 0
+
+        return UIContent(
+            get_line=get_line_tokens,
+            line_count=len(
+                all_lines
+            ),  # Return total line count so Window can handle scrolling
+            show_cursor=True,  # Show cursor for navigation
+            cursor_position=Point(0, self._cursor_line),  # Use tracked cursor position
+        )
+
+    def get_invalidate_events(self):
+        # Return empty list to avoid compatibility issues
+        return []
+
+    def is_focusable(self):
+        return True
+
+    def move_cursor_up(self):
+        """Move cursor up by one line."""
+        if self._cursor_line > 0:
+            self._cursor_line -= 1
+            get_app().invalidate()
+
+    def move_cursor_down(self):
+        """Move cursor down by one line."""
+        if self._cursor_line < self._content_height - 1:
+            self._cursor_line += 1
+            get_app().invalidate()
+
+    def _refresh_content_height(self):
+        """Refresh content height by re-rendering the content."""
+        try:
+            # Re-render content to get accurate height
+            output = StringIO()
+            console = Console(
+                file=output,
+                force_terminal=True,
+                width=self.chat_width - 5,
+                legacy_windows=False,
+                _environ={},
+            )
+
+            for entry in self.chat_history:
+                role = entry["role"]
+                content = entry["content"]
+
+                if role == "user":
+                    console.print(f"⏵ User", style="bold green")
+                    console.print(content)
+                elif role == "assistant":
+                    model_name = self.model_name
+                    console.print(f"⏵ Model ({model_name})", style="bold blue")
+                    md = Markdown(
+                        content,
+                        code_theme="friendly",
+                        inline_code_lexer="text",
+                        inline_code_theme="friendly",
+                    )
+                    console.print(md)
+                elif role == "system":
+                    console.print(f"⏵ System", style="bold magenta")
+                    console.print(f"{content}", style="italic")
+                console.print()  # Add blank line
+
+            ansi_output = output.getvalue()
+            all_lines = ansi_output.splitlines()
+            self._content_height = len(all_lines)
+
+        except Exception as e:
+            if self.log_callback:
+                self.log_callback(
+                    "content_refresh_error", f"Error refreshing content height: {e}"
+                )
+
+    def move_cursor_to_bottom(self):
+        """Move cursor to the bottom of content."""
+        if self._content_height > 0:
+            self._cursor_line = self._content_height - 1
+            get_app().invalidate()
 
 
 class ChatDialog:
@@ -37,6 +294,7 @@ class ChatDialog:
         self.log_callback = log_callback
         self.status_bar = status_bar
         self.result = None
+        self.chat_width = 180  # Define chat width
         self.paper_service = PaperService()
         self.background_service = BackgroundOperationService(
             status_bar=self.status_bar, log_callback=self.log_callback
@@ -49,12 +307,12 @@ class ChatDialog:
         # Chat history
         self.chat_history = []
 
-        # Initialize the chat with paper details
-        self._initialize_chat()
-
         # Create UI components
         self._create_ui_components()
         self._setup_key_bindings()
+
+        # Initialize the chat with paper details
+        self._initialize_chat()
 
     def _initialize_chat(self):
         """Initialize the chat with paper details."""
@@ -148,10 +406,10 @@ class ChatDialog:
         fields = self._get_paper_fields(paper)
 
         if fields["notes"]:
-            return f"**Paper {index}: {fields['title']}**\n{fields['notes']}"
+            return f"**Paper {index}: {fields['title']}**\n\n{fields['notes']}"
         else:
             # No notes available, show basic paper info
-            paper_info = f"**Paper {index}: {fields['title']}**\nAuthors: {fields['authors']}\nVenue: {fields['venue']} ({fields['year']})"
+            paper_info = f"**Paper {index}: {fields['title']}**\n\nAuthors: {fields['authors']}\nVenue: {fields['venue']} ({fields['year']})"
             if fields["abstract"]:
                 paper_info += f"\n\nAbstract: {fields['abstract']}"
             return paper_info
@@ -182,29 +440,38 @@ class ChatDialog:
         ):
             self.chat_history[0]["content"] = updated_content
 
-        # Refresh the display
-        self.chat_display.text = self._format_chat_history()
+        # Invalidate the app to trigger a redraw
+        get_app().invalidate()
 
     def _create_ui_components(self):
         """Create the UI components for the chat dialog."""
-        # Chat display area (scrollable) with fixed height
-        self.chat_display = TextArea(
-            text=self._format_chat_history(),
-            read_only=True,
-            wrap_lines=True,  # Enable word wrapping for better readability
-            scrollbar=True,
-            height=Dimension(
-                min=35, preferred=45, max=50
-            ),  # Larger height for better viewing
+        # Chat display area using ChatDisplayControl for rich text and custom scrolling
+        self.chat_display_control = ChatDisplayControl(
+            chat_history=self.chat_history,
+            chat_width=self.chat_width,
+            model_name=self.model_name,
+            log_callback=self.log_callback,
+        )
+
+        # Chat window with scrollbar and spacing - use Window's built-in scrolling
+        self.chat_window = Window(
+            content=self.chat_display_control,
+            wrap_lines=False,
+            height=Dimension(min=30, preferred=35, max=40),
+            scroll_offsets=ScrollOffsets(top=1, bottom=1),  # Enable built-in scrolling
+            right_margins=[
+                SpacingMargin(width=2),  # Add 2 spaces before scrollbar
+                ScrollbarMargin(display_arrows=True),
+            ],
         )
 
         # User input area
         self.user_input = TextArea(
             text="",
             multiline=True,
-            wrap_lines=True,  # Enable word wrapping for better readability
+            wrap_lines=True,
             scrollbar=True,
-            height=Dimension(min=5, max=5),  # Fixed height for input area
+            height=Dimension(min=5, max=5),
         )
 
         # Buttons
@@ -247,7 +514,7 @@ class ChatDialog:
         self.container = HSplit(
             [
                 # Chat display
-                self.chat_display,
+                self.chat_window,
                 Window(height=Dimension.exact(1)),  # Spacer
                 # Input area
                 input_container,
@@ -260,7 +527,7 @@ class ChatDialog:
             body=self.container,
             with_background=False,
             modal=True,
-            width=Dimension(min=200, preferred=220),
+            width=Dimension(min=160, preferred=self.chat_width),
         )
 
     def _setup_key_bindings(self):
@@ -295,19 +562,20 @@ class ChatDialog:
                         current_control.buffer.insert_text(event.data)
                 # For non-printable characters (like escape sequence remnants), just ignore them
 
-        @kb.add("up")
-        def _(event):
-            # Handle up arrow - move cursor up in current TextArea
-            current_control = event.app.layout.current_control
-            if hasattr(current_control, "buffer"):
-                current_control.buffer.cursor_up()
+        # Create condition to check if chat window has focus
+        @Condition
+        def chat_window_has_focus():
+            return get_app().layout.current_window == self.chat_window
 
-        @kb.add("down")
+        @kb.add("up", filter=chat_window_has_focus)
         def _(event):
-            # Handle down arrow - move cursor down in current TextArea
-            current_control = event.app.layout.current_control
-            if hasattr(current_control, "buffer"):
-                current_control.buffer.cursor_down()
+            # Scroll up in the chat window
+            event.app.layout.current_window.content.move_cursor_up()
+
+        @kb.add("down", filter=chat_window_has_focus)
+        def _(event):
+            # Scroll down in the chat window
+            event.app.layout.current_window.content.move_cursor_down()
 
         @kb.add("home")
         def _(event):
@@ -327,19 +595,15 @@ class ChatDialog:
                     current_control.buffer.document.get_end_of_line_position()
                 )
 
-        @kb.add("pageup")
+        @kb.add("pageup", filter=chat_window_has_focus)
         def _(event):
-            # Handle Page Up - scroll up multiple lines
-            current_control = event.app.layout.current_control
-            if hasattr(current_control, "buffer"):
-                current_control.buffer.cursor_up(count=10)
+            # Let prompt-toolkit handle page up scrolling
+            pass
 
-        @kb.add("pagedown")
+        @kb.add("pagedown", filter=chat_window_has_focus)
         def _(event):
-            # Handle Page Down - scroll down multiple lines
-            current_control = event.app.layout.current_control
-            if hasattr(current_control, "buffer"):
-                current_control.buffer.cursor_down(count=10)
+            # Let prompt-toolkit handle page down scrolling
+            pass
 
         @kb.add("escape")
         def _(event):
@@ -382,30 +646,6 @@ class ChatDialog:
             ]
         )
 
-    def _format_chat_history(self) -> str:
-        """Format the chat history for display."""
-        formatted = []
-        for entry in self.chat_history:
-            role = entry["role"]
-            content = entry["content"]
-
-            if role == "user":
-                formatted.append(f"You: {content}")
-            elif role == "assistant":
-                # Use visual formatting for ChatGPT responses
-                provider_name = self._get_provider_display_name()
-                # Add indentation and different styling for ChatGPT responses
-                lines = content.split("\n")
-                formatted.append(f"{provider_name}:")
-                for line in lines:
-                    formatted.append(f"  {line}")  # Indent ChatGPT responses
-            elif role == "system":
-                formatted.append(f"System: {content}")
-
-            formatted.append("")  # Add empty line between messages
-
-        return "\n".join(formatted)
-
     def _get_provider_display_name(self) -> str:
         """Get the display name for ChatGPT with model info."""
         return f"ChatGPT ({self.model_name})"
@@ -426,8 +666,11 @@ class ChatDialog:
         # Clear input
         self.user_input.text = ""
 
-        # Update display
-        self.chat_display.text = self._format_chat_history()
+        # Invalidate to update display first, then scroll to bottom
+        get_app().invalidate()
+
+        # Use call_soon to ensure content is rendered before scrolling
+        get_app().loop.call_soon(lambda: self._scroll_to_bottom())
 
         # Show status that we're working on the response
         if self.status_bar:
@@ -440,8 +683,10 @@ class ChatDialog:
         # Add a placeholder for the streaming response
         streaming_placeholder = {"role": "assistant", "content": ""}
         self.chat_history.append(streaming_placeholder)
-        self.chat_display.text = self._format_chat_history()
         get_app().invalidate()
+
+        # Delay scroll to ensure content is rendered
+        get_app().loop.call_soon(lambda: self._scroll_to_bottom())
 
         # Run LLM response generation in background thread with streaming
         def get_response_background():
@@ -452,15 +697,9 @@ class ChatDialog:
                     streaming_placeholder["content"] += chunk_text
 
                     # Schedule UI update in main thread
-                    def schedule_stream_update():
-                        self.chat_display.text = self._format_chat_history()
-                        # Auto-scroll to bottom to follow the streaming text
-                        self.chat_display.buffer.cursor_position = len(
-                            self.chat_display.text
-                        )
-                        get_app().invalidate()
-
-                    get_app().loop.call_soon_threadsafe(schedule_stream_update)
+                    get_app().loop.call_soon_threadsafe(
+                        lambda: (get_app().invalidate(), self._scroll_to_bottom())
+                    )
 
                 # Get streaming response
                 final_response = self._get_llm_response_streaming(
@@ -469,50 +708,46 @@ class ChatDialog:
 
                 # Schedule final UI update
                 def schedule_final_update():
-                    # Ensure the final content is set correctly
                     streaming_placeholder["content"] = final_response
-
-                    # Log the final assistant response
                     if self.log_callback:
                         self.log_callback(
                             "chat_assistant",
                             f"{self._get_provider_display_name()}: {final_response}",
                         )
-
-                    self.chat_display.text = self._format_chat_history()
-
                     if self.status_bar:
                         self.status_bar.set_success(
                             f"Response received from {self._get_provider_display_name()}"
                         )
-
-                    # Scroll to bottom
-                    self.chat_display.buffer.cursor_position = len(
-                        self.chat_display.text
-                    )
                     get_app().invalidate()
+                    self._scroll_to_bottom()
 
                 get_app().loop.call_soon_threadsafe(schedule_final_update)
 
             except Exception as e:
-
-                def schedule_ui_error():
-                    if self.status_bar:
-                        self.status_bar.set_error(f"Failed to get response: {str(e)}")
-                    streaming_placeholder["content"] = (
-                        f"Sorry, I encountered an error: {str(e)}"
+                get_app().loop.call_soon_threadsafe(
+                    lambda: (
+                        self.status_bar
+                        and self.status_bar.set_error(
+                            f"Failed to get response: {str(e)}"
+                        ),
+                        streaming_placeholder.update(
+                            {"content": f"Sorry, I encountered an error: {str(e)}"}
+                        ),
+                        get_app().invalidate(),
                     )
-                    self.chat_display.text = self._format_chat_history()
-                    get_app().invalidate()
-
-                get_app().loop.call_soon_threadsafe(schedule_ui_error)
+                )
 
         # Start background thread
         thread = threading.Thread(target=get_response_background, daemon=True)
         thread.start()
 
-        # Scroll to bottom
-        self.chat_display.buffer.cursor_position = len(self.chat_display.text)
+    def _scroll_to_bottom(self):
+        """Scroll the chat window to the bottom."""
+        # Move cursor to bottom so Window scrolls to show it
+        if hasattr(self, "chat_display_control"):
+            # Force content refresh first to get accurate content height
+            self.chat_display_control._refresh_content_height()
+            self.chat_display_control.move_cursor_to_bottom()
 
     def _get_llm_response_streaming(self, user_message: str, on_chunk_callback) -> str:
         """Get streaming response from ChatGPT."""
@@ -790,4 +1025,4 @@ class ChatDialog:
 
     def get_initial_focus(self):
         """Return the control that should receive initial focus."""
-        return self.user_input
+        return self.user_input  # Focus input box so users can start typing immediately

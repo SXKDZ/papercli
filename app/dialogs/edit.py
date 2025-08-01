@@ -13,13 +13,14 @@ from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.widgets import Button, Dialog, TextArea
 
-from .services import (
+from ..services import (
     AuthorService,
     BackgroundOperationService,
     CollectionService,
     MetadataExtractor,
     normalize_paper_data,
 )
+from ..ui.components import StatusBar
 
 
 class EditDialog:

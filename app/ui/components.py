@@ -14,8 +14,8 @@ from rich.style import Style as RichStyle
 from rich.table import Table
 from rich.text import Text
 
-from .models import Paper
-from .status_messages import StatusMessages
+from ..models import Paper
+from .status import StatusMessages
 
 
 class PaperListControl:
@@ -29,6 +29,176 @@ class PaperListControl:
         self.selected_index = 0
         self.selected_paper_ids = set()  # Store paper IDs, not indices
         self.in_select_mode = False
+
+    def get_header_text(self) -> FormattedText:
+        """Get formatted text for the table header."""
+        try:
+            width = get_app().output.get_size().columns
+        except Exception:
+            width = 120  # Fallback
+
+        console = Console(file=StringIO(), force_terminal=True, width=width)
+        table = Table(
+            show_header=True,
+            header_style="bold magenta",
+            box=None,
+            padding=(0, 1),
+            expand=True,
+        )
+
+        table.add_column(" ", width=3)  # For selector
+        table.add_column("Title", no_wrap=True, style="dim", ratio=7)
+        table.add_column("Authors", no_wrap=True, ratio=7)
+        table.add_column("Year", width=6, justify="right")
+        table.add_column("Venue", no_wrap=True, ratio=1)
+        table.add_column("Collections", no_wrap=True, ratio=3)
+
+        # Add one empty row to get the header formatting
+        table.add_row("", "", "", "", "", "")
+
+        console.print(table)
+        output = console.file.getvalue()
+        # Extract just the header line (first line)
+        lines = output.split("\n")
+        header_line = lines[0] if lines else ""
+        return ANSI(header_line)
+
+    def get_content_text(self) -> FormattedText:
+        """Get formatted text for the table content (rows only)."""
+        if not self.papers:
+            return FormattedText(
+                [("class:empty", "No papers found.\nUse /add to add your first paper.")]
+            )
+
+        try:
+            width = get_app().output.get_size().columns
+        except Exception:
+            width = 120  # Fallback
+
+        console = Console(file=StringIO(), force_terminal=True, width=width)
+        table = Table(
+            show_header=False,  # No header for content
+            box=None,
+            padding=(0, 1),
+            expand=True,
+        )
+
+        table.add_column(" ", width=3)  # For selector
+        table.add_column("Title", no_wrap=True, style="dim", ratio=7)
+        table.add_column("Authors", no_wrap=True, ratio=7)
+        table.add_column("Year", width=6, justify="right")
+        table.add_column("Venue", no_wrap=True, ratio=1)
+        table.add_column("Collections", no_wrap=True, ratio=3)
+
+        for i, paper in enumerate(self.papers):
+            is_current = i == self.selected_index
+            is_selected = paper.id in self.selected_paper_ids
+
+            # Determine style based on state
+            if is_current:
+                row_style = RichStyle(bgcolor="blue")
+            elif is_selected:
+                row_style = RichStyle(bgcolor="green4")
+            else:
+                row_style = ""
+
+            # Determine prefix based on state
+            if is_current:
+                if is_selected:
+                    prefix = "► ✓"
+                elif self.in_select_mode:
+                    prefix = "► □"
+                else:
+                    prefix = "►  "
+            else:
+                if is_selected:
+                    prefix = "  ✓"
+                elif self.in_select_mode:
+                    prefix = "  □"
+                else:
+                    prefix = "   "
+
+            # Paper data
+            authors = paper.author_names
+            title = paper.title
+            year = str(paper.year) if paper.year else "----"
+            venue = paper.venue_acronym or paper.venue_full or ""
+
+            collections = ""
+            if hasattr(paper, "collections") and paper.collections:
+                collection_names = [
+                    c.name if hasattr(c, "name") else str(c) for c in paper.collections
+                ]
+                collections = ", ".join(collection_names)
+
+            table.add_row(
+                Text(prefix),
+                Text(title),
+                Text(authors),
+                Text(year),
+                Text(venue),
+                Text(collections),
+                style=row_style,
+            )
+
+        console.print(table)
+        output = console.file.getvalue()
+        return ANSI(output.rstrip("\n"))  # Remove trailing newline
+
+    def get_formatted_text_as_string(self) -> str:
+        """Get formatted text as plain string for TextArea."""
+        if not self.papers:
+            return "No papers found.\nUse /add to add your first paper."
+
+        lines = []
+
+        # Add header
+        header = f"{'   ':<3} {'Title':<50} {'Authors':<40} {'Year':<6} {'Venue':<15} {'Collections':<20}"
+        lines.append(header)
+        lines.append("-" * len(header))
+
+        # Add paper rows
+        for i, paper in enumerate(self.papers):
+            is_current = i == self.selected_index
+            is_selected = paper.id in self.selected_paper_ids
+
+            # Determine prefix based on state
+            if is_current:
+                if is_selected:
+                    prefix = "► ✓"
+                elif self.in_select_mode:
+                    prefix = "► □"
+                else:
+                    prefix = "►  "
+            else:
+                if is_selected:
+                    prefix = "  ✓"
+                elif self.in_select_mode:
+                    prefix = "  □"
+                else:
+                    prefix = "   "
+
+            # Paper data (truncate to fit columns)
+            title = (paper.title[:47] + "...") if len(paper.title) > 50 else paper.title
+            authors = (
+                (paper.author_names[:37] + "...")
+                if len(paper.author_names) > 40
+                else paper.author_names
+            )
+            year = str(paper.year) if paper.year else "----"
+            venue = (paper.venue_acronym or paper.venue_full or "")[:15]
+
+            collections = ""
+            if hasattr(paper, "collections") and paper.collections:
+                collection_names = [
+                    c.name if hasattr(c, "name") else str(c) for c in paper.collections
+                ]
+                collections = ", ".join(collection_names)[:20]
+
+            line = f"{prefix:<3} {title:<50} {authors:<40} {year:<6} {venue:<15} {collections:<20}"
+            lines.append(line)
+
+        return "\n".join(lines)
 
     def get_formatted_text(self) -> FormattedText:
         """Get formatted text for the paper list using rich."""
@@ -120,7 +290,8 @@ class PaperListControl:
 
         console.print(table)
         output = console.file.getvalue()
-        return ANSI(output)
+        # rstrip to remove trailing newline from rich table
+        return ANSI(output.rstrip("\n"))
 
     def move_up(self):
         """Move selection up."""
