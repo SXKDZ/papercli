@@ -145,20 +145,24 @@ class SyncService:
             
             if conflicts:
                 result.conflicts = conflicts
+                update_progress(f"Found {len(conflicts)} conflicts...")
                 
                 # If conflict resolver is provided, try to resolve conflicts
                 if conflict_resolver:
-                    update_progress("Resolving conflicts...")
+                    update_progress("Showing conflict resolution dialog...")
                     resolved_conflicts = conflict_resolver(conflicts)
                     if resolved_conflicts is None:  # User cancelled
                         result.cancelled = True
                         return result
                     
+                    update_progress("Applying conflict resolutions...")
                     # Apply resolved conflicts
                     self._apply_conflict_resolutions(resolved_conflicts, result)
                 else:
                     # No resolver provided, just return conflicts
                     return result
+            else:
+                update_progress("No conflicts detected...")
             
             update_progress("Synchronizing papers...")
             # Perform sync operations
@@ -397,13 +401,25 @@ class SyncService:
         cursor = conn.cursor()
         
         try:
-            # Insert paper (excluding id to let it auto-increment)
-            paper_fields = [k for k in paper_data.keys() if k not in ['id', 'authors']]
-            placeholders = ', '.join(['?'] * len(paper_fields))
-            field_names = ', '.join(paper_fields)
-            values = [paper_data[field] for field in paper_fields]
+            # Prepare paper data with required datetime fields
+            paper_dict = dict(paper_data)
+            if 'added_date' not in paper_dict or not paper_dict['added_date']:
+                paper_dict['added_date'] = datetime.now().isoformat()
+            if 'modified_date' not in paper_dict or not paper_dict['modified_date']:
+                paper_dict['modified_date'] = datetime.now().isoformat()
+                
+            # Insert paper (excluding id and authors, filtering None values)
+            filtered_fields = []
+            filtered_values = []
+            for field, value in paper_dict.items():
+                if field not in ['id', 'authors'] and value is not None:
+                    filtered_fields.append(field)
+                    filtered_values.append(value)
             
-            cursor.execute(f"INSERT INTO papers ({field_names}) VALUES ({placeholders})", values)
+            placeholders = ', '.join(['?'] * len(filtered_fields))
+            field_names = ', '.join(filtered_fields)
+            
+            cursor.execute(f"INSERT INTO papers ({field_names}) VALUES ({placeholders})", filtered_values)
             new_paper_id = cursor.lastrowid
             
             # Handle authors if present
@@ -431,13 +447,25 @@ class SyncService:
         cursor = conn.cursor()
         
         try:
-            # Insert paper (excluding id to let it auto-increment)
-            paper_fields = [k for k in paper_data.keys() if k not in ['id', 'authors']]
-            placeholders = ', '.join(['?'] * len(paper_fields))
-            field_names = ', '.join(paper_fields)
-            values = [paper_data[field] for field in paper_fields]
+            # Prepare paper data with required datetime fields
+            paper_dict = dict(paper_data)
+            if 'added_date' not in paper_dict or not paper_dict['added_date']:
+                paper_dict['added_date'] = datetime.now().isoformat()
+            if 'modified_date' not in paper_dict or not paper_dict['modified_date']:
+                paper_dict['modified_date'] = datetime.now().isoformat()
+                
+            # Insert paper (excluding id and authors, filtering None values)
+            filtered_fields = []
+            filtered_values = []
+            for field, value in paper_dict.items():
+                if field not in ['id', 'authors'] and value is not None:
+                    filtered_fields.append(field)
+                    filtered_values.append(value)
             
-            cursor.execute(f"INSERT INTO papers ({field_names}) VALUES ({placeholders})", values)
+            placeholders = ', '.join(['?'] * len(filtered_fields))
+            field_names = ', '.join(filtered_fields)
+            
+            cursor.execute(f"INSERT INTO papers ({field_names}) VALUES ({placeholders})", filtered_values)
             new_paper_id = cursor.lastrowid
             
             # Handle authors if present
@@ -465,8 +493,10 @@ class SyncService:
         cursor = conn.cursor()
         
         try:
-            cursor.execute("INSERT INTO collections (name, description) VALUES (?, ?)", 
-                         (collection_data['name'], collection_data.get('description', '')))
+            # Include created_at field or use current timestamp
+            created_at = collection_data.get('created_at') or datetime.now().isoformat()
+            cursor.execute("INSERT INTO collections (name, description, created_at) VALUES (?, ?, ?)", 
+                         (collection_data['name'], collection_data.get('description', ''), created_at))
             conn.commit()
         finally:
             conn.close()
@@ -477,8 +507,10 @@ class SyncService:
         cursor = conn.cursor()
         
         try:
-            cursor.execute("INSERT INTO collections (name, description) VALUES (?, ?)", 
-                         (collection_data['name'], collection_data.get('description', '')))
+            # Include created_at field or use current timestamp
+            created_at = collection_data.get('created_at') or datetime.now().isoformat()
+            cursor.execute("INSERT INTO collections (name, description, created_at) VALUES (?, ?, ?)", 
+                         (collection_data['name'], collection_data.get('description', ''), created_at))
             conn.commit()
         finally:
             conn.close()

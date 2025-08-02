@@ -877,11 +877,16 @@ To change settings:
         # Show conflict details and wait for user confirmation
         self.cli.show_help_dialog(conflict_text, f"Sync Conflicts Found ({len(conflicts)} conflicts)")
         
+        # Log the conflicts for debugging
+        self._add_log("sync_conflicts", f"Found {len(conflicts)} sync conflicts that will be auto-resolved by keeping local versions")
+        
         # Auto-resolve all conflicts by keeping local versions for safety
         resolutions = {}
         for conflict in conflicts:
             conflict_id = f"{conflict.conflict_type}_{conflict.item_id}"
             resolutions[conflict_id] = "local"
+            # Log each conflict resolution
+            self._add_log("sync_conflict_resolved", f"Conflict {conflict.conflict_type} #{conflict.item_id}: kept local version")
             
         return resolutions
 
