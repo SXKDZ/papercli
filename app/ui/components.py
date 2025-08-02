@@ -14,7 +14,7 @@ from rich.style import Style as RichStyle
 from rich.table import Table
 from rich.text import Text
 
-from ..models import Paper
+from ..db.models import Paper
 from .status import StatusMessages
 
 

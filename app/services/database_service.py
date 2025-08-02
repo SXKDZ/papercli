@@ -7,8 +7,8 @@ from typing import Any, Dict, List
 
 from sqlalchemy import text
 
-from ..database import get_db_manager, get_db_session
-from ..models import Author, Collection, Paper
+from ..db.database import get_db_manager, get_db_session
+from ..db.models import Author, Collection, Paper
 
 
 class DatabaseHealthService:

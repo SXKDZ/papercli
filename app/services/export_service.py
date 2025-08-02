@@ -8,7 +8,7 @@ from typing import List
 import bibtexparser
 from bibtexparser.customization import string_to_latex
 
-from ..models import Paper
+from ..db.models import Paper
 
 
 class ExportService:

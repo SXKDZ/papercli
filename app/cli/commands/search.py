@@ -3,13 +3,13 @@
 import traceback
 from typing import List
 
-from .base import BaseCommandHandler
 from ...ui import PaperListControl
+from .base import BaseCommandHandler
 
 
 class SearchCommandHandler(BaseCommandHandler):
     """Handler for search, filter, sort, and selection commands."""
-    
+
     def handle_all_command(self):
         """Handle /all command - return to full paper list."""
         if self.cli.in_select_mode:
@@ -185,14 +185,18 @@ class SearchCommandHandler(BaseCommandHandler):
 
         try:
             # Preserve selection state
-            old_selected_paper_ids = self.cli.paper_list_control.selected_paper_ids.copy()
+            old_selected_paper_ids = (
+                self.cli.paper_list_control.selected_paper_ids.copy()
+            )
             old_in_select_mode = self.cli.paper_list_control.in_select_mode
 
             # Sort papers
             reverse = order.startswith("desc")
 
             if field == "title":
-                self.cli.current_papers.sort(key=lambda p: p.title.lower(), reverse=reverse)
+                self.cli.current_papers.sort(
+                    key=lambda p: p.title.lower(), reverse=reverse
+                )
             elif field == "authors":
                 self.cli.current_papers.sort(
                     key=lambda p: p.author_names.lower(), reverse=reverse
@@ -208,9 +212,13 @@ class SearchCommandHandler(BaseCommandHandler):
                     key=lambda p: p.paper_type or "", reverse=reverse
                 )
             elif field == "added_date":
-                self.cli.current_papers.sort(key=lambda p: p.added_date, reverse=reverse)
+                self.cli.current_papers.sort(
+                    key=lambda p: p.added_date, reverse=reverse
+                )
             elif field == "modified_date":
-                self.cli.current_papers.sort(key=lambda p: p.modified_date, reverse=reverse)
+                self.cli.current_papers.sort(
+                    key=lambda p: p.modified_date, reverse=reverse
+                )
 
             # Update paper list control
             self.cli.paper_list_control = PaperListControl(self.cli.current_papers)

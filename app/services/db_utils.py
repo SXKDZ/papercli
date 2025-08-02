@@ -5,8 +5,8 @@ from typing import Any, Callable, List, Optional, Type
 
 from sqlalchemy.orm import Session
 
-from ..database import get_db_session
-from ..models import Author, Collection, Paper
+from ..db.database import get_db_session
+from ..db.models import Author, Collection, Paper
 
 
 class DatabaseHelper:

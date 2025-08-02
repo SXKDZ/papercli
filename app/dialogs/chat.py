@@ -562,20 +562,41 @@ class ChatDialog:
                         current_control.buffer.insert_text(event.data)
                 # For non-printable characters (like escape sequence remnants), just ignore them
 
-        # Create condition to check if chat window has focus
+        # Create condition to check if we should handle scrolling keys
         @Condition
-        def chat_window_has_focus():
-            return get_app().layout.current_window == self.chat_window
+        def should_handle_scroll_keys():
+            current_window = get_app().layout.current_window
+            # Only handle scroll keys when chat window has focus, not input box
+            return current_window == self.chat_window
 
-        @kb.add("up", filter=chat_window_has_focus)
+        @kb.add("up", filter=should_handle_scroll_keys)
         def _(event):
             # Scroll up in the chat window
-            event.app.layout.current_window.content.move_cursor_up()
+            self.chat_display_control.move_cursor_up()
 
-        @kb.add("down", filter=chat_window_has_focus)
+        @kb.add("down", filter=should_handle_scroll_keys)
         def _(event):
             # Scroll down in the chat window
-            event.app.layout.current_window.content.move_cursor_down()
+            self.chat_display_control.move_cursor_down()
+
+        # Create condition for input box focus
+        @Condition
+        def input_box_has_focus():
+            return get_app().layout.current_window == self.user_input.window
+
+        @kb.add("up", filter=input_box_has_focus)
+        def _(event):
+            # Let TextArea handle up key natively - don't bubble to main app
+            current_control = event.app.layout.current_control
+            if hasattr(current_control, 'buffer'):
+                current_control.buffer.cursor_up()
+
+        @kb.add("down", filter=input_box_has_focus)
+        def _(event):
+            # Let TextArea handle down key natively - don't bubble to main app
+            current_control = event.app.layout.current_control
+            if hasattr(current_control, 'buffer'):
+                current_control.buffer.cursor_down()
 
         @kb.add("home")
         def _(event):
@@ -595,12 +616,12 @@ class ChatDialog:
                     current_control.buffer.document.get_end_of_line_position()
                 )
 
-        @kb.add("pageup", filter=chat_window_has_focus)
+        @kb.add("pageup")
         def _(event):
             # Let prompt-toolkit handle page up scrolling
             pass
 
-        @kb.add("pagedown", filter=chat_window_has_focus)
+        @kb.add("pagedown")
         def _(event):
             # Let prompt-toolkit handle page down scrolling
             pass

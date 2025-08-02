@@ -1,37 +1,34 @@
 """Main CLI coordinator module."""
 
-import os
-import threading
 import traceback
 from datetime import datetime
 from typing import List, Optional
 
-import requests
-from prompt_toolkit.application import Application, get_app
-from prompt_toolkit.buffer import Buffer
-from prompt_toolkit.completion import Completer, Completion
-from prompt_toolkit.data_structures import Point
 from prompt_toolkit.document import Document
-from prompt_toolkit.filters import Condition, has_focus
-from prompt_toolkit.formatted_text import FormattedText
-from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
-from prompt_toolkit.key_binding.bindings import scroll
-from prompt_toolkit.key_binding.defaults import load_key_bindings
-from prompt_toolkit.layout import HSplit, Layout, Window, WindowAlign
 from prompt_toolkit.layout.containers import (
-    ConditionalContainer,
     Float,
-    FloatContainer,
-    ScrollOffsets,
 )
-from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
-from prompt_toolkit.layout.margins import ScrollbarMargin
-from prompt_toolkit.layout.menus import CompletionsMenu
-from prompt_toolkit.layout.processors import BeforeInput
-from prompt_toolkit.shortcuts import set_title
-from prompt_toolkit.styles import Style
-from prompt_toolkit.widgets import Button, Dialog, Frame, Label, TextArea
-
+from ..dialogs import (
+    AddDialog,
+    FilterDialog,
+    SortDialog,
+)
+from ..db.models import Paper
+from ..services import (
+    AddPaperService,
+    AuthorService,
+    BackgroundOperationService,
+    ChatService,
+    CollectionService,
+    DatabaseHealthService,
+    ExportService,
+    MetadataExtractor,
+    PaperService,
+    SearchService,
+    SystemService,
+)
+from ..ui import ErrorPanel, PaperListControl, StatusBar
+from ..version import get_version
 from .commands import (
     CollectionCommandHandler,
     ExportCommandHandler,
@@ -41,34 +38,6 @@ from .commands import (
 )
 from .completer import SmartCompleter
 from .ui_setup import UISetupMixin
-from ..dialogs import (
-    AddDialog,
-    ChatDialog,
-    CollectDialog,
-    EditDialog,
-    FilterDialog,
-    SortDialog,
-)
-from ..models import Paper
-from ..services import (
-    AddPaperService,
-    AuthorService,
-    BackgroundOperationService,
-    ChatService,
-    CollectionService,
-    DatabaseHealthService,
-    ExportService,
-    LLMSummaryService,
-    MetadataExtractor,
-    PaperService,
-    PDFMetadataExtractionService,
-    SearchService,
-    SystemService,
-    normalize_paper_data,
-)
-
-from ..ui import ErrorPanel, PaperListControl, StatusBar
-from ..version import VersionManager, get_version
 
 
 class PaperCLI(UISetupMixin):
@@ -88,6 +57,7 @@ Core Commands:
 /clear         Clear all selected papers
 /help          Show this help panel
 /log           Show the error log panel
+/config        Manage configuration (model, API key) - /config show for details
 /exit          Exit the application (or press Ctrl+C)
 
 Paper Operations (work on the paper under the cursor ► or selected papers ✓):
@@ -121,6 +91,11 @@ System Commands:
   check           Check for available updates
   update          Update to latest version (if possible)
   info            Show detailed version information
+/config           Manage configuration settings
+  show            Show all current configuration
+  model           Set OpenAI model (gpt-4o, gpt-3.5-turbo, etc.)
+  openai_api_key  Set OpenAI API key
+  help            Show configuration command help
 
 Navigation & Interaction:
 -------------------------
@@ -296,9 +271,11 @@ Indicators (in the first column):
                     self.system_commands.handle_doctor_command(parts[1:])
                 elif cmd == "/version":
                     self.system_commands.handle_version_command(parts[1:])
+                elif cmd == "/config":
+                    self.system_commands.handle_config_command(parts[1:])
                 elif cmd == "/exit":
                     self.system_commands.handle_exit_command()
-                
+
                 # Paper commands
                 elif cmd == "/add":
                     self.paper_commands.handle_add_command(parts[1:])
@@ -310,7 +287,7 @@ Indicators (in the first column):
                     self.paper_commands.handle_open_command()
                 elif cmd == "/detail":
                     self.paper_commands.handle_detail_command()
-                
+
                 # Search commands
                 elif cmd == "/filter":
                     self.search_commands.handle_filter_command(parts[1:])
@@ -322,7 +299,7 @@ Indicators (in the first column):
                     self.search_commands.handle_clear_command()
                 elif cmd == "/sort":
                     self.search_commands.handle_sort_command(parts[1:])
-                
+
                 # Collection commands
                 elif cmd == "/add-to":
                     self.collection_commands.handle_add_to_command(parts[1:])
@@ -330,7 +307,7 @@ Indicators (in the first column):
                     self.collection_commands.handle_remove_from_command(parts[1:])
                 elif cmd == "/collect":
                     self.collection_commands.handle_collect_command(parts[1:])
-                
+
                 # Export commands
                 elif cmd == "/export":
                     self.export_commands.handle_export_command(parts[1:])
@@ -406,6 +383,7 @@ Indicators (in the first column):
 
     def show_filter_dialog(self):
         """Show the filter dialog."""
+
         def callback(result):
             # This callback is executed when the dialog is closed.
             if self.filter_float in self.app.layout.container.floats:
@@ -442,6 +420,7 @@ Indicators (in the first column):
 
     def show_sort_dialog(self):
         """Show the sort dialog."""
+
         def callback(result):
             # This callback is executed when the dialog is closed.
             if self.sort_float in self.app.layout.container.floats:
@@ -452,7 +431,9 @@ Indicators (in the first column):
 
             if result:
                 # Preserve selection state
-                old_selected_paper_ids = self.paper_list_control.selected_paper_ids.copy()
+                old_selected_paper_ids = (
+                    self.paper_list_control.selected_paper_ids.copy()
+                )
                 old_in_select_mode = self.paper_list_control.in_select_mode
 
                 # Sort papers
@@ -460,7 +441,9 @@ Indicators (in the first column):
                 reverse = result["reverse"]
 
                 if field == "title":
-                    self.current_papers.sort(key=lambda p: p.title.lower(), reverse=reverse)
+                    self.current_papers.sort(
+                        key=lambda p: p.title.lower(), reverse=reverse
+                    )
                 elif field == "authors":
                     self.current_papers.sort(
                         key=lambda p: p.author_names.lower(), reverse=reverse
@@ -532,7 +515,6 @@ Indicators (in the first column):
         self.show_help = True
         self.app.layout.focus(self.help_control)
         self.status_bar.set_status("Help panel opened - Press ESC to close")
-
 
     def run(self):
         """Run the CLI application."""

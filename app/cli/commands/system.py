@@ -1,25 +1,29 @@
 """System commands handler."""
 
+import os
 import traceback
-from datetime import datetime
+from pathlib import Path
 from typing import List
 
 import requests
+from openai import OpenAI
 
-from .base import BaseCommandHandler
 from ...version import VersionManager
+from .base import BaseCommandHandler
 
 
 class SystemCommandHandler(BaseCommandHandler):
     """Handler for system commands like log, doctor, version, exit."""
-    
+
     def handle_log_command(self):
         """Handle /log command."""
         if not self.cli.logs:
             log_content = "No activities logged in this session."
         else:
             # Limit to last 500 entries to prevent scrolling issues
-            recent_logs = self.cli.logs[-500:] if len(self.cli.logs) > 500 else self.cli.logs
+            recent_logs = (
+                self.cli.logs[-500:] if len(self.cli.logs) > 500 else self.cli.logs
+            )
 
             log_entries = []
             # Show most recent first
@@ -50,7 +54,9 @@ class SystemCommandHandler(BaseCommandHandler):
                 )
 
         self.cli.show_help_dialog(log_content, "Activity Log")
-        self.cli.status_bar.set_status("Activity log opened - Press ESC to close", "open")
+        self.cli.status_bar.set_status(
+            "Activity log opened - Press ESC to close", "open"
+        )
 
     def handle_doctor_command(self, args: List[str]):
         """Handle /doctor command for database diagnostics and cleanup."""
@@ -58,7 +64,9 @@ class SystemCommandHandler(BaseCommandHandler):
             action = args[0] if args else "diagnose"
 
             if action == "diagnose":
-                self.cli.status_bar.set_status("Running diagnostic checks...", "diagnose")
+                self.cli.status_bar.set_status(
+                    "Running diagnostic checks...", "diagnose"
+                )
                 report = self.cli.db_health_service.run_full_diagnostic()
                 self._show_doctor_report(report)
 
@@ -338,7 +346,9 @@ The doctor command helps maintain database health by:
 
                     self.cli.show_help_dialog(restart_info, "Restart Required")
                 else:
-                    self.cli.status_bar.set_error("Update failed. Please update manually.")
+                    self.cli.status_bar.set_error(
+                        "Update failed. Please update manually."
+                    )
 
             except Exception as e:
                 self.cli.status_bar.set_error(f"Update failed: {e}")
@@ -379,3 +389,293 @@ The doctor command helps maintain database health by:
         else:
             self.cli.status_bar.set_error(f"Unknown version command: {action}")
             self.cli.status_bar.set_status("Usage: /version [check|update|info]")
+
+    def handle_config_command(self, args: List[str]):
+        """Handle /config command for configuration management."""
+        if not args:
+            self._show_config_help()
+            return
+
+        action = args[0].lower()
+
+        if action == "model":
+            if len(args) < 2:
+                self._show_current_model()
+            else:
+                model_name = args[1]
+                self._set_model(model_name)
+
+        elif action == "openai_api_key":
+            if len(args) < 2:
+                self._show_current_api_key()
+            else:
+                api_key = args[1]
+                self._set_api_key(api_key)
+
+        elif action == "show":
+            self._show_all_config()
+
+        elif action == "help":
+            self._show_config_help()
+
+        else:
+            self.cli.status_bar.set_error(f"Unknown config option: {action}")
+            self._show_config_help()
+
+    def _show_config_help(self):
+        """Show configuration help."""
+        # Get available models dynamically
+        available_models_text = self._get_available_models_text()
+
+        help_text = f"""Configuration Commands:
+
+Available Commands:
+-------------------
+/config show                    - Show all current configuration
+/config model                   - Show current OpenAI model
+/config model <model_name>      - Set OpenAI model (e.g., gpt-4o, gpt-3.5-turbo)
+/config openai_api_key          - Show current API key (masked)
+/config openai_api_key <key>    - Set OpenAI API key
+
+{available_models_text}
+
+Examples:
+---------
+/config show                    - View all current settings
+/config model gpt-4o            - Set model to GPT-4 Omni
+/config model gpt-3.5-turbo     - Set model to GPT-3.5 Turbo
+/config openai_api_key sk-...   - Set your OpenAI API key
+
+Configuration Storage:
+----------------------
+Settings are stored in environment variables and automatically saved to a .env file.
+The .env file is searched in this order:
+1. Current directory (.env)
+2. PAPERCLI_DATA_DIR if set
+3. ~/.papercli/.env (default)
+
+API Key Security:
+-----------------
+API keys are masked when displayed for security.
+Only the first 8 and last 4 characters are shown."""
+
+        self.cli.show_help_dialog(help_text, "Configuration Help")
+
+    def _get_available_models_text(self):
+        """Get formatted text of available OpenAI models."""
+        try:
+            # Check if API key is available
+            api_key = os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                return """Available OpenAI Models:
+------------------------
+(Set OPENAI_API_KEY to query live model list)
+
+Common Models:
+gpt-4o                          - Latest GPT-4 Omni model (recommended)
+gpt-4o-mini                     - Faster, smaller GPT-4 Omni model  
+gpt-4-turbo                     - GPT-4 Turbo model
+gpt-4                           - Standard GPT-4 model
+gpt-3.5-turbo                   - GPT-3.5 Turbo model (faster, cheaper)"""
+
+            # Query OpenAI for available models
+            client = OpenAI(api_key=api_key)
+            models_response = client.models.list()
+
+            # Filter for chat models and sort by ID
+            chat_models = []
+            for model in models_response.data:
+                model_id = model.id
+                # Filter for common chat models
+                if any(prefix in model_id for prefix in ["gpt-4", "gpt-3.5"]):
+                    chat_models.append(model_id)
+
+            chat_models.sort()
+
+            if not chat_models:
+                return """Available OpenAI Models:
+------------------------
+(No chat models found in API response)
+
+Common Models:
+gpt-4o, gpt-4o-mini, gpt-4-turbo, gpt-4, gpt-3.5-turbo"""
+
+            # Format the models list
+            models_text = "Available OpenAI Models:\n"
+            models_text += "------------------------\n"
+
+            # Add descriptions for known models
+            model_descriptions = {
+                "gpt-4o": "Latest GPT-4 Omni model (recommended)",
+                "gpt-4o-mini": "Faster, smaller GPT-4 Omni model",
+                "gpt-4-turbo": "GPT-4 Turbo model",
+                "gpt-4": "Standard GPT-4 model",
+                "gpt-3.5-turbo": "GPT-3.5 Turbo model (faster, cheaper)",
+            }
+
+            for model in chat_models:
+                description = model_descriptions.get(model, "OpenAI chat model")
+                models_text += f"{model:<30} - {description}\n"
+
+            return models_text.rstrip()
+
+        except Exception as e:
+            # Fallback to static list if API query fails
+            error_msg = str(e)
+            return f"""Available OpenAI Models:
+------------------------
+(API query failed: {error_msg})
+
+Common Models:
+gpt-4o                          - Latest GPT-4 Omni model (recommended)
+gpt-4o-mini                     - Faster, smaller GPT-4 Omni model
+gpt-4-turbo                     - GPT-4 Turbo model  
+gpt-4                           - Standard GPT-4 model
+gpt-3.5-turbo                   - GPT-3.5 Turbo model (faster, cheaper)"""
+
+    def _get_env_file_path(self):
+        """Get the path to the .env file."""
+        # Try current directory first, then home directory
+        current_dir_env = Path.cwd() / ".env"
+        if current_dir_env.exists():
+            return current_dir_env
+
+        # Check in PAPERCLI_DATA_DIR if set
+        data_dir_env = os.getenv("PAPERCLI_DATA_DIR")
+        if data_dir_env:
+            data_dir = Path(data_dir_env).expanduser().resolve()
+            data_env = data_dir / ".env"
+            if data_env.exists():
+                return data_env
+
+        # Default to ~/.papercli/.env
+        home_env = Path.home() / ".papercli" / ".env"
+        return home_env
+
+    def _read_env_file(self):
+        """Read the .env file and return a dict of key-value pairs."""
+        env_file = self._get_env_file_path()
+        env_vars = {}
+
+        if env_file.exists():
+            try:
+                with open(env_file, "r") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith("#") and "=" in line:
+                            key, value = line.split("=", 1)
+                            # Remove quotes if present
+                            value = value.strip("\"'")
+                            env_vars[key.strip()] = value
+            except Exception as e:
+                self.cli.status_bar.set_error(f"Error reading .env file: {e}")
+
+        return env_vars
+
+    def _write_env_file(self, env_vars):
+        """Write environment variables to .env file."""
+        env_file = self._get_env_file_path()
+
+        try:
+            # Create parent directory if it doesn't exist
+            env_file.parent.mkdir(parents=True, exist_ok=True)
+
+            with open(env_file, "w") as f:
+                f.write("# PaperCLI Configuration\n")
+                for key, value in sorted(env_vars.items()):
+                    f.write(f"{key}={value}\n")
+
+            return True
+        except Exception as e:
+            self.cli.status_bar.set_error(f"Error writing .env file: {e}")
+            return False
+
+    def _show_current_model(self):
+        """Show the current OpenAI model."""
+        current_model = os.getenv("OPENAI_MODEL", "gpt-4o")
+        self.cli.status_bar.set_status(f"Current OpenAI model: {current_model}")
+
+    def _set_model(self, model_name):
+        """Set the OpenAI model."""
+        # Update environment variable
+        os.environ["OPENAI_MODEL"] = model_name
+
+        # Update .env file
+        env_vars = self._read_env_file()
+        env_vars["OPENAI_MODEL"] = model_name
+
+        if self._write_env_file(env_vars):
+            self.cli.status_bar.set_success(f"OpenAI model set to: {model_name}")
+            self._add_log("config_model", f"OpenAI model changed to: {model_name}")
+        else:
+            self.cli.status_bar.set_error("Failed to save model setting to .env file")
+
+    def _show_current_api_key(self):
+        """Show the current API key (masked)."""
+        api_key = os.getenv("OPENAI_API_KEY", "")
+        if api_key:
+            masked_key = (
+                api_key[:8] + "*" * (len(api_key) - 12) + api_key[-4:]
+                if len(api_key) > 12
+                else "****"
+            )
+            self.cli.status_bar.set_status(f"Current OpenAI API key: {masked_key}")
+        else:
+            self.cli.status_bar.set_status("No OpenAI API key set")
+
+    def _set_api_key(self, api_key):
+        """Set the OpenAI API key."""
+        # Basic validation
+        if not api_key.startswith("sk-"):
+            self.cli.status_bar.set_error(
+                "Invalid API key format. OpenAI keys should start with 'sk-'"
+            )
+            return
+
+        # Update environment variable
+        os.environ["OPENAI_API_KEY"] = api_key
+
+        # Update .env file
+        env_vars = self._read_env_file()
+        env_vars["OPENAI_API_KEY"] = api_key
+
+        if self._write_env_file(env_vars):
+            masked_key = (
+                api_key[:8] + "*" * (len(api_key) - 12) + api_key[-4:]
+                if len(api_key) > 12
+                else "****"
+            )
+            self.cli.status_bar.set_success(f"OpenAI API key set: {masked_key}")
+            self._add_log("config_api_key", f"OpenAI API key updated: {masked_key}")
+        else:
+            self.cli.status_bar.set_error("Failed to save API key to .env file")
+
+    def _show_all_config(self):
+        """Show all current configuration."""
+        model = os.getenv("OPENAI_MODEL", "gpt-4o")
+        api_key = os.getenv("OPENAI_API_KEY", "")
+
+        if api_key:
+            masked_key = (
+                api_key[:8] + "*" * (len(api_key) - 12) + api_key[-4:]
+                if len(api_key) > 12
+                else "****"
+            )
+        else:
+            masked_key = "Not set"
+
+        env_file = self._get_env_file_path()
+
+        config_text = f"""Current Configuration:
+
+OpenAI Model: {model}
+OpenAI API Key: {masked_key}
+
+Configuration file: {env_file}
+File exists: {'Yes' if env_file.exists() else 'No'}
+
+To change settings:
+/config model <model_name>
+/config openai_api_key <key>"""
+
+        self.cli.show_help_dialog(config_text, "Current Configuration")

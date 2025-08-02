@@ -9,7 +9,7 @@ from typing import Any, Dict, List
 
 import pyperclip
 
-from ..models import Paper
+from ..db.models import Paper
 from ..prompts import ChatPrompts
 
 

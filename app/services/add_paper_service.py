@@ -3,8 +3,8 @@
 import os
 from typing import Any, Dict, List, Tuple
 
-from ..database import get_pdf_directory
-from ..models import Paper
+from ..db.database import get_pdf_directory
+from ..db.models import Paper
 from .metadata_service import MetadataExtractor
 from .paper_service import PaperService
 from .system_service import SystemService

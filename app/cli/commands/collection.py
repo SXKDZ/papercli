@@ -5,14 +5,14 @@ from typing import List
 
 from prompt_toolkit.layout.containers import Float
 
-from .base import BaseCommandHandler
 from ...dialogs import CollectDialog
 from ...services import CollectionService
+from .base import BaseCommandHandler
 
 
 class CollectionCommandHandler(BaseCommandHandler):
     """Handler for collection commands like collect, add-to, remove-from."""
-    
+
     def handle_add_to_command(self, args: List[str]):
         """Handle /add-to command."""
         if not args:
@@ -142,7 +142,9 @@ class CollectionCommandHandler(BaseCommandHandler):
                     f"Removed {len(papers_to_remove)} paper(s) from {len(successful_collections)} collections: {', '.join(successful_collections)}"
                 )
         elif not all_errors:
-            self.cli.status_bar.set_status("No papers were removed from any collection.")
+            self.cli.status_bar.set_status(
+                "No papers were removed from any collection."
+            )
 
     def handle_collect_command(self, args):
         """Handle /collect command with optional subcommands."""
@@ -231,7 +233,9 @@ class CollectionCommandHandler(BaseCommandHandler):
                 self.cli.app.layout.focus(self.cli.collect_dialog)
 
             # Set application key bindings to dialog's key bindings
-            self.cli.app.key_bindings = self.cli.collect_dialog.dialog.container.key_bindings
+            self.cli.app.key_bindings = (
+                self.cli.collect_dialog.dialog.container.key_bindings
+            )
 
             self.cli.app.invalidate()
 

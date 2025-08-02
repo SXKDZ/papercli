@@ -2,8 +2,8 @@
 
 from typing import List
 
-from ..database import get_db_session
-from ..models import Author, Collection, Paper
+from ..db.database import get_db_session
+from ..db.models import Author, Collection, Paper
 
 
 class AuthorService:

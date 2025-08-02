@@ -14,7 +14,7 @@ from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.widgets import Button, Dialog, Frame, TextArea
 
-from ..models import Collection, Paper
+from ..db.models import Collection, Paper
 from ..services import CollectionService, PaperService
 
 

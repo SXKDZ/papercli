@@ -13,19 +13,95 @@ class SmartCompleter(Completer):
 
     def __init__(self, cli: "PaperCLI" = None):
         self.cli = cli
+        # Commands ordered by functional groups
         self.commands = {
+            # Paper management
             "/add": {
                 "description": "Open add dialog or add paper directly (e.g., /add arxiv 2307.10635)",
                 "subcommands": {
-                    "pdf": "Add from a local PDF file",
                     "arxiv": "Add from an arXiv ID (e.g., 2307.10635)",
                     "dblp": "Add from a DBLP URL",
                     "openreview": "Add from an OpenReview ID (e.g., bq1JEgioLr)",
                     "doi": "Add from a DOI (e.g., 10.1000/example)",
+                    "pdf": "Add from a local PDF file",
                     "bib": "Add papers from a BibTeX (.bib) file",
                     "ris": "Add papers from a RIS (.ris) file",
                     "manual": "Add a paper with manual entry",
                 },
+            },
+            "/edit": {
+                "description": "Open edit dialog or edit field directly (e.g., /edit title ...)",
+                "subcommands": {
+                    "extract-pdf": "Extract metadata from PDF and update paper",
+                    "summarize": "Generate LLM summary and update notes field",
+                    "title": "Edit the title",
+                    "abstract": "Edit the abstract",
+                    "notes": "Edit your personal notes",
+                    "venue_full": "Edit the full venue name",
+                    "venue_acronym": "Edit the venue acronym",
+                    "year": "Edit the publication year",
+                    "paper_type": "Edit the paper type (e.g., journal, conference)",
+                    "doi": "Edit the DOI",
+                    "pages": "Edit the page numbers",
+                    "preprint_id": "Edit the preprint ID (e.g., arXiv 2505.15134)",
+                    "url": "Edit the paper URL",
+                },
+            },
+            "/delete": {
+                "description": "Delete the selected paper(s)",
+                "subcommands": {},
+            },
+            "/detail": {
+                "description": "Show detailed metadata for the selected paper(s)",
+                "subcommands": {},
+            },
+            "/open": {
+                "description": "Open the PDF for the selected paper(s)",
+                "subcommands": {},
+            },
+            # AI and export
+            "/chat": {
+                "description": "Open chat interface (local OpenAI window or copy prompt to clipboard)",
+                "subcommands": {
+                    "claude": "Copy prompt to clipboard and open Claude AI in browser",
+                    "chatgpt": "Copy prompt to clipboard and open ChatGPT in browser",
+                    "gemini": "Copy prompt to clipboard and open Google Gemini in browser",
+                },
+            },
+            "/copy-prompt": {
+                "description": "Copy paper prompt to clipboard for use with any LLM",
+                "subcommands": {},
+            },
+            "/export": {
+                "description": "Export selected paper(s) to a file or clipboard",
+                "subcommands": {
+                    "bibtex": "Export to BibTeX format",
+                    "ieee": "Export to IEEE reference format",
+                    "markdown": "Export to Markdown format",
+                    "html": "Export to HTML format",
+                    "json": "Export to JSON format",
+                },
+            },
+            # Collections
+            "/collect": {
+                "description": "Manage collections",
+                "subcommands": {
+                    "purge": "Delete all empty collections",
+                },
+            },
+            "/add-to": {
+                "description": "Add selected paper(s) to one or more collections",
+                "subcommands": {},
+            },
+            "/remove-from": {
+                "description": "Remove selected paper(s) from one or more collections",
+                "subcommands": {},
+            },
+            # Navigation and discovery
+            "/help": {"description": "Show the help panel", "subcommands": {}},
+            "/all": {
+                "description": "Show all papers in the database",
+                "subcommands": {},
             },
             "/filter": {
                 "description": "Filter papers by specific criteria or search all fields",
@@ -48,64 +124,24 @@ class SmartCompleter(Completer):
                 },
             },
             "/select": {"description": "Enter multi-selection mode", "subcommands": {}},
-            "/all": {
-                "description": "Show all papers in the database",
-                "subcommands": {},
-            },
             "/clear": {"description": "Clear all selected papers", "subcommands": {}},
-            "/chat": {
-                "description": "Open chat interface (local OpenAI window or copy prompt to clipboard)",
+            # System and configuration
+            "/config": {
+                "description": "Manage configuration settings",
                 "subcommands": {
-                    "claude": "Copy prompt to clipboard and open Claude AI in browser",
-                    "chatgpt": "Copy prompt to clipboard and open ChatGPT in browser",
-                    "gemini": "Copy prompt to clipboard and open Google Gemini in browser",
+                    "show": "Show all current configuration",
+                    "model": "Set OpenAI model (e.g., gpt-4o, gpt-3.5-turbo)",
+                    "openai_api_key": "Set OpenAI API key",
+                    "help": "Show configuration command help",
+                },
+                "model_options": {
+                    "gpt-4o": "Latest GPT-4 Omni model (recommended)",
+                    "gpt-4o-mini": "Faster, smaller GPT-4 Omni model",
+                    "gpt-4-turbo": "GPT-4 Turbo model",
+                    "gpt-4": "Standard GPT-4 model",
+                    "gpt-3.5-turbo": "GPT-3.5 Turbo model (faster, cheaper)",
                 },
             },
-            "/copy-prompt": {
-                "description": "Copy paper prompt to clipboard for use with any LLM",
-                "subcommands": {},
-            },
-            "/edit": {
-                "description": "Open edit dialog or edit field directly (e.g., /edit title ...)",
-                "subcommands": {
-                    "extract-pdf": "Extract metadata from PDF and update paper",
-                    "summarize": "Generate LLM summary and update notes field",
-                    "title": "Edit the title",
-                    "abstract": "Edit the abstract",
-                    "notes": "Edit your personal notes",
-                    "venue_full": "Edit the full venue name",
-                    "venue_acronym": "Edit the venue acronym",
-                    "year": "Edit the publication year",
-                    "paper_type": "Edit the paper type (e.g., journal, conference)",
-                    "doi": "Edit the DOI",
-                    "pages": "Edit the page numbers",
-                    "preprint_id": "Edit the preprint ID (e.g., arXiv 2505.15134)",
-                    "url": "Edit the paper URL",
-                },
-            },
-            "/export": {
-                "description": "Export selected paper(s) to a file or clipboard",
-                "subcommands": {
-                    "bibtex": "Export to BibTeX format",
-                    "ieee": "Export to IEEE reference format",
-                    "markdown": "Export to Markdown format",
-                    "html": "Export to HTML format",
-                    "json": "Export to JSON format",
-                },
-            },
-            "/delete": {
-                "description": "Delete the selected paper(s)",
-                "subcommands": {},
-            },
-            "/open": {
-                "description": "Open the PDF for the selected paper(s)",
-                "subcommands": {},
-            },
-            "/detail": {
-                "description": "Show detailed metadata for the selected paper(s)",
-                "subcommands": {},
-            },
-            "/help": {"description": "Show the help panel", "subcommands": {}},
             "/log": {"description": "Show the error log panel", "subcommands": {}},
             "/doctor": {
                 "description": "Diagnose and fix database/system issues",
@@ -113,20 +149,6 @@ class SmartCompleter(Completer):
                     "diagnose": "Run full diagnostic check",
                     "clean": "Clean orphaned database records",
                     "help": "Show doctor command help",
-                },
-            },
-            "/add-to": {
-                "description": "Add selected paper(s) to one or more collections",
-                "subcommands": {},
-            },
-            "/remove-from": {
-                "description": "Remove selected paper(s) from one or more collections",
-                "subcommands": {},
-            },
-            "/collect": {
-                "description": "Manage collections",
-                "subcommands": {
-                    "purge": "Delete all empty collections",
                 },
             },
             "/version": {
@@ -238,5 +260,24 @@ class SmartCompleter(Completer):
                         yield Completion(
                             subcmd,
                             start_position=-len(partial_subcmd),
+                            display_meta=description,
+                        )
+
+        # Special completion for /config model <model_name>
+        elif len(words) >= 2 and words[0] == "/config" and words[1] == "model":
+            if len(words) == 2 and text.endswith(" "):
+                # Show all model options
+                model_options = self.commands["/config"].get("model_options", {})
+                for model, description in model_options.items():
+                    yield Completion(model, start_position=0, display_meta=description)
+            elif len(words) == 3 and not text.endswith(" "):
+                # Show partial model matches
+                model_options = self.commands["/config"].get("model_options", {})
+                partial_model = words[2]
+                for model, description in model_options.items():
+                    if model.startswith(partial_model):
+                        yield Completion(
+                            model,
+                            start_position=-len(partial_model),
                             display_meta=description,
                         )

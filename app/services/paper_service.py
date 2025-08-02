@@ -7,8 +7,8 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import text
 from sqlalchemy.orm import joinedload
 
-from ..database import get_db_session
-from ..models import Author, Collection, Paper, PaperAuthor
+from ..db.database import get_db_session
+from ..db.models import Author, Collection, Paper, PaperAuthor
 
 
 class PaperService:

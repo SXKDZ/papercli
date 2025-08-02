@@ -10,7 +10,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from .cli import PaperCLI
-from .database import init_database
+from .db.database import init_database
 from .version import get_version
 
 

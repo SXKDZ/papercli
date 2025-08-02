@@ -10,7 +10,7 @@ from ...dialogs import ChatDialog
 
 class ExportCommandHandler(BaseCommandHandler):
     """Handler for export and share commands like export, chat, copy-prompt."""
-    
+
     def handle_export_command(self, args: List[str]):
         """Handle /export command."""
         papers_to_export = self._get_target_papers()
@@ -104,7 +104,9 @@ class ExportCommandHandler(BaseCommandHandler):
                     hasattr(self.cli, "chat_float")
                     and self.cli.chat_float in self.cli.app.layout.container.floats
                 ):
-                    self.cli.status_bar.set_status("Chat window is already open", "info")
+                    self.cli.status_bar.set_status(
+                        "Chat window is already open", "info"
+                    )
                     return
 
                 # /chat only - show chat window with OpenAI
@@ -142,7 +144,9 @@ class ExportCommandHandler(BaseCommandHandler):
                 )
 
                 # Open browser interface with provider-specific behavior
-                result = self.cli.chat_service.open_chat_interface(papers_to_chat, provider)
+                result = self.cli.chat_service.open_chat_interface(
+                    papers_to_chat, provider
+                )
 
                 # Handle result
                 if isinstance(result, dict):

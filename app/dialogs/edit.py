@@ -20,7 +20,6 @@ from ..services import (
     MetadataExtractor,
     normalize_paper_data,
 )
-from ..ui.components import StatusBar
 
 
 class EditDialog:

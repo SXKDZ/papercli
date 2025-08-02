@@ -9,19 +9,18 @@ from prompt_toolkit.filters import Condition
 from prompt_toolkit.layout.containers import Float
 from prompt_toolkit.widgets import Button, Dialog, Label
 
-from .base import BaseCommandHandler
 from ...dialogs import EditDialog
 from ...services import (
     LLMSummaryService,
     PDFMetadataExtractionService,
     normalize_paper_data,
 )
-from ...ui import PaperListControl
+from .base import BaseCommandHandler
 
 
 class PaperCommandHandler(BaseCommandHandler):
     """Handler for paper management commands like add, edit, delete, open, detail."""
-    
+
     def handle_add_command(self, args: List[str]):
         """Handle /add command."""
         try:
@@ -165,7 +164,9 @@ class PaperCommandHandler(BaseCommandHandler):
             return
 
         future = self.cli.app.loop.create_future()
-        future.add_done_callback(lambda future: self.cli.app.layout.container.floats.pop())
+        future.add_done_callback(
+            lambda future: self.cli.app.layout.container.floats.pop()
+        )
 
         def perform_delete():
             future.set_result(None)
@@ -252,7 +253,9 @@ class PaperCommandHandler(BaseCommandHandler):
             opened_count = 0
             for paper in papers_to_open:
                 if paper.pdf_path:
-                    success, error_msg = self.cli.system_service.open_pdf(paper.pdf_path)
+                    success, error_msg = self.cli.system_service.open_pdf(
+                        paper.pdf_path
+                    )
                     if success:
                         opened_count += 1
                     else:
@@ -264,7 +267,9 @@ class PaperCommandHandler(BaseCommandHandler):
                         )
                         break  # Show only first error
                 else:
-                    self.cli.status_bar.set_warning(f"No PDF available for: {paper.title}")
+                    self.cli.status_bar.set_warning(
+                        f"No PDF available for: {paper.title}"
+                    )
                     break
 
             if opened_count > 0:
@@ -306,6 +311,7 @@ class PaperCommandHandler(BaseCommandHandler):
                 "Could not display paper details.",
                 traceback.format_exc(),
             )
+
     def _add_arxiv_paper(self, arxiv_id: str):
         """Add a paper from arXiv using the add paper service."""
 
@@ -427,7 +433,9 @@ class PaperCommandHandler(BaseCommandHandler):
 
             self._add_log("add_openreview", f"Added OpenReview paper '{paper.title}'")
             self.load_papers()
-            self.cli.status_bar.set_status(f"Added OpenReview paper: {paper.title}", "add")
+            self.cli.status_bar.set_status(
+                f"Added OpenReview paper: {paper.title}", "add"
+            )
 
         self.cli.background_service.run_operation(
             operation_func=complete_operation,
@@ -744,7 +752,9 @@ class PaperCommandHandler(BaseCommandHandler):
         )
         self.cli.edit_float = Float(self.cli.edit_dialog)
         self.cli.app.layout.container.floats.append(self.cli.edit_float)
-        self.cli.app.layout.focus(self.cli.edit_dialog.get_initial_focus() or self.cli.edit_dialog)
+        self.cli.app.layout.focus(
+            self.cli.edit_dialog.get_initial_focus() or self.cli.edit_dialog
+        )
         self.cli.app.invalidate()
 
     def _handle_extract_pdf_command(self, papers):
