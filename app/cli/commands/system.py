@@ -1,6 +1,7 @@
 """System commands handler."""
 
 import os
+import threading
 import traceback
 from pathlib import Path
 from typing import List
@@ -777,10 +778,12 @@ To change settings:
         # Get local data directory
         local_path = os.path.dirname(self.cli.db_path)
         
+        # Run sync synchronously but with progress updates
+        # The progress callback will update the status bar in real-time
         try:
             self.cli.status_bar.set_status("Starting sync operation...", "sync")
             
-            # Create progress callback
+            # Create progress callback that updates UI
             def progress_callback(percentage: int, message: str):
                 status_message = f"Sync {percentage}%: {message}"
                 self.cli.status_bar.set_status(status_message, "sync")
@@ -827,22 +830,54 @@ To change settings:
         """Show conflict resolution dialog and return user choices."""
         if not conflicts:
             return {}
-            
-        # For now, show conflicts in a help dialog and auto-resolve with local versions
-        # TODO: Implement proper modal conflict resolution dialog
-        conflict_summary = f"Found {len(conflicts)} sync conflicts:\n\n"
+        
+        # Create detailed conflict summary for the dialog
+        conflict_lines = [f"Found {len(conflicts)} sync conflicts that need resolution:", ""]
+        
         for i, conflict in enumerate(conflicts, 1):
-            conflict_summary += f"{i}. {conflict.conflict_type.title()} #{conflict.item_id}\n"
-            for field, diff in conflict.differences.items():
-                conflict_summary += f"   - {field}: Local='{diff['local']}' vs Remote='{diff['remote']}'\n"
-            conflict_summary += "\n"
+            conflict_lines.append(f"Conflict {i}: {conflict.conflict_type.title()} #{conflict.item_id}")
+            conflict_lines.append("-" * 50)
+            
+            if conflict.conflict_type == "paper":
+                for field, diff in conflict.differences.items():
+                    local_val = str(diff['local'])[:100] + ("..." if len(str(diff['local'])) > 100 else "")
+                    remote_val = str(diff['remote'])[:100] + ("..." if len(str(diff['remote'])) > 100 else "")
+                    conflict_lines.append(f"Field: {field}")
+                    conflict_lines.append(f"  Local:  {local_val}")
+                    conflict_lines.append(f"  Remote: {remote_val}")
+                    conflict_lines.append("")
+                    
+            elif conflict.conflict_type == "pdf":
+                local_info = conflict.local_data
+                remote_info = conflict.remote_data
+                conflict_lines.append(f"PDF File: {conflict.item_id}")
+                conflict_lines.append(f"  Local:  Size={local_info.get('size', 0):,} bytes, Modified={local_info.get('modified', 'Unknown')}")
+                conflict_lines.append(f"  Remote: Size={remote_info.get('size', 0):,} bytes, Modified={remote_info.get('modified', 'Unknown')}")
+                conflict_lines.append(f"  Local MD5:  {local_info.get('hash', 'Unknown')}")
+                conflict_lines.append(f"  Remote MD5: {remote_info.get('hash', 'Unknown')}")
+                conflict_lines.append("")
+            
+            conflict_lines.append("")
         
-        conflict_summary += "Auto-resolving by keeping LOCAL versions for safety.\n"
-        conflict_summary += "Use manual sync resolution in future versions."
+        conflict_lines.extend([
+            "RESOLUTION OPTIONS:",
+            "",
+            "Press ENTER to continue and auto-resolve conflicts:",
+            "• LOCAL versions will be kept (safer option)",
+            "• Remote changes will be discarded",
+            "• You can review changes in the sync summary",
+            "",
+            "Press ESC to cancel sync operation.",
+            "",
+            "Note: Interactive conflict resolution will be added in future versions."
+        ])
         
-        self.cli.show_help_dialog(conflict_summary, "Sync Conflicts - Auto-Resolved")
+        conflict_text = "\n".join(conflict_lines)
         
-        # Auto-resolve all conflicts by keeping local versions
+        # Show conflict details and wait for user confirmation
+        self.cli.show_help_dialog(conflict_text, f"Sync Conflicts Found ({len(conflicts)} conflicts)")
+        
+        # Auto-resolve all conflicts by keeping local versions for safety
         resolutions = {}
         for conflict in conflicts:
             conflict_id = f"{conflict.conflict_type}_{conflict.item_id}"
@@ -887,16 +922,44 @@ To change settings:
             lines.append("Changes Applied:")
             lines.append("")
             
+            # Show detailed changes if available
+            detailed_changes = getattr(result, 'detailed_changes', None)
+            
             if changes['papers_added'] > 0:
-                lines.append(f"📄 {changes['papers_added']} papers added")
+                lines.append(f"📄 Papers Added ({changes['papers_added']}):")
+                if detailed_changes and 'papers_added' in detailed_changes:
+                    for paper_title in detailed_changes['papers_added'][:10]:  # Limit to first 10
+                        lines.append(f"  • {paper_title}")
+                    if len(detailed_changes['papers_added']) > 10:
+                        lines.append(f"  • ... and {len(detailed_changes['papers_added']) - 10} more")
+                lines.append("")
+                
             if changes['papers_updated'] > 0:
-                lines.append(f"📝 {changes['papers_updated']} papers updated")
+                lines.append(f"📝 Papers Updated ({changes['papers_updated']}):")
+                if detailed_changes and 'papers_updated' in detailed_changes:
+                    for paper_title in detailed_changes['papers_updated'][:10]:
+                        lines.append(f"  • {paper_title}")
+                    if len(detailed_changes['papers_updated']) > 10:
+                        lines.append(f"  • ... and {len(detailed_changes['papers_updated']) - 10} more")
+                lines.append("")
+                
             if changes['collections_added'] > 0:
-                lines.append(f"📁 {changes['collections_added']} collections added")
+                lines.append(f"📁 Collections Added ({changes['collections_added']}):")
+                if detailed_changes and 'collections_added' in detailed_changes:
+                    for collection_name in detailed_changes['collections_added']:
+                        lines.append(f"  • {collection_name}")
+                lines.append("")
+                
             if changes['collections_updated'] > 0:
-                lines.append(f"📂 {changes['collections_updated']} collections updated")
+                lines.append(f"📂 Collections Updated ({changes['collections_updated']}):")
+                if detailed_changes and 'collections_updated' in detailed_changes:
+                    for collection_name in detailed_changes['collections_updated']:
+                        lines.append(f"  • {collection_name}")
+                lines.append("")
+                
             if changes['pdfs_copied'] > 0:
-                lines.append(f"📎 {changes['pdfs_copied']} PDF files synchronized")
+                lines.append(f"📎 PDF Files Synchronized: {changes['pdfs_copied']}")
+                lines.append("")
                 
         # Conflicts resolved
         if result.has_conflicts():

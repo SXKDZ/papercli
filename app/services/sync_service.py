@@ -54,6 +54,12 @@ class SyncResult:
             'pdfs_copied': 0,
             'pdfs_updated': 0
         }
+        self.detailed_changes: Dict[str, List[str]] = {
+            'papers_added': [],
+            'papers_updated': [],
+            'collections_added': [],
+            'collections_updated': []
+        }
         self.errors: List[str] = []
         self.cancelled = False
         
@@ -298,14 +304,45 @@ class SyncService:
     
     def _sync_papers(self, result: SyncResult):
         """Sync papers between local and remote databases."""
-        # This is a simplified implementation
-        # In a real implementation, you'd compare timestamps and sync incrementally
-        pass
+        local_papers = self._get_papers_dict(self.local_db_path)
+        remote_papers = self._get_papers_dict(self.remote_db_path)
+        
+        # Papers only in local (need to add to remote)
+        local_only = set(local_papers.keys()) - set(remote_papers.keys())
+        for paper_id in local_only:
+            paper_data = local_papers[paper_id]
+            self._copy_paper_to_remote(paper_data)
+            result.changes_applied['papers_added'] += 1
+            result.detailed_changes['papers_added'].append(f"'{paper_data.get('title', 'Unknown Title')}'")
+        
+        # Papers only in remote (need to add to local)
+        remote_only = set(remote_papers.keys()) - set(local_papers.keys())
+        for paper_id in remote_only:
+            paper_data = remote_papers[paper_id]
+            self._copy_paper_to_local(paper_data)
+            result.changes_applied['papers_added'] += 1
+            result.detailed_changes['papers_added'].append(f"'{paper_data.get('title', 'Unknown Title')}' (from remote)")
     
     def _sync_collections(self, result: SyncResult):
         """Sync collections between local and remote databases."""
-        # This is a simplified implementation
-        pass
+        local_collections = self._get_collections_dict(self.local_db_path)
+        remote_collections = self._get_collections_dict(self.remote_db_path)
+        
+        # Collections only in local (need to add to remote)
+        local_only = set(local_collections.keys()) - set(remote_collections.keys())
+        for collection_id in local_only:
+            collection_data = local_collections[collection_id]
+            self._copy_collection_to_remote(collection_data)
+            result.changes_applied['collections_added'] += 1
+            result.detailed_changes['collections_added'].append(f"'{collection_data.get('name', 'Unknown Collection')}'")
+        
+        # Collections only in remote (need to add to local)
+        remote_only = set(remote_collections.keys()) - set(local_collections.keys())
+        for collection_id in remote_only:
+            collection_data = remote_collections[collection_id]
+            self._copy_collection_to_local(collection_data)
+            result.changes_applied['collections_added'] += 1
+            result.detailed_changes['collections_added'].append(f"'{collection_data.get('name', 'Unknown Collection')}' (from remote)")
     
     def _sync_pdfs_to_remote(self, result: SyncResult):
         """Copy PDFs from local to remote."""
@@ -337,6 +374,115 @@ class SyncService:
                     shutil.copy2(pdf_file, local_pdf)
                     result.changes_applied['pdfs_copied'] += 1
     
+    def _get_collections_dict(self, db_path: Path) -> Dict[int, Dict]:
+        """Get collections from database as a dictionary."""
+        collections = {}
+        
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute("SELECT * FROM collections")
+            for row in cursor.fetchall():
+                collections[row['id']] = dict(row)
+        finally:
+            conn.close()
+            
+        return collections
+
+    def _copy_paper_to_remote(self, paper_data: Dict):
+        """Copy a paper from local to remote database."""
+        conn = sqlite3.connect(self.remote_db_path)
+        cursor = conn.cursor()
+        
+        try:
+            # Insert paper (excluding id to let it auto-increment)
+            paper_fields = [k for k in paper_data.keys() if k not in ['id', 'authors']]
+            placeholders = ', '.join(['?'] * len(paper_fields))
+            field_names = ', '.join(paper_fields)
+            values = [paper_data[field] for field in paper_fields]
+            
+            cursor.execute(f"INSERT INTO papers ({field_names}) VALUES ({placeholders})", values)
+            new_paper_id = cursor.lastrowid
+            
+            # Handle authors if present
+            if 'authors' in paper_data and paper_data['authors']:
+                author_names = paper_data['authors'].split(',') if paper_data['authors'] else []
+                for i, author_name in enumerate(author_names):
+                    author_name = author_name.strip()
+                    if author_name:
+                        # Insert or get author
+                        cursor.execute("INSERT OR IGNORE INTO authors (full_name) VALUES (?)", (author_name,))
+                        cursor.execute("SELECT id FROM authors WHERE full_name = ?", (author_name,))
+                        author_id = cursor.fetchone()[0]
+                        
+                        # Link paper and author
+                        cursor.execute("INSERT INTO paper_authors (paper_id, author_id, position) VALUES (?, ?, ?)", 
+                                     (new_paper_id, author_id, i))
+            
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _copy_paper_to_local(self, paper_data: Dict):
+        """Copy a paper from remote to local database."""
+        conn = sqlite3.connect(self.local_db_path)
+        cursor = conn.cursor()
+        
+        try:
+            # Insert paper (excluding id to let it auto-increment)
+            paper_fields = [k for k in paper_data.keys() if k not in ['id', 'authors']]
+            placeholders = ', '.join(['?'] * len(paper_fields))
+            field_names = ', '.join(paper_fields)
+            values = [paper_data[field] for field in paper_fields]
+            
+            cursor.execute(f"INSERT INTO papers ({field_names}) VALUES ({placeholders})", values)
+            new_paper_id = cursor.lastrowid
+            
+            # Handle authors if present
+            if 'authors' in paper_data and paper_data['authors']:
+                author_names = paper_data['authors'].split(',') if paper_data['authors'] else []
+                for i, author_name in enumerate(author_names):
+                    author_name = author_name.strip()
+                    if author_name:
+                        # Insert or get author
+                        cursor.execute("INSERT OR IGNORE INTO authors (full_name) VALUES (?)", (author_name,))
+                        cursor.execute("SELECT id FROM authors WHERE full_name = ?", (author_name,))
+                        author_id = cursor.fetchone()[0]
+                        
+                        # Link paper and author
+                        cursor.execute("INSERT INTO paper_authors (paper_id, author_id, position) VALUES (?, ?, ?)", 
+                                     (new_paper_id, author_id, i))
+            
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _copy_collection_to_remote(self, collection_data: Dict):
+        """Copy a collection from local to remote database."""
+        conn = sqlite3.connect(self.remote_db_path)
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute("INSERT INTO collections (name, description) VALUES (?, ?)", 
+                         (collection_data['name'], collection_data.get('description', '')))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _copy_collection_to_local(self, collection_data: Dict):
+        """Copy a collection from remote to local database."""
+        conn = sqlite3.connect(self.local_db_path)
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute("INSERT INTO collections (name, description) VALUES (?, ?)", 
+                         (collection_data['name'], collection_data.get('description', '')))
+            conn.commit()
+        finally:
+            conn.close()
+
     def _apply_conflict_resolutions(self, resolved_conflicts: Dict, result: SyncResult):
         """Apply user's conflict resolutions."""
         for conflict_id, resolution in resolved_conflicts.items():
