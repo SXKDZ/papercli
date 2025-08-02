@@ -570,7 +570,7 @@ class UISetupMixin:
             key_bindings=self._get_help_key_bindings(),
         )
         self.help_dialog = Dialog(
-            title="PaperCLI Help",
+            title=lambda: getattr(self, 'help_dialog_title', "PaperCLI Help"),
             body=Window(
                 content=self.help_control,
                 wrap_lines=True,

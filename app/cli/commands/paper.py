@@ -136,6 +136,9 @@ class PaperCommandHandler(BaseCommandHandler):
                             f"Updated '{field}' for paper '{paper.title}'. From '{old_value}' to '{value}'",
                         )
                         updated_count += 1
+                        
+                        # Trigger auto-sync if enabled
+                        self.cli.trigger_auto_sync_if_enabled()
                     except Exception as e:
                         self.cli.status_bar.set_error(
                             f"Error updating paper {paper.id}: {e}"
@@ -341,6 +344,8 @@ class PaperCommandHandler(BaseCommandHandler):
                         self._add_log(
                             "add_arxiv", f"Database updated with PDF path: {pdf_path}"
                         )
+                        # Trigger auto-sync if enabled
+                        self.cli.trigger_auto_sync_if_enabled()
                     else:
                         self._add_log(
                             "add_arxiv",
@@ -419,6 +424,8 @@ class PaperCommandHandler(BaseCommandHandler):
                             "add_openreview",
                             f"Database updated with PDF path: {pdf_path}",
                         )
+                        # Trigger auto-sync if enabled
+                        self.cli.trigger_auto_sync_if_enabled()
                     else:
                         self._add_log(
                             "add_openreview",
@@ -695,6 +702,8 @@ class PaperCommandHandler(BaseCommandHandler):
                         self.cli.status_bar.set_success(
                             f"Updated {updated_count} paper(s)."
                         )
+                        # Trigger auto-sync if enabled
+                        self.cli.trigger_auto_sync_if_enabled()
                 except Exception as e:
                     self.show_error_panel_with_message(
                         "Update Error",

@@ -132,6 +132,8 @@ class SmartCompleter(Completer):
                     "show": "Show all current configuration",
                     "model": "Set OpenAI model (e.g., gpt-4o, gpt-3.5-turbo)",
                     "openai_api_key": "Set OpenAI API key",
+                    "remote": "Set remote sync path",
+                    "auto-sync": "Enable/disable auto-sync",
                     "help": "Show configuration command help",
                 },
                 "model_options": {
@@ -141,6 +143,10 @@ class SmartCompleter(Completer):
                     "gpt-4": "Standard GPT-4 model",
                     "gpt-3.5-turbo": "GPT-3.5 Turbo model (faster, cheaper)",
                 },
+            },
+            "/sync": {
+                "description": "Synchronize local data with remote storage",
+                "subcommands": {},
             },
             "/log": {"description": "Show the error log panel", "subcommands": {}},
             "/doctor": {

@@ -27,6 +27,7 @@ from ..services import (
     SearchService,
     SystemService,
 )
+from ..services.auto_sync import trigger_auto_sync
 from ..ui import ErrorPanel, PaperListControl, StatusBar
 from ..version import get_version
 from .commands import (
@@ -58,6 +59,7 @@ Core Commands:
 /help          Show this help panel
 /log           Show the error log panel
 /config        Manage configuration (model, API key) - /config show for details
+/sync          Synchronize with remote storage (if configured)
 /exit          Exit the application (or press Ctrl+C)
 
 Paper Operations (work on the paper under the cursor ► or selected papers ✓):
@@ -92,6 +94,7 @@ System Commands:
   update          Update to latest version (if possible)
   info            Show detailed version information
 /config           Manage configuration settings
+/sync             Synchronize local data with remote storage
   show            Show all current configuration
   model           Set OpenAI model (gpt-4o, gpt-3.5-turbo, etc.)
   openai_api_key  Set OpenAI API key
@@ -273,6 +276,8 @@ Indicators (in the first column):
                     self.system_commands.handle_version_command(parts[1:])
                 elif cmd == "/config":
                     self.system_commands.handle_config_command(parts[1:])
+                elif cmd == "/sync":
+                    self.system_commands.handle_sync_command(parts[1:])
                 elif cmd == "/exit":
                     self.system_commands.handle_exit_command()
 
@@ -508,13 +513,16 @@ Indicators (in the first column):
         if content is None:
             content = self.HELP_TEXT
 
+        # Set the dynamic title
+        self.help_dialog_title = title
+
         # Update buffer content correctly by bypassing the read-only flag
         doc = Document(content, 0)
         self.help_buffer.set_document(doc, bypass_readonly=True)
 
         self.show_help = True
         self.app.layout.focus(self.help_control)
-        self.status_bar.set_status("Help panel opened - Press ESC to close")
+        self.status_bar.set_status(f"{title} opened - Press ESC to close")
 
     def run(self):
         """Run the CLI application."""
@@ -530,3 +538,7 @@ Indicators (in the first column):
             raise
         finally:
             self._add_log("app_stop", "PaperCLI stopped")
+            
+    def trigger_auto_sync_if_enabled(self):
+        """Trigger auto-sync if enabled, typically called after edit operations."""
+        trigger_auto_sync(log_callback=self._add_log)

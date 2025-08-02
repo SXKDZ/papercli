@@ -8,6 +8,7 @@ from typing import List
 import requests
 from openai import OpenAI
 
+from ...services.sync_service import SyncService
 from ...version import VersionManager
 from .base import BaseCommandHandler
 
@@ -412,6 +413,25 @@ The doctor command helps maintain database health by:
                 api_key = args[1]
                 self._set_api_key(api_key)
 
+        elif action == "remote":
+            if len(args) < 2:
+                self._show_current_remote_path()
+            else:
+                remote_path = args[1]
+                self._set_remote_path(remote_path)
+
+        elif action == "auto-sync":
+            if len(args) < 2:
+                self._show_current_auto_sync()
+            else:
+                setting = args[1].lower()
+                if setting in ["enable", "on", "true"]:
+                    self._set_auto_sync(True)
+                elif setting in ["disable", "off", "false"]:
+                    self._set_auto_sync(False)
+                else:
+                    self.cli.status_bar.set_error("Use 'enable' or 'disable' for auto-sync")
+
         elif action == "show":
             self._show_all_config()
 
@@ -436,6 +456,11 @@ Available Commands:
 /config model <model_name>      - Set OpenAI model (e.g., gpt-4o, gpt-3.5-turbo)
 /config openai_api_key          - Show current API key (masked)
 /config openai_api_key <key>    - Set OpenAI API key
+/config remote                  - Show current remote sync path
+/config remote <path>           - Set remote sync path (e.g., ~/OneDrive/papercli-sync)
+/config auto-sync               - Show current auto-sync setting
+/config auto-sync enable        - Enable auto-sync after edits
+/config auto-sync disable       - Disable auto-sync
 
 {available_models_text}
 
@@ -445,6 +470,8 @@ Examples:
 /config model gpt-4o            - Set model to GPT-4 Omni
 /config model gpt-3.5-turbo     - Set model to GPT-3.5 Turbo
 /config openai_api_key sk-...   - Set your OpenAI API key
+/config remote ~/OneDrive/papercli-sync  - Set OneDrive sync path
+/config auto-sync enable        - Enable automatic sync after edits
 
 Configuration Storage:
 ----------------------
@@ -650,10 +677,62 @@ gpt-3.5-turbo                   - GPT-3.5 Turbo model (faster, cheaper)"""
         else:
             self.cli.status_bar.set_error("Failed to save API key to .env file")
 
+    def _show_current_remote_path(self):
+        """Show the current remote sync path."""
+        remote_path = os.getenv("PAPERCLI_REMOTE_PATH", "")
+        if remote_path:
+            self.cli.status_bar.set_status(f"Current remote sync path: {remote_path}")
+        else:
+            self.cli.status_bar.set_status("No remote sync path set")
+
+    def _set_remote_path(self, remote_path):
+        """Set the remote sync path."""
+        # Expand user path
+        expanded_path = os.path.expanduser(remote_path)
+        
+        # Update environment variable
+        os.environ["PAPERCLI_REMOTE_PATH"] = expanded_path
+
+        # Update .env file
+        env_vars = self._read_env_file()
+        env_vars["PAPERCLI_REMOTE_PATH"] = expanded_path
+
+        if self._write_env_file(env_vars):
+            self.cli.status_bar.set_success(f"Remote sync path set to: {expanded_path}")
+            self._add_log("config_remote", f"Remote sync path changed to: {expanded_path}")
+        else:
+            self.cli.status_bar.set_error("Failed to save remote path to .env file")
+
+    def _show_current_auto_sync(self):
+        """Show the current auto-sync setting."""
+        auto_sync = os.getenv("PAPERCLI_AUTO_SYNC", "false").lower() == "true"
+        status = "enabled" if auto_sync else "disabled"
+        self.cli.status_bar.set_status(f"Auto-sync is currently: {status}")
+
+    def _set_auto_sync(self, enabled):
+        """Set the auto-sync setting."""
+        value = "true" if enabled else "false"
+        
+        # Update environment variable
+        os.environ["PAPERCLI_AUTO_SYNC"] = value
+
+        # Update .env file
+        env_vars = self._read_env_file()
+        env_vars["PAPERCLI_AUTO_SYNC"] = value
+
+        if self._write_env_file(env_vars):
+            status = "enabled" if enabled else "disabled"
+            self.cli.status_bar.set_success(f"Auto-sync {status}")
+            self._add_log("config_auto_sync", f"Auto-sync {status}")
+        else:
+            self.cli.status_bar.set_error("Failed to save auto-sync setting to .env file")
+
     def _show_all_config(self):
         """Show all current configuration."""
         model = os.getenv("OPENAI_MODEL", "gpt-4o")
         api_key = os.getenv("OPENAI_API_KEY", "")
+        remote_path = os.getenv("PAPERCLI_REMOTE_PATH", "Not set")
+        auto_sync = os.getenv("PAPERCLI_AUTO_SYNC", "false").lower() == "true"
 
         if api_key:
             masked_key = (
@@ -664,18 +743,165 @@ gpt-3.5-turbo                   - GPT-3.5 Turbo model (faster, cheaper)"""
         else:
             masked_key = "Not set"
 
+        auto_sync_status = "enabled" if auto_sync else "disabled"
         env_file = self._get_env_file_path()
 
         config_text = f"""Current Configuration:
 
 OpenAI Model: {model}
 OpenAI API Key: {masked_key}
+Remote Sync Path: {remote_path}
+Auto-sync: {auto_sync_status}
 
 Configuration file: {env_file}
 File exists: {'Yes' if env_file.exists() else 'No'}
 
 To change settings:
 /config model <model_name>
-/config openai_api_key <key>"""
+/config openai_api_key <key>
+/config remote <path>
+/config auto-sync enable|disable"""
 
         self.cli.show_help_dialog(config_text, "Current Configuration")
+
+    def handle_sync_command(self, args: List[str]):
+        """Handle /sync command for synchronizing with remote storage."""
+        # Check if remote path is configured
+        remote_path = os.getenv("PAPERCLI_REMOTE_PATH")
+        if not remote_path:
+            self.cli.status_bar.set_error(
+                "No remote sync path configured. Use '/config remote <path>' to set one."
+            )
+            return
+
+        # Get local data directory
+        local_path = os.path.dirname(self.cli.db_path)
+        
+        try:
+            self.cli.status_bar.set_status("Starting sync operation...", "sync")
+            
+            # Create progress callback
+            def progress_callback(percentage: int, message: str):
+                status_message = f"Sync {percentage}%: {message}"
+                self.cli.status_bar.set_status(status_message, "sync")
+                # Force UI update
+                if hasattr(self.cli, 'app') and self.cli.app:
+                    self.cli.app.invalidate()
+            
+            # Create sync service with progress tracking
+            sync_service = SyncService(local_path, remote_path, progress_callback=progress_callback)
+            
+            # Perform sync with conflict resolution
+            result = sync_service.sync(conflict_resolver=self._resolve_sync_conflicts)
+            
+            if result.cancelled:
+                self.cli.status_bar.set_status("Sync cancelled", "cancelled")
+                self._add_log("sync_cancelled", "Sync operation was cancelled by user")
+                return
+                
+            # Log the sync results
+            self._add_log("sync", result.get_summary())
+            
+            # Show summary dialog if manual sync
+            auto_sync = os.getenv("PAPERCLI_AUTO_SYNC", "false").lower() == "true"
+            if not auto_sync:
+                self._show_sync_summary(result)
+            else:
+                # For auto-sync, also log with auto-sync prefix
+                self._add_log("auto_sync", result.get_summary())
+                
+            # Update status
+            if result.errors:
+                self.cli.status_bar.set_error(f"Sync completed with errors: {result.errors[0]}")
+            elif result.has_conflicts():
+                self.cli.status_bar.set_status("Sync completed with conflicts resolved", "success")
+            else:
+                self.cli.status_bar.set_success("Sync completed successfully")
+                
+        except Exception as e:
+            error_msg = f"Sync failed: {str(e)}"
+            self.cli.status_bar.set_error(error_msg)
+            self._add_log("sync_error", error_msg)
+
+    def _resolve_sync_conflicts(self, conflicts):
+        """Show conflict resolution dialog and return user choices."""
+        if not conflicts:
+            return {}
+            
+        # For now, show conflicts in a help dialog and auto-resolve with local versions
+        # TODO: Implement proper modal conflict resolution dialog
+        conflict_summary = f"Found {len(conflicts)} sync conflicts:\n\n"
+        for i, conflict in enumerate(conflicts, 1):
+            conflict_summary += f"{i}. {conflict.conflict_type.title()} #{conflict.item_id}\n"
+            for field, diff in conflict.differences.items():
+                conflict_summary += f"   - {field}: Local='{diff['local']}' vs Remote='{diff['remote']}'\n"
+            conflict_summary += "\n"
+        
+        conflict_summary += "Auto-resolving by keeping LOCAL versions for safety.\n"
+        conflict_summary += "Use manual sync resolution in future versions."
+        
+        self.cli.show_help_dialog(conflict_summary, "Sync Conflicts - Auto-Resolved")
+        
+        # Auto-resolve all conflicts by keeping local versions
+        resolutions = {}
+        for conflict in conflicts:
+            conflict_id = f"{conflict.conflict_type}_{conflict.item_id}"
+            resolutions[conflict_id] = "local"
+            
+        return resolutions
+
+    def _show_sync_summary(self, result):
+        """Show sync summary dialog."""
+        # Use the existing help dialog system instead of creating new application
+        summary_text = self._format_sync_summary(result)
+        self.cli.show_help_dialog(summary_text, "Sync Operation Summary")
+        
+    def _format_sync_summary(self, result):
+        """Format sync summary as text."""
+        lines = []
+        
+        # Overall status
+        if result.cancelled:
+            lines.append("❌ Sync was cancelled")
+            lines.append("\nNo changes were made to local or remote data.")
+            return "\n".join(lines)
+            
+        if result.errors:
+            lines.append("❌ Sync completed with errors")
+            lines.append("")
+            for error in result.errors:
+                lines.append(f"Error: {error}")
+            lines.append("")
+            
+        if not result.errors and not result.has_conflicts():
+            lines.append("✅ Sync completed successfully")
+            lines.append("")
+            
+        # Changes summary
+        changes = result.changes_applied
+        total_changes = sum(changes.values())
+        
+        if total_changes == 0:
+            lines.append("No changes were needed - local and remote are in sync.")
+        else:
+            lines.append("Changes Applied:")
+            lines.append("")
+            
+            if changes['papers_added'] > 0:
+                lines.append(f"📄 {changes['papers_added']} papers added")
+            if changes['papers_updated'] > 0:
+                lines.append(f"📝 {changes['papers_updated']} papers updated")
+            if changes['collections_added'] > 0:
+                lines.append(f"📁 {changes['collections_added']} collections added")
+            if changes['collections_updated'] > 0:
+                lines.append(f"📂 {changes['collections_updated']} collections updated")
+            if changes['pdfs_copied'] > 0:
+                lines.append(f"📎 {changes['pdfs_copied']} PDF files synchronized")
+                
+        # Conflicts resolved
+        if result.has_conflicts():
+            lines.append("")
+            lines.append(f"⚠️  {len(result.conflicts)} conflicts were auto-resolved")
+            lines.append("Local versions were kept for safety.")
+            
+        return "\n".join(lines)
