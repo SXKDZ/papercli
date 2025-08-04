@@ -1,10 +1,11 @@
 """Base command handler class."""
 
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING
+from typing import List
 
 if TYPE_CHECKING:
-    from ..main import PaperCLI
     from ...db.models import Paper
+    from ..main import PaperCLI
 
 
 class BaseCommandHandler:

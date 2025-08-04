@@ -7,12 +7,14 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict
+from typing import Optional
+from typing import Tuple
 
 import requests
 from packaging import version
 
-__version__ = "1.2.1"
+__version__ = "1.2.2"
 
 
 class VersionManager:
@@ -119,7 +121,8 @@ class VersionManager:
             return True
 
         try:
-            from datetime import datetime, timedelta
+            from datetime import datetime
+            from datetime import timedelta
 
             last_check = datetime.fromisoformat(config["last_check"])
             check_interval = timedelta(days=config.get("check_interval_days", 7))

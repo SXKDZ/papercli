@@ -4,11 +4,14 @@ import os
 import re
 import subprocess
 import traceback
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
+from typing import Dict
+from typing import Optional
+from typing import Tuple
 
 import pyperclip
 
-from .pdf_service import PDFManager
+from .pdf import PDFManager
 
 
 class SystemService:

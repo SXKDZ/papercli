@@ -1,13 +1,16 @@
 """Service for adding papers from various sources."""
 
 import os
-from typing import Any, Dict, List, Tuple
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Tuple
 
 from ..db.database import get_pdf_directory
 from ..db.models import Paper
-from .metadata_service import MetadataExtractor
-from .paper_service import PaperService
-from .system_service import SystemService
+from .metadata import MetadataExtractor
+from .paper import PaperService
+from .system import SystemService
 from .utils import normalize_paper_data
 
 

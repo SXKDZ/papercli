@@ -3,12 +3,17 @@
 import os
 import shutil
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any
+from typing import Dict
+from typing import List
 
 from sqlalchemy import text
 
-from ..db.database import get_db_manager, get_db_session
-from ..db.models import Author, Collection, Paper
+from ..db.database import get_db_manager
+from ..db.database import get_db_session
+from ..db.models import Author
+from ..db.models import Collection
+from ..db.models import Paper
 
 
 class DatabaseHealthService:
@@ -29,6 +34,8 @@ class DatabaseHealthService:
             "database_checks": self._check_database_health(),
             "orphaned_records": self._check_orphaned_records(),
             "orphaned_pdfs": self._check_orphaned_pdfs(),
+            "missing_pdfs": self._check_missing_pdfs(),
+            "absolute_pdf_paths": self._check_absolute_pdf_paths(),
             "system_checks": self._check_system_health(),
             "terminal_checks": self._check_terminal_setup(),
             "issues_found": self.issues_found,
@@ -267,6 +274,22 @@ class DatabaseHealthService:
         ):
             recommendations.append("Clean up orphaned PDF files")
 
+        if (
+            report.get("absolute_pdf_paths", {})
+            .get("summary", {})
+            .get("absolute_path_count", 0)
+            > 0
+        ):
+            recommendations.append("Fix absolute PDF paths to be relative paths")
+
+        if (
+            report.get("missing_pdfs", {})
+            .get("summary", {})
+            .get("missing_pdf_count", 0)
+            > 0
+        ):
+            recommendations.append("Review papers with missing PDF files")
+
         # System recommendations
         missing_deps = [
             dep
@@ -299,20 +322,35 @@ class DatabaseHealthService:
                 if not os.path.exists(pdf_dir):
                     return orphaned
 
-                all_pdfs_in_db = {
+                # Get PDF paths from database (these are relative paths)
+                all_pdfs_in_db_relative = {
                     p.pdf_path
                     for p in session.query(Paper)
                     .filter(Paper.pdf_path.isnot(None))
                     .all()
+                    if p.pdf_path  # Filter out empty strings
                 }
 
+                # Convert relative paths to absolute for comparison
+                all_pdfs_in_db_absolute = set()
+                for rel_path in all_pdfs_in_db_relative:
+                    if os.path.isabs(rel_path):
+                        # Handle legacy absolute paths
+                        all_pdfs_in_db_absolute.add(rel_path)
+                    else:
+                        # Convert relative to absolute
+                        abs_path = os.path.join(pdf_dir, rel_path)
+                        all_pdfs_in_db_absolute.add(abs_path)
+
+                # Get all PDF files on disk (absolute paths)
                 disk_pdfs = {
                     os.path.join(pdf_dir, f)
                     for f in os.listdir(pdf_dir)
                     if f.endswith(".pdf")
                 }
 
-                orphaned_files = list(disk_pdfs - all_pdfs_in_db)
+                # Find orphaned files (on disk but not in database)
+                orphaned_files = list(disk_pdfs - all_pdfs_in_db_absolute)
 
                 orphaned["files"] = orphaned_files
                 orphaned["summary"]["orphaned_pdf_files"] = len(orphaned_files)
@@ -325,6 +363,94 @@ class DatabaseHealthService:
             self.issues_found.append(f"Could not check for orphaned PDFs: {e}")
 
         return orphaned
+
+    def _check_missing_pdfs(self) -> Dict[str, Any]:
+        """Check for PDF files referenced in database but missing from disk."""
+        missing = {"papers": [], "summary": {}}
+
+        try:
+            with get_db_session() as session:
+                db_manager = get_db_manager()
+                pdf_dir = os.path.join(os.path.dirname(db_manager.db_path), "pdfs")
+
+                # Get all papers with PDF paths
+                papers_with_pdfs = (
+                    session.query(Paper)
+                    .filter(Paper.pdf_path.isnot(None), Paper.pdf_path != "")
+                    .all()
+                )
+
+                missing_pdfs = []
+                for paper in papers_with_pdfs:
+                    if paper.pdf_path:
+                        # Handle both relative and absolute paths
+                        if os.path.isabs(paper.pdf_path):
+                            pdf_full_path = paper.pdf_path
+                        else:
+                            pdf_full_path = os.path.join(pdf_dir, paper.pdf_path)
+
+                        if not os.path.exists(pdf_full_path):
+                            missing_pdfs.append(
+                                {
+                                    "id": paper.id,
+                                    "title": paper.title[:50]
+                                    + ("..." if len(paper.title) > 50 else ""),
+                                    "pdf_path": paper.pdf_path,
+                                    "expected_location": pdf_full_path,
+                                }
+                            )
+
+                missing["papers"] = missing_pdfs
+                missing["summary"]["missing_pdf_count"] = len(missing_pdfs)
+
+                if missing_pdfs:
+                    self.issues_found.append(
+                        f"Found {len(missing_pdfs)} papers with missing PDF files"
+                    )
+
+        except Exception as e:
+            self.issues_found.append(f"Could not check for missing PDFs: {e}")
+
+        return missing
+
+    def _check_absolute_pdf_paths(self) -> Dict[str, Any]:
+        """Check for papers with absolute PDF paths (should be relative)."""
+        absolute_paths = {"papers": [], "summary": {}}
+
+        try:
+            with get_db_session() as session:
+                papers_with_pdfs = (
+                    session.query(Paper)
+                    .filter(Paper.pdf_path.isnot(None), Paper.pdf_path != "")
+                    .all()
+                )
+
+                absolute_path_papers = []
+                for paper in papers_with_pdfs:
+                    if paper.pdf_path and os.path.isabs(paper.pdf_path):
+                        absolute_path_papers.append(
+                            {
+                                "id": paper.id,
+                                "title": paper.title[:50]
+                                + ("..." if len(paper.title) > 50 else ""),
+                                "pdf_path": paper.pdf_path,
+                            }
+                        )
+
+                absolute_paths["papers"] = absolute_path_papers
+                absolute_paths["summary"]["absolute_path_count"] = len(
+                    absolute_path_papers
+                )
+
+                if absolute_path_papers:
+                    self.issues_found.append(
+                        f"Found {len(absolute_path_papers)} papers with absolute PDF paths (should be relative)"
+                    )
+
+        except Exception as e:
+            self.issues_found.append(f"Could not check PDF path types: {e}")
+
+        return absolute_paths
 
     def clean_orphaned_pdfs(self) -> Dict[str, int]:
         """Clean up orphaned PDF files."""
@@ -403,5 +529,183 @@ class DatabaseHealthService:
 
         except Exception as e:
             raise Exception(f"Failed to clean orphaned records: {e}")
+
+        return cleaned
+
+    def fix_absolute_pdf_paths(self) -> Dict[str, int]:
+        """Fix absolute PDF paths to be relative paths."""
+        fixed = {"pdf_paths": 0}
+        fixed_papers = []
+
+        try:
+            with get_db_session() as session:
+                # Get the PDF directory path for relative conversion
+                db_manager = get_db_manager()
+                pdf_dir = os.path.join(os.path.dirname(db_manager.db_path), "pdfs")
+
+                # Find papers with absolute paths
+                papers_with_absolute_paths = (
+                    session.query(Paper)
+                    .filter(Paper.pdf_path.isnot(None), Paper.pdf_path != "")
+                    .all()
+                )
+
+                for paper in papers_with_absolute_paths:
+                    if paper.pdf_path and os.path.isabs(paper.pdf_path):
+                        # Convert to relative path
+                        try:
+                            relative_path = os.path.relpath(paper.pdf_path, pdf_dir)
+                            # Only update if the relative path makes sense (no '..' at start)
+                            if not relative_path.startswith(".."):
+                                paper.pdf_path = relative_path
+                                fixed["pdf_paths"] += 1
+                                fixed_papers.append(
+                                    paper.title[:30]
+                                    + ("..." if len(paper.title) > 30 else "")
+                                )
+
+                                # Log individual fix if log callback is available
+                                if hasattr(self, "log_callback") and self.log_callback:
+                                    self.log_callback(
+                                        "database_cleanup",
+                                        f"Fixed absolute PDF path for: {paper.title[:50]}",
+                                    )
+                        except Exception:
+                            # Skip papers we can't fix
+                            continue
+
+                session.commit()
+
+                if fixed["pdf_paths"] > 0:
+                    self.fixes_applied.append(
+                        f"Fixed {fixed['pdf_paths']} absolute PDF paths: {', '.join(fixed_papers[:5])}"
+                        + (
+                            f" and {len(fixed_papers) - 5} more"
+                            if len(fixed_papers) > 5
+                            else ""
+                        )
+                    )
+
+        except Exception as e:
+            raise Exception(f"Failed to fix absolute PDF paths: {e}")
+
+        return fixed
+
+    def clean_pdf_filenames(self) -> Dict[str, int]:
+        """Rename all PDF files according to the established naming convention."""
+        from .pdf import PDFManager
+
+        cleaned = {"renamed_files": 0}
+        renamed_files = []
+
+        try:
+            with get_db_session() as session:
+                pdf_manager = PDFManager()
+
+                # Get all papers with PDF paths
+                papers_with_pdfs = (
+                    session.query(Paper)
+                    .filter(Paper.pdf_path.isnot(None), Paper.pdf_path != "")
+                    .all()
+                )
+
+                for paper in papers_with_pdfs:
+                    if not paper.pdf_path:
+                        continue
+
+                    # Get current absolute PDF path
+                    current_path = pdf_manager.get_absolute_path(paper.pdf_path)
+
+                    # Skip if file doesn't exist
+                    if not os.path.exists(current_path):
+                        continue
+
+                    # Create paper data dict for filename generation
+                    paper_data = {
+                        "title": paper.title,
+                        "year": paper.year or "nodate",
+                        "authors": (
+                            [paper.author_names]
+                            if hasattr(paper, "author_names") and paper.author_names
+                            else ["unknown"]
+                        ),
+                    }
+
+                    # If paper has proper authors relationship, use those
+                    if paper.paper_authors:
+                        author_names = []
+                        for paper_author in sorted(
+                            paper.paper_authors, key=lambda pa: pa.position
+                        ):
+                            if paper_author.author:
+                                author_names.append(paper_author.author.full_name)
+                        if author_names:
+                            paper_data["authors"] = author_names
+
+                    # Generate the proper filename
+                    proper_filename = pdf_manager._generate_pdf_filename(
+                        paper_data, current_path
+                    )
+                    proper_path = os.path.join(pdf_manager.pdf_dir, proper_filename)
+
+                    # Skip if already properly named
+                    current_filename = os.path.basename(current_path)
+                    if current_filename == proper_filename:
+                        continue
+
+                    # Handle filename conflicts
+                    counter = 1
+                    base_name = proper_filename[:-4]  # Remove .pdf extension
+                    final_filename = proper_filename
+                    final_path = proper_path
+
+                    while os.path.exists(final_path) and final_path != current_path:
+                        final_filename = f"{base_name}_{counter:02d}.pdf"
+                        final_path = os.path.join(pdf_manager.pdf_dir, final_filename)
+                        counter += 1
+
+                    # Rename the file
+                    try:
+                        os.rename(current_path, final_path)
+
+                        # Update database with new relative path
+                        new_relative_path = os.path.relpath(
+                            final_path, pdf_manager.pdf_dir
+                        )
+                        old_path = paper.pdf_path
+                        paper.pdf_path = new_relative_path
+
+                        # Flush to ensure database update
+                        session.flush()
+
+                        cleaned["renamed_files"] += 1
+                        renamed_files.append(f"{current_filename} → {final_filename}")
+
+                        # Log individual rename if log callback is available
+                        if hasattr(self, "log_callback") and self.log_callback:
+                            self.log_callback(
+                                "pdf_filename_cleanup",
+                                f"Renamed PDF: {current_filename} → {final_filename} (DB: {old_path} → {new_relative_path})",
+                            )
+
+                    except Exception as e:
+                        # Log error but continue with other files
+                        if hasattr(self, "log_callback") and self.log_callback:
+                            self.log_callback(
+                                "pdf_filename_error",
+                                f"Failed to rename {current_filename}: {str(e)}",
+                            )
+                        continue
+
+                # Commit all database changes at once
+                session.commit()
+
+                if cleaned["renamed_files"] > 0:
+                    self.fixes_applied.append(
+                        f"Renamed {cleaned['renamed_files']} PDF files to follow naming convention"
+                    )
+
+        except Exception as e:
+            raise Exception(f"Failed to clean PDF filenames: {e}")
 
         return cleaned

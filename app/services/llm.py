@@ -7,10 +7,12 @@ from functools import partial
 from prompt_toolkit.application import get_app
 from prompt_toolkit.layout.containers import Float
 from prompt_toolkit.layout.dimension import Dimension
-from prompt_toolkit.widgets import Button, Dialog, TextArea
+from prompt_toolkit.widgets import Button
+from prompt_toolkit.widgets import Dialog
+from prompt_toolkit.widgets import TextArea
 
-from ..services.author_service import AuthorService
 from ..services.utils import compare_extracted_metadata_with_paper
+from .author import AuthorService
 
 
 class LLMSummaryService:
@@ -91,7 +93,7 @@ class LLMSummaryService:
                 )
 
             # Import MetadataExtractor here to avoid circular imports
-            from .metadata_service import MetadataExtractor
+            from .metadata import MetadataExtractor
 
             extractor = MetadataExtractor(log_callback=self.log_callback)
             summary = extractor.generate_paper_summary(current_paper.pdf_path)
@@ -521,7 +523,7 @@ class PDFMetadataExtractionService:
                 )
 
             # Import MetadataExtractor here to avoid circular imports
-            from .metadata_service import MetadataExtractor
+            from .metadata import MetadataExtractor
 
             extractor = MetadataExtractor(log_callback=self.log_callback)
             extracted_data = extractor.extract_from_pdf(current_paper.pdf_path)

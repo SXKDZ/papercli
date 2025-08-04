@@ -16,30 +16,23 @@ class ExportService:
 
     def export_to_bibtex(self, papers: List[Paper]) -> str:
         """Export papers to BibTeX format using bibtexparser v1."""
-        # Create a new BibTeX database
         bib_database = bibtexparser.bibdatabase.BibDatabase()
 
         for paper in papers:
-            # Create entry dictionary
             entry = {}
 
-            # Generate BibTeX key
             entry["ID"] = self._generate_bibtex_key(paper)
 
-            # Determine if this is a preprint
             is_preprint = self._is_preprint(paper)
 
-            # Set entry type
             entry["ENTRYTYPE"] = (
                 "article"
                 if is_preprint or paper.paper_type == "journal"
                 else "inproceedings"
             )
 
-            # Add title with double braces to preserve case and LaTeX encoding
             entry["title"] = "{" + string_to_latex(paper.title) + "}"
 
-            # Add authors with Unicode to LaTeX conversion
             ordered_authors = paper.get_ordered_authors()
             if ordered_authors:
                 latex_authors = [
@@ -47,13 +40,16 @@ class ExportService:
                 ]
                 entry["author"] = " and ".join(latex_authors)
 
-            # Handle venue/journal based on type
             if is_preprint:
                 # For preprints, always use journal = arXiv.org
                 entry["journal"] = "arXiv.org"
             elif paper.venue_full:
                 if paper.paper_type == "journal":
-                    entry["journal"] = string_to_latex(paper.venue_full)
+                    # For journals, prefer acronym if available (like conferences)
+                    journal_name = (
+                        paper.venue_acronym if paper.venue_acronym else paper.venue_full
+                    )
+                    entry["journal"] = string_to_latex(journal_name)
                 else:
                     # For conference proceedings, prefer acronym if available
                     venue_name = (
@@ -61,22 +57,17 @@ class ExportService:
                     )
                     entry["booktitle"] = string_to_latex(venue_name)
 
-            # Add year
             if paper.year:
                 entry["year"] = str(paper.year)
 
-            # Add preprint-specific fields
             if is_preprint and paper.preprint_id:
-                # Extract arXiv ID (remove "arXiv " prefix if present)
                 arxiv_id = paper.preprint_id.replace("arXiv ", "").strip()
                 entry["eprint"] = arxiv_id
                 entry["eprinttype"] = "arxiv"
 
-                # Add category if available
                 if paper.category:
                     entry["eprintclass"] = paper.category
 
-            # Add other fields
             if paper.volume:
                 entry["volume"] = str(paper.volume)
 
@@ -84,7 +75,6 @@ class ExportService:
                 entry["number"] = str(paper.issue)
 
             if paper.pages:
-                # Convert single dash to double dash for BibTeX (LaTeX en-dash)
                 pages_bibtex = (
                     paper.pages.replace("-", "--")
                     if "-" in paper.pages
@@ -94,7 +84,6 @@ class ExportService:
 
             bib_database.entries.append(entry)
 
-        # Use bibtexparser writer with custom formatting
         writer = bibtexparser.bwriter.BibTexWriter()
         writer.indent = "  "  # Use 2 spaces for indentation
         writer.align_values = True  # Align values
@@ -114,7 +103,6 @@ class ExportService:
             else:
                 ref = ""
 
-            # Add authors
             ordered_authors = paper.get_ordered_authors()
             if ordered_authors:
                 # Format authors: First initials + Last name
@@ -143,10 +131,8 @@ class ExportService:
 
                 ref += authors_str + ", "
 
-            # Add title in quotes
             ref += f'"{paper.title}," '
 
-            # Determine if preprint
             is_preprint = self._is_preprint(paper)
 
             if is_preprint:
@@ -168,7 +154,6 @@ class ExportService:
                 if paper.issue:
                     ref += f", no. {paper.issue}"
                 if paper.pages:
-                    # Convert single dash to en-dash for IEEE format
                     pages_ieee = (
                         paper.pages.replace("-", "–")
                         if "-" in paper.pages
@@ -191,7 +176,6 @@ class ExportService:
                 if paper.year:
                     ref += f", {paper.year}"
                 if paper.pages:
-                    # Convert single dash to en-dash for IEEE format
                     pages_ieee = (
                         paper.pages.replace("-", "–")
                         if "-" in paper.pages
@@ -206,7 +190,6 @@ class ExportService:
 
     def _generate_bibtex_key(self, paper) -> str:
         """Generate BibTeX citation key in format: lastname+year+firstword."""
-        # Get first author's last name
         ordered_authors = paper.get_ordered_authors()
         if ordered_authors:
             first_author_name = ordered_authors[0].full_name
@@ -215,29 +198,22 @@ class ExportService:
         else:
             last_name = "unknown"
 
-        # Get year
         year = str(paper.year) if paper.year else "unknown"
 
-        # Get first significant word from title
         first_word = self._extract_first_significant_word(paper.title)
 
-        # Combine and normalize
         key = f"{last_name}{year}{first_word}".lower()
 
-        # Remove non-alphanumeric characters except hyphens and underscores
         key = re.sub(r"[^a-z0-9_-]", "", key)
 
         return key
 
     def _extract_last_name(self, full_name: str) -> str:
         """Extract last name from full name, handling Unicode characters."""
-        # Normalize Unicode characters
         normalized = unicodedata.normalize("NFD", full_name)
 
-        # Remove accents/diacritics
         ascii_name = "".join(c for c in normalized if unicodedata.category(c) != "Mn")
 
-        # Split and get last part
         parts = ascii_name.strip().split()
         if parts:
             return parts[-1]
@@ -245,7 +221,6 @@ class ExportService:
 
     def _extract_first_significant_word(self, title: str) -> str:
         """Extract first significant word from title."""
-        # Skip common articles and prepositions
         skip_words = {
             "a",
             "an",
@@ -270,12 +245,10 @@ class ExportService:
 
         words = title.lower().split()
         for word in words:
-            # Clean the word
             clean_word = re.sub(r"[^a-z0-9]", "", word)
             if clean_word and clean_word not in skip_words and len(clean_word) > 2:
                 return clean_word
 
-        # If no significant word found, use first word
         if words:
             return re.sub(r"[^a-z0-9]", "", words[0].lower())
 
@@ -283,18 +256,15 @@ class ExportService:
 
     def _is_preprint(self, paper) -> bool:
         """Determine if paper is a preprint."""
-        # Check paper type
         if paper.paper_type and paper.paper_type.lower() in ["preprint", "arxiv"]:
             return True
 
-        # Check if it has arXiv ID
         if paper.preprint_id and (
             "arxiv" in paper.preprint_id.lower()
             or re.match(r"^\d{4}\.\d{4,5}", paper.preprint_id)
         ):
             return True
 
-        # Check venue
         if paper.venue_full and "arxiv" in paper.venue_full.lower():
             return True
 

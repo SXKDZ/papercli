@@ -127,8 +127,7 @@ class CollectionCommandHandler(BaseCommandHandler):
         if all_errors:
             self.show_error_panel_with_message(
                 "Remove from Collection Error",
-                f"Encountered {len(all_errors)} error(s).",
-                "\n".join(all_errors),
+                f"Encountered {len(all_errors)} error(s).\n\n{chr(10).join(all_errors)}",
             )
 
         if successful_collections:
@@ -179,8 +178,7 @@ class CollectionCommandHandler(BaseCommandHandler):
         except Exception as e:
             self.show_error_panel_with_message(
                 "Collection Purge Error",
-                f"Failed to purge empty collections: {e}",
-                traceback.format_exc(),
+                f"Failed to purge empty collections: {e}\n\n{traceback.format_exc()}",
             )
 
     def show_collect_dialog(self):
@@ -242,6 +240,5 @@ class CollectionCommandHandler(BaseCommandHandler):
         except Exception as e:
             self.show_error_panel_with_message(
                 "Collection Dialog Error",
-                "Could not open the collection management dialog.",
-                traceback.format_exc(),
+                f"Could not open the collection management dialog.\n\n{traceback.format_exc()}",
             )

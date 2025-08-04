@@ -145,8 +145,7 @@ class SearchCommandHandler(BaseCommandHandler):
         except Exception as e:
             self.show_error_panel_with_message(
                 "Filter Error",
-                f"Error filtering papers: {e}",
-                f"Traceback: {traceback.format_exc()}",
+                f"Error filtering papers: {e}\n\nTraceback: {traceback.format_exc()}",
             )
             self.cli.status_bar.set_error(f"Error filtering papers: {e}")
 

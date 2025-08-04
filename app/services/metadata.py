@@ -5,7 +5,9 @@ import os
 import re
 import tempfile
 import xml.etree.ElementTree as ET
-from typing import Any, Dict, List
+from typing import Any
+from typing import Dict
+from typing import List
 
 import bibtexparser
 import PyPDF2
@@ -14,9 +16,11 @@ import rispy
 from openai import OpenAI
 from titlecase import titlecase
 
-from ..prompts import MetadataPrompts, SummaryPrompts
+from ..prompts import MetadataPrompts
+from ..prompts import SummaryPrompts
 from .http_utils import HTTPClient
-from .utils import fix_broken_lines, normalize_paper_data
+from .utils import fix_broken_lines
+from .utils import normalize_paper_data
 
 
 class MetadataExtractor:
@@ -27,7 +31,6 @@ class MetadataExtractor:
 
     def extract_from_arxiv(self, arxiv_id: str) -> Dict[str, Any]:
         """Extract metadata from arXiv."""
-        # Clean arXiv ID while preserving version numbers
         arxiv_id = re.sub(r"arxiv[:\s]*", "", arxiv_id, flags=re.IGNORECASE)
         arxiv_id = re.sub(
             r"[^\d\.v]", "", arxiv_id
@@ -37,40 +40,31 @@ class MetadataExtractor:
             url = f"http://export.arxiv.org/api/query?id_list={arxiv_id}"
             response = HTTPClient.get(url, timeout=30)
 
-            # Parse XML response
             root = ET.fromstring(response.content)
 
-            # Define namespace
             ns = {"atom": "http://www.w3.org/2005/Atom"}
 
-            # Find the entry
             entry = root.find(".//atom:entry", ns)
             if entry is None:
                 raise Exception("Paper not found on arXiv")
 
-            # Extract title
             title_elem = entry.find("atom:title", ns)
             title = (
                 title_elem.text.strip() if title_elem is not None else "Unknown Title"
             )
-            # Fix broken lines and apply titlecase to arXiv titles
             title = fix_broken_lines(title)
             title = titlecase(title)
 
-            # Extract abstract
             summary_elem = entry.find("atom:summary", ns)
             abstract = summary_elem.text.strip() if summary_elem is not None else ""
-            # Fix broken lines in abstract
             abstract = fix_broken_lines(abstract)
 
-            # Extract authors
             authors = []
             for author in entry.findall("atom:author", ns):
                 name_elem = author.find("atom:name", ns)
                 if name_elem is not None:
                     authors.append(name_elem.text.strip())
 
-            # Extract publication date
             published_elem = entry.find("atom:published", ns)
             year = None
             if published_elem is not None:
@@ -79,13 +73,11 @@ class MetadataExtractor:
                 if year_match:
                     year = int(year_match.group(1))
 
-            # Extract arXiv category
             category = None
             category_elem = entry.find("atom:category", ns)
             if category_elem is not None:
                 category = category_elem.get("term")
 
-            # Extract DOI if available
             doi = None
             doi_elem = entry.find("atom:id", ns)
             if doi_elem is not None:
@@ -119,7 +111,6 @@ class MetadataExtractor:
             # Convert DBLP HTML URL to BibTeX URL
             bib_url = self._convert_dblp_url_to_bib(dblp_url)
 
-            # Fetch BibTeX data
             response = HTTPClient.get(bib_url, timeout=30)
 
             bibtex_content = response.text.strip()
@@ -156,7 +147,6 @@ class MetadataExtractor:
                 return metadata
 
             finally:
-                # Clean up temporary file
                 try:
                     os.unlink(tmp_file_path)
                 except OSError:
@@ -344,7 +334,6 @@ Respond in this exact JSON format:
         self, data: Dict[str, Any], openreview_id: str
     ) -> Dict[str, Any]:
         """Parse OpenReview API v2 response."""
-        # Find the main submission note (where id equals forum)
         note = None
         for n in data["notes"]:
             if n.get("id") == n.get("forum"):
@@ -357,17 +346,14 @@ Respond in this exact JSON format:
 
         content = note.get("content", {})
 
-        # Extract title
         title = content.get("title", {}).get("value", "Unknown Title")
         title = fix_broken_lines(title)
         title = titlecase(title)
 
-        # Extract abstract
         abstract = content.get("abstract", {}).get("value", "")
         if abstract:
             abstract = fix_broken_lines(abstract)
 
-        # Extract authors
         authors = []
         authors_data = content.get("authors", {}).get("value", [])
 
@@ -379,7 +365,6 @@ Respond in this exact JSON format:
             if bibtex_content:
                 authors = self._extract_authors_from_bibtex(bibtex_content)
 
-        # Extract venue information using LLM
         venue_info = content.get("venue", {}).get("value", "")
         venue_data = self._extract_venue_with_llm(venue_info)
 
@@ -443,7 +428,6 @@ Respond in this exact JSON format:
         self, data: Dict[str, Any], openreview_id: str
     ) -> Dict[str, Any]:
         """Parse OpenReview API v1 response."""
-        # Find the main submission note (where id equals forum)
         note = None
         for n in data["notes"]:
             if n.get("id") == n.get("forum"):
@@ -456,7 +440,6 @@ Respond in this exact JSON format:
 
         content = note.get("content", {})
 
-        # Extract title (v1 format may have direct string values)
         title = content.get("title", "Unknown Title")
         if isinstance(title, dict):
             title = title.get("value", "Unknown Title")
@@ -470,7 +453,6 @@ Respond in this exact JSON format:
         if abstract:
             abstract = fix_broken_lines(abstract)
 
-        # Extract authors
         authors = []
         authors_data = content.get("authors", [])
 
@@ -488,13 +470,11 @@ Respond in this exact JSON format:
             if bibtex_content:
                 authors = self._extract_authors_from_bibtex(bibtex_content)
 
-        # Extract venue information using LLM
         venue_info = content.get("venue", "")
         if isinstance(venue_info, dict):
             venue_info = venue_info.get("value", "")
         venue_data = self._extract_venue_with_llm(venue_info)
 
-        # Extract year from venue or other sources
         year = None
         if venue_info:
             year_match = re.search(r"(\d{4})", venue_info)
@@ -520,7 +500,6 @@ Respond in this exact JSON format:
         """Extract metadata from PDF file using LLM analysis of first two pages."""
         try:
 
-            # Extract text from first two pages
             with open(pdf_path, "rb") as file:
                 pdf_reader = PyPDF2.PdfReader(file)
 
@@ -538,7 +517,6 @@ Respond in this exact JSON format:
                 if not text_content.strip():
                     raise Exception("Could not extract text from PDF")
 
-            # Use LLM to extract metadata
             client = OpenAI()
 
             prompt = MetadataPrompts.extraction_prompt(text_content)
@@ -566,7 +544,6 @@ Respond in this exact JSON format:
                 temperature=0,
             )
 
-            # Parse the JSON response
             response_content = response.choices[0].message.content.strip()
 
             # Log the LLM response
@@ -580,7 +557,6 @@ Respond in this exact JSON format:
                     f"Raw response:\n{response_content}",
                 )
 
-            # Clean up potential markdown code blocks
             if response_content.startswith("```json"):
                 response_content = response_content[7:]
             if response_content.startswith("```"):
@@ -625,11 +601,9 @@ Respond in this exact JSON format:
                     "category": "",
                 }
 
-            # Ensure authors is a consistent format for normalization
             if not metadata.get("authors"):
                 metadata["authors"] = ""
 
-            # Apply centralized normalization before returning
             metadata = normalize_paper_data(metadata)
 
             return metadata
@@ -640,7 +614,6 @@ Respond in this exact JSON format:
     def generate_paper_summary(self, pdf_path: str) -> str:
         """Generate an academic summary of the paper using LLM analysis of the full text."""
         try:
-            # Extract text from all pages (or first 10 pages to avoid token limits)
             with open(pdf_path, "rb") as file:
                 pdf_reader = PyPDF2.PdfReader(file)
 
@@ -658,7 +631,6 @@ Respond in this exact JSON format:
                 if not full_text.strip():
                     return ""
 
-            # Use LLM to generate academic summary
             client = OpenAI()
 
             prompt = SummaryPrompts.academic_summary(full_text)
@@ -712,14 +684,12 @@ Respond in this exact JSON format:
     def extract_from_bibtex(self, bib_path: str) -> List[Dict[str, Any]]:
         """Extract metadata from BibTeX file."""
         try:
-
             with open(bib_path, "r", encoding="utf-8") as file:
                 bib_database = bibtexparser.load(file)
 
             papers_metadata = []
 
             for entry in bib_database.entries:
-                # Extract common BibTeX fields
                 metadata = {
                     "title": entry.get("title", "").replace("{", "").replace("}", ""),
                     "abstract": entry.get("abstract", ""),
@@ -741,7 +711,6 @@ Respond in this exact JSON format:
                     "pages": entry.get("pages", ""),
                 }
 
-                # Extract authors
                 metadata["authors"] = entry.get("author", "")
 
                 papers_metadata.append(metadata)
@@ -760,7 +729,6 @@ Respond in this exact JSON format:
             papers_metadata = []
 
             for entry in entries:
-                # Extract common RIS fields
                 metadata = {
                     "title": entry.get("title", "") or entry.get("primary_title", ""),
                     "abstract": entry.get("abstract", ""),
@@ -782,7 +750,6 @@ Respond in this exact JSON format:
                     ),
                 }
 
-                # Extract authors - convert to string format for normalization
                 authors = entry.get("authors", []) or entry.get("first_authors", [])
                 if authors:
                     author_names = [
@@ -837,7 +804,6 @@ Respond in this exact JSON format:
 
     def extract_from_doi(self, doi: str) -> Dict[str, Any]:
         """Extract metadata from DOI using Crossref API."""
-        # Clean DOI input - remove common prefixes/URLs
         doi = doi.strip()
         if doi.startswith("http"):
             # Extract DOI from URL like https://doi.org/10.1000/example
@@ -848,7 +814,6 @@ Respond in this exact JSON format:
             doi = doi[4:]
 
         try:
-            # Query Crossref API
             url = f"https://api.crossref.org/works/{doi}"
             headers = {
                 "User-Agent": "PaperCLI/1.0 (https://github.com/your-repo) mailto:your-email@example.com"
@@ -858,15 +823,12 @@ Respond in this exact JSON format:
             data = response.json()
             work = data.get("message", {})
 
-            # Extract metadata
             metadata = {}
 
-            # Title
             titles = work.get("title", [])
             if titles:
                 metadata["title"] = titles[0]
 
-            # Authors
             authors = []
             for author in work.get("author", []):
                 given = author.get("given", "")
@@ -879,18 +841,15 @@ Respond in this exact JSON format:
                 " and ".join(authors) if authors else ""
             )  # Convert to string format for consistency
 
-            # Abstract
             if "abstract" in work:
                 metadata["abstract"] = work["abstract"]
 
-            # Publication year
             published_date = work.get("published-print") or work.get("published-online")
             if published_date and "date-parts" in published_date:
                 date_parts = published_date["date-parts"][0]
                 if date_parts:
                     metadata["year"] = date_parts[0]
 
-            # Venue information
             if "container-title" in work:
                 container_titles = work["container-title"]
                 if container_titles:
@@ -901,24 +860,19 @@ Respond in this exact JSON format:
                         if short_titles:
                             metadata["venue_acronym"] = short_titles[0]
 
-            # DOI
             metadata["doi"] = work.get("DOI", doi)
 
-            # URL
             if "URL" in work:
                 metadata["url"] = work["URL"]
 
-            # Pages
             if "page" in work:
                 metadata["pages"] = work["page"]
 
-            # Volume and issue
             if "volume" in work:
                 metadata["volume"] = work["volume"]
             if "issue" in work:
                 metadata["issue"] = work["issue"]
 
-            # Infer paper type
             work_type = work.get("type", "").lower()
             if "journal" in work_type:
                 metadata["paper_type"] = "journal"

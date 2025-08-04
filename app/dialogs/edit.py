@@ -3,23 +3,30 @@ Custom dialog for editing paper metadata in a full-window form with paper type b
 """
 
 import os
-from typing import Any, Callable, Dict, List
+from typing import Any
+from typing import Callable
+from typing import Dict
+from typing import List
 
 from prompt_toolkit.application import get_app
-from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.key_binding import merge_key_bindings
 from prompt_toolkit.layout import ScrollablePane
-from prompt_toolkit.layout.containers import HSplit, VSplit, Window, WindowAlign
+from prompt_toolkit.layout.containers import HSplit
+from prompt_toolkit.layout.containers import VSplit
+from prompt_toolkit.layout.containers import Window
+from prompt_toolkit.layout.containers import WindowAlign
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
-from prompt_toolkit.widgets import Button, Dialog, TextArea
+from prompt_toolkit.widgets import Button
+from prompt_toolkit.widgets import Dialog
+from prompt_toolkit.widgets import TextArea
 
-from ..services import (
-    AuthorService,
-    BackgroundOperationService,
-    CollectionService,
-    MetadataExtractor,
-    normalize_paper_data,
-)
+from ..services import AuthorService
+from ..services import BackgroundOperationService
+from ..services import CollectionService
+from ..services import MetadataExtractor
+from ..services import normalize_paper_data
 
 
 class EditDialog:
@@ -152,6 +159,17 @@ class EditDialog:
         self._create_layout()
         self._add_key_bindings()
 
+    def _get_full_pdf_path(self):
+        """Get the full absolute path for the PDF file."""
+        pdf_path = self.paper_data.get("pdf_path", "")
+        if not pdf_path:
+            return ""
+
+        from ..services.pdf import PDFManager
+
+        pdf_manager = PDFManager()
+        return pdf_manager.get_absolute_path(pdf_path)
+
     def _create_input_fields(self):
         """Create input fields for fields visible in the current paper type."""
         visible_fields = self.fields_by_type.get(
@@ -186,7 +204,7 @@ class EditDialog:
             "preprint_id": self.paper_data.get("preprint_id", ""),
             "category": self.paper_data.get("category", ""),
             "url": self.paper_data.get("url", ""),
-            "pdf_path": self.paper_data.get("pdf_path", ""),
+            "pdf_path": self._get_full_pdf_path(),
             "collections": collection_names,
             "abstract": self.paper_data.get("abstract", ""),
             "notes": self.paper_data.get("notes", ""),
@@ -762,12 +780,6 @@ class EditDialog:
         """Focuses the first editable field in the dialog."""
         self._set_initial_focus()
         if self.initial_focus:
-            # First unfocus all fields
-            for field in self.input_fields.values():
-                # TextArea does not have a 'focused' attribute like CustomInputField did.
-                # Focus is managed by the layout. We just need to ensure the correct window is focused.
-                pass
-
             get_app().layout.focus(self.initial_focus)
 
     def get_initial_focus(self):

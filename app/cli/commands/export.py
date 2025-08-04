@@ -4,8 +4,8 @@ from typing import List
 
 from prompt_toolkit.layout.containers import Float
 
-from .base import BaseCommandHandler
 from ...dialogs import ChatDialog
+from .base import BaseCommandHandler
 
 
 class ExportCommandHandler(BaseCommandHandler):
@@ -156,8 +156,7 @@ class ExportCommandHandler(BaseCommandHandler):
                         self.cli.status_bar.set_error(result["message"])
                         self.show_error_panel_with_message(
                             "Chat Error",
-                            result["message"],
-                            "Failed to open chat interface.",
+                            f"{result['message']}\n\nFailed to open chat interface.",
                         )
 
         except Exception as e:
@@ -180,8 +179,7 @@ class ExportCommandHandler(BaseCommandHandler):
                 self.cli.status_bar.set_error(result["message"])
                 self.show_error_panel_with_message(
                     "Copy Prompt Error",
-                    result["message"],
-                    "Failed to copy prompt to clipboard.",
+                    f"{result['message']}\n\nFailed to copy prompt to clipboard.",
                 )
         except Exception as e:
             self.cli.status_bar.set_error(f"Error copying prompt: {e}")

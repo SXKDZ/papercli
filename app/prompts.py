@@ -18,7 +18,7 @@ IMPORTANT: Only provide information that is explicitly present in the paper info
     @staticmethod
     def clipboard_prompt(papers_count: int, context_parts: str) -> str:
         """Prompt for external LLM use via clipboard."""
-        return f"""I have {papers_count} research paper(s) that I'd like to discuss with you. Here's the information about each paper:
+        return f"""I have {papers_count} research paper{'s' if papers_count != 1 else ''} that I'd like to discuss with you. Here's the information about each paper:
 
 {context_parts}
 

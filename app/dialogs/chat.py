@@ -9,7 +9,11 @@ import threading
 from datetime import datetime
 from io import StringIO
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any
+from typing import Callable
+from typing import Dict
+from typing import List
+from typing import Tuple
 
 import PyPDF2
 from openai import OpenAI
@@ -17,18 +21,27 @@ from prompt_toolkit.application import get_app
 from prompt_toolkit.data_structures import Point
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.formatted_text import ANSI
-from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.key_binding import merge_key_bindings
 from prompt_toolkit.layout import UIContent
-from prompt_toolkit.layout.containers import HSplit, ScrollOffsets, VSplit, Window
+from prompt_toolkit.layout.containers import HSplit
+from prompt_toolkit.layout.containers import ScrollOffsets
+from prompt_toolkit.layout.containers import VSplit
+from prompt_toolkit.layout.containers import Window
 from prompt_toolkit.layout.controls import UIControl
 from prompt_toolkit.layout.dimension import Dimension
-from prompt_toolkit.layout.margins import Margin, ScrollbarMargin
-from prompt_toolkit.widgets import Button, Dialog, TextArea
+from prompt_toolkit.layout.margins import Margin
+from prompt_toolkit.layout.margins import ScrollbarMargin
+from prompt_toolkit.widgets import Button
+from prompt_toolkit.widgets import Dialog
+from prompt_toolkit.widgets import TextArea
 from rich.console import Console
 from rich.markdown import Markdown
 
 from ..prompts import ChatPrompts
-from ..services import BackgroundOperationService, LLMSummaryService, PaperService
+from ..services import BackgroundOperationService
+from ..services import LLMSummaryService
+from ..services import PaperService
 
 
 class SpacingMargin(Margin):
@@ -588,14 +601,14 @@ class ChatDialog:
         def _(event):
             # Let TextArea handle up key natively - don't bubble to main app
             current_control = event.app.layout.current_control
-            if hasattr(current_control, 'buffer'):
+            if hasattr(current_control, "buffer"):
                 current_control.buffer.cursor_up()
 
         @kb.add("down", filter=input_box_has_focus)
         def _(event):
             # Let TextArea handle down key natively - don't bubble to main app
             current_control = event.app.layout.current_control
-            if hasattr(current_control, 'buffer'):
+            if hasattr(current_control, "buffer"):
                 current_control.buffer.cursor_down()
 
         @kb.add("home")
@@ -615,16 +628,6 @@ class ChatDialog:
                 current_control.buffer.cursor_position = (
                     current_control.buffer.document.get_end_of_line_position()
                 )
-
-        @kb.add("pageup")
-        def _(event):
-            # Let prompt-toolkit handle page up scrolling
-            pass
-
-        @kb.add("pagedown")
-        def _(event):
-            # Let prompt-toolkit handle page down scrolling
-            pass
 
         @kb.add("escape")
         def _(event):

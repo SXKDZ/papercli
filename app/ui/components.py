@@ -5,10 +5,12 @@ UI components for PaperCLI using prompt-toolkit.
 import threading
 import time
 from io import StringIO
-from typing import List, Optional
+from typing import List
+from typing import Optional
 
 from prompt_toolkit.application import get_app
-from prompt_toolkit.formatted_text import ANSI, FormattedText
+from prompt_toolkit.formatted_text import ANSI
+from prompt_toolkit.formatted_text import FormattedText
 from rich.console import Console
 from rich.style import Style as RichStyle
 from rich.table import Table
@@ -438,17 +440,17 @@ class StatusBar:
 class ErrorPanel:
     """Error panel component for displaying detailed error messages."""
 
-    def __init__(self):
+    def __init__(self, log_callback=None):
         self.error_messages = []
         self.show_panel = False
+        self.log_callback = log_callback
 
-    def add_error(self, title: str, message: str, details: str = ""):
+    def add_error(self, title: str, message: str):
         """Add an error message to the panel."""
         self.error_messages.append(
             {
                 "title": title,
                 "message": message,
-                "details": details,
                 "timestamp": __import__("datetime").datetime.now(),
             }
         )
@@ -475,11 +477,7 @@ class ErrorPanel:
             text.append(("class:error_title", f"{error['title']}\n"))
 
             # Message
-            text.append(("class:error_message", f"  {error['message']}\n"))
-
-            # Details if available
-            if error["details"]:
-                text.append(("class:error_details", f"  Details: {error['details']}\n"))
+            text.append(("class:error_message", f"{error['message']}\n"))
 
             if i < len(self.error_messages[-5:]):
                 text.append(("", "\n"))
@@ -498,8 +496,6 @@ class ErrorPanel:
         for error in self.error_messages:
             timestamp = error["timestamp"].strftime("%Y-%m-%d %H:%M:%S")
             text.append(f"[{timestamp}] {error['title']}")
-            text.append(f"  Message: {error['message']}")
-            if error["details"]:
-                text.append(f"  Details: {error['details']}")
+            text.append(f"{error['message']}")
             text.append("-" * 20)
         return "\n".join(text)

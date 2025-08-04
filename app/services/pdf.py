@@ -5,7 +5,9 @@ import os
 import re
 import secrets
 import shutil
-from typing import Any, Dict, Tuple
+from typing import Any
+from typing import Dict
+from typing import Tuple
 
 from ..db.database import get_pdf_directory
 from .http_utils import HTTPClient
@@ -17,6 +19,18 @@ class PDFManager:
     def __init__(self):
         self.pdf_dir = None
         self.pdf_dir = get_pdf_directory()
+
+    def get_absolute_path(self, relative_path: str) -> str:
+        """Convert a relative PDF path to absolute path."""
+        if not relative_path:
+            return ""
+
+        # If path is already absolute, return as-is (for backward compatibility)
+        if os.path.isabs(relative_path):
+            return relative_path
+
+        # Convert relative path to absolute
+        return os.path.join(self.pdf_dir, relative_path)
 
     def _generate_pdf_filename(self, paper_data: Dict[str, Any], pdf_path: str) -> str:
         """Generate a smart filename for the PDF based on paper metadata."""
@@ -110,11 +124,11 @@ class PDFManager:
         self, pdf_input: str, paper_data: Dict[str, Any], old_pdf_path: str = None
     ) -> Tuple[str, str]:
         """
-        Process PDF input (local file, URL, or invalid) and return the final path.
+        Process PDF input (local file, URL, or invalid) and return the final relative path.
 
         Returns:
-            tuple[str, str]: (final_pdf_path, error_message)
-            If successful: (path, "")
+            tuple[str, str]: (relative_pdf_path, error_message)
+            If successful: (relative_path, "")
             If error: ("", error_message)
         """
         if not pdf_input or not pdf_input.strip():
@@ -142,7 +156,8 @@ class PDFManager:
                 # Check if source and destination are the same file
                 if os.path.abspath(pdf_input) == os.path.abspath(target_path):
                     # File is already in the right place, no need to copy
-                    return target_path, ""
+                    relative_path = os.path.relpath(target_path, self.pdf_dir)
+                    return relative_path, ""
 
                 shutil.copy2(pdf_input, target_path)
 
@@ -157,7 +172,9 @@ class PDFManager:
                     except Exception:
                         pass  # Don't fail if cleanup fails
 
-                return target_path, ""
+                # Return relative path from PDF directory
+                relative_path = os.path.relpath(target_path, self.pdf_dir)
+                return relative_path, ""
 
             elif is_url:
                 # Download URL to PDF directory with proper naming
@@ -177,7 +194,11 @@ class PDFManager:
                         except Exception:
                             pass  # Don't fail if cleanup fails
 
-                return new_path, error
+                    # Return relative path from PDF directory
+                    relative_path = os.path.relpath(new_path, self.pdf_dir)
+                    return relative_path, error
+
+                return "", error
 
         except Exception as e:
             return "", f"Error processing PDF: {str(e)}"
@@ -195,7 +216,8 @@ class PDFManager:
         4. Renames to final location
 
         Returns:
-            tuple[str, str]: (final_pdf_path, error_message)
+            tuple[str, str]: (final_pdf_absolute_path, error_message)
+            Note: This returns absolute path for internal use. The calling method converts to relative.
         """
         try:
             # Generate temporary filename with random hash

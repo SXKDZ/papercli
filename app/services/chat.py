@@ -5,7 +5,9 @@ import platform
 import subprocess
 import traceback
 import webbrowser
-from typing import Any, Dict, List
+from typing import Any
+from typing import Dict
+from typing import List
 
 import pyperclip
 
@@ -42,7 +44,7 @@ class ChatService:
 
             return {
                 "success": True,
-                "message": f"Prompt for {len(papers)} paper(s) copied to clipboard",
+                "message": f"Prompt for {len(papers)} paper{'s' if len(papers) != 1 else ''} copied to clipboard",
                 "prompt_length": len(full_prompt),
             }
 

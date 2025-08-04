@@ -8,7 +8,7 @@ from .system import SystemCommandHandler
 
 __all__ = [
     "CollectionCommandHandler",
-    "ExportCommandHandler", 
+    "ExportCommandHandler",
     "PaperCommandHandler",
     "SearchCommandHandler",
     "SystemCommandHandler",

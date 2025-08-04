@@ -3,19 +3,28 @@ Advanced collection management dialog with three-column layout.
 """
 
 import traceback
-from typing import List, Optional
+from typing import List
+from typing import Optional
 
 from prompt_toolkit.application import get_app
 from prompt_toolkit.data_structures import Point
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout.containers import HSplit, ScrollOffsets, VSplit, Window
+from prompt_toolkit.layout.containers import HSplit
+from prompt_toolkit.layout.containers import ScrollOffsets
+from prompt_toolkit.layout.containers import VSplit
+from prompt_toolkit.layout.containers import Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
-from prompt_toolkit.widgets import Button, Dialog, Frame, TextArea
+from prompt_toolkit.widgets import Button
+from prompt_toolkit.widgets import Dialog
+from prompt_toolkit.widgets import Frame
+from prompt_toolkit.widgets import TextArea
 
-from ..db.models import Collection, Paper
-from ..services import CollectionService, PaperService
+from ..db.models import Collection
+from ..db.models import Paper
+from ..services import CollectionService
+from ..services import PaperService
 
 
 class EditableList:
@@ -514,9 +523,6 @@ class CollectDialog:
                 self.on_paper_select(self.other_papers_list)
             else:
                 self.paper_details.text = "No papers available"
-        else:
-            # Buttons are focused - keep current detail page
-            pass
 
     def _create_dialog_key_bindings(self):
         """Create key bindings for dialog navigation."""

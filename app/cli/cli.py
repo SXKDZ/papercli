@@ -2,41 +2,37 @@
 
 import traceback
 from datetime import datetime
-from typing import List, Optional
+from typing import List
+from typing import Optional
 
 from prompt_toolkit.document import Document
-from prompt_toolkit.layout.containers import (
-    Float,
-)
-from ..dialogs import (
-    AddDialog,
-    FilterDialog,
-    SortDialog,
-)
+from prompt_toolkit.layout.containers import Float
+
 from ..db.models import Paper
-from ..services import (
-    AddPaperService,
-    AuthorService,
-    BackgroundOperationService,
-    ChatService,
-    CollectionService,
-    DatabaseHealthService,
-    ExportService,
-    MetadataExtractor,
-    PaperService,
-    SearchService,
-    SystemService,
-)
+from ..dialogs import AddDialog
+from ..dialogs import FilterDialog
+from ..dialogs import SortDialog
+from ..services import AddPaperService
+from ..services import AuthorService
+from ..services import BackgroundOperationService
+from ..services import ChatService
+from ..services import CollectionService
+from ..services import DatabaseHealthService
+from ..services import ExportService
+from ..services import MetadataExtractor
+from ..services import PaperService
+from ..services import SearchService
+from ..services import SystemService
 from ..services.auto_sync import trigger_auto_sync
-from ..ui import ErrorPanel, PaperListControl, StatusBar
+from ..ui import ErrorPanel
+from ..ui import PaperListControl
+from ..ui import StatusBar
 from ..version import get_version
-from .commands import (
-    CollectionCommandHandler,
-    ExportCommandHandler,
-    PaperCommandHandler,
-    SearchCommandHandler,
-    SystemCommandHandler,
-)
+from .commands import CollectionCommandHandler
+from .commands import ExportCommandHandler
+from .commands import PaperCommandHandler
+from .commands import SearchCommandHandler
+from .commands import SystemCommandHandler
 from .completer import SmartCompleter
 from .ui_setup import UISetupMixin
 
@@ -149,16 +145,19 @@ Indicators (in the first column):
         self.current_papers: List[Paper] = []
         self.paper_list_control = PaperListControl([])
         self.status_bar = StatusBar()
-        self.error_panel = ErrorPanel()
+        self.error_panel = ErrorPanel(log_callback=self._add_log)
         self.in_select_mode = False
         self.show_help = False
         self.show_error_panel = False
         self.show_details_panel = False
         self.is_filtered_view = False
+        self.is_syncing = False
         self.edit_dialog = None
         self.edit_float = None
         self.add_dialog = None
         self.add_float = None
+        self.sync_dialog = None
+        self.sync_float = None
         self.filter_dialog = None
         self.filter_float = None
         self.sort_dialog = None
@@ -169,22 +168,18 @@ Indicators (in the first column):
         self.chat_float = None
         self.logs = []
 
-        # Initialize command handlers
         self.system_commands = SystemCommandHandler(self)
         self.paper_commands = PaperCommandHandler(self)
         self.search_commands = SearchCommandHandler(self)
         self.collection_commands = CollectionCommandHandler(self)
         self.export_commands = ExportCommandHandler(self)
 
-        # Load initial papers
         self.load_papers()
 
-        # Setup UI
         self.setup_layout()
         self.setup_key_bindings()
         self.setup_application()
 
-        # Initialize background service after status_bar is created
         self.background_service = BackgroundOperationService(
             status_bar=self.status_bar, log_callback=self._add_log
         )
@@ -198,7 +193,6 @@ Indicators (in the first column):
     def load_papers(self):
         """Load papers from database."""
         try:
-            # Preserve selection state using paper IDs
             old_selected_index = getattr(self.paper_list_control, "selected_index", 0)
             old_selected_paper_ids = getattr(
                 self.paper_list_control, "selected_paper_ids", set()
@@ -265,7 +259,6 @@ Indicators (in the first column):
             cmd = parts[0].lower()
 
             if cmd in self.smart_completer.commands:
-                # System commands
                 if cmd == "/help":
                     self.show_help_dialog(self.HELP_TEXT, "PaperCLI Help")
                 elif cmd == "/log":
@@ -328,15 +321,13 @@ Indicators (in the first column):
             # Show detailed error in error panel instead of just status bar
             self.show_error_panel_with_message(
                 "Command Error",
-                f"Failed to execute command: {command}",
-                traceback.format_exc(),
+                f"Failed to execute command: {command}\n\n{traceback.format_exc()}",
             )
 
     def show_add_dialog(self):
         """Show the add paper dialog."""
 
         def callback(result):
-            # This callback is executed when the dialog is closed.
             if self.add_float in self.app.layout.container.floats:
                 self.app.layout.container.floats.remove(self.add_float)
             self.add_dialog = None
@@ -390,7 +381,6 @@ Indicators (in the first column):
         """Show the filter dialog."""
 
         def callback(result):
-            # This callback is executed when the dialog is closed.
             if self.filter_float in self.app.layout.container.floats:
                 self.app.layout.container.floats.remove(self.filter_float)
             self.filter_dialog = None
@@ -419,15 +409,13 @@ Indicators (in the first column):
         except Exception as e:
             self.show_error_panel_with_message(
                 "Filter Dialog Error",
-                "Could not open the filter dialog.",
-                traceback.format_exc(),
+                f"Could not open the filter dialog.\n\n{traceback.format_exc()}",
             )
 
     def show_sort_dialog(self):
         """Show the sort dialog."""
 
         def callback(result):
-            # This callback is executed when the dialog is closed.
             if self.sort_float in self.app.layout.container.floats:
                 self.app.layout.container.floats.remove(self.sort_float)
             self.sort_dialog = None
@@ -496,15 +484,12 @@ Indicators (in the first column):
         except Exception as e:
             self.show_error_panel_with_message(
                 "Sort Dialog Error",
-                "Could not open the sort dialog.",
-                traceback.format_exc(),
+                f"Could not open the sort dialog.\n\n{traceback.format_exc()}",
             )
 
-    def show_error_panel_with_message(
-        self, title: str, message: str, details: str = None
-    ):
+    def show_error_panel_with_message(self, title: str, message: str):
         """Show error panel with a specific message."""
-        self.error_panel.add_error(title, message, details or "")
+        self.error_panel.add_error(title, message)
         self.show_error_panel = True
         self.app.invalidate()
 
@@ -538,7 +523,7 @@ Indicators (in the first column):
             raise
         finally:
             self._add_log("app_stop", "PaperCLI stopped")
-            
+
     def trigger_auto_sync_if_enabled(self):
         """Trigger auto-sync if enabled, typically called after edit operations."""
         trigger_auto_sync(log_callback=self._add_log)

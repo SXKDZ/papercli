@@ -1,13 +1,19 @@
 """Search service - Business logic for searching and filtering papers."""
 
-from typing import Any, Dict, List
+from typing import Any
+from typing import Dict
+from typing import List
 
 from fuzzywuzzy import fuzz
-from sqlalchemy import and_, or_
+from sqlalchemy import and_
+from sqlalchemy import or_
 from sqlalchemy.orm import joinedload
 
 from ..db.database import get_db_session
-from ..db.models import Author, Collection, Paper, PaperAuthor
+from ..db.models import Author
+from ..db.models import Collection
+from ..db.models import Paper
+from ..db.models import PaperAuthor
 
 
 class SearchService:

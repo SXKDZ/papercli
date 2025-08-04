@@ -10,7 +10,8 @@ from typing import Generator
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
+from sqlalchemy.orm import sessionmaker
 
 from .models import Base
 

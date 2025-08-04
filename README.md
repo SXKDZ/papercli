@@ -35,6 +35,7 @@ A powerful command-line paper management system for researchers and academics. P
 - **PDF Management**: Automatic PDF downloading and organization
 
 ### 🔧 Advanced Features
+- **OneDrive Sync**: Comprehensive synchronization with conflict detection and resolution options
 - **Database Health**: Built-in diagnostic tools for database maintenance
 - **Interactive UI**: Modern terminal interface with auto-completion and consistent status messaging
 - **Multi-selection**: Batch operations on multiple papers
@@ -136,6 +137,7 @@ Work on the paper under the cursor ► or selected papers ✓:
 - `/open` - Open the PDF for the paper(s)
 - `/detail` - Show detailed metadata for the paper(s)
 - `/export` - Export paper(s) to a file or clipboard (BibTeX, Markdown, etc.)
+- `/copy-prompt` - Copy paper prompt to clipboard for use with any LLM
 - `/delete` - Delete the paper(s) from the library
 
 ### Collection Management
@@ -145,10 +147,16 @@ Work on the paper under the cursor ► or selected papers ✓:
 - `/remove-from` - Remove selected paper(s) from a collection
 
 ### System Commands
-- `/doctor` - Diagnose and fix database/system issues
-  - `diagnose` - Run full diagnostic check (default)
+- `/sync` - OneDrive synchronization with conflict detection and resolution
+- `/doctor` - Diagnose and fix database/system issues (runs diagnostic check by default)
   - `clean` - Clean orphaned database records and PDF files
   - `help` - Show doctor command help
+- `/config` - Configuration management for models, API keys, and sync settings
+- `/version` - Version management and updates
+  - `check` - Check for available updates
+  - `update` - Update to the latest version (if possible)
+  - `info` - Show detailed version information
+- `/log` - Show activity log panel
 
 ## Supported Sources
 
@@ -271,7 +279,7 @@ When using the local chat interface (`/chat`):
 
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature-name`
-3. Make your changes and add tests
+3. Make your changes
 4. Commit your changes: `git commit -m "feat: add new feature"`
 5. Push to the branch: `git push origin feature-name`
 6. Submit a pull request

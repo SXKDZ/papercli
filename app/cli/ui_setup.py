@@ -1,58 +1,86 @@
 """UI setup utilities for PaperCLI."""
 
-from prompt_toolkit.application import Application, get_app
+from prompt_toolkit.application import Application
+from prompt_toolkit.application import get_app
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.data_structures import Point
 from prompt_toolkit.document import Document
-from prompt_toolkit.filters import Condition, has_focus
+from prompt_toolkit.filters import Condition
+from prompt_toolkit.filters import has_focus
 from prompt_toolkit.formatted_text import FormattedText
-from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.key_binding import merge_key_bindings
 from prompt_toolkit.key_binding.bindings import scroll
 from prompt_toolkit.key_binding.defaults import load_key_bindings
-from prompt_toolkit.layout import HSplit, Layout, Window, WindowAlign
-from prompt_toolkit.layout.containers import (
-    ConditionalContainer,
-    Float,
-    FloatContainer,
-    ScrollOffsets,
-)
-from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
+from prompt_toolkit.layout import HSplit
+from prompt_toolkit.layout import Layout
+from prompt_toolkit.layout import Window
+from prompt_toolkit.layout import WindowAlign
+from prompt_toolkit.layout.containers import ConditionalContainer
+from prompt_toolkit.layout.containers import Float
+from prompt_toolkit.layout.containers import FloatContainer
+from prompt_toolkit.layout.containers import ScrollOffsets
+from prompt_toolkit.layout.controls import BufferControl
+from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.margins import ScrollbarMargin
 from prompt_toolkit.layout.menus import CompletionsMenu
 from prompt_toolkit.layout.processors import BeforeInput
 from prompt_toolkit.styles import Style
-from prompt_toolkit.widgets import Dialog, Frame
+from prompt_toolkit.widgets import Dialog
+from prompt_toolkit.widgets import Frame
 
 from ..version import get_version
 
 
 class UISetupMixin:
     """Mixin class containing UI setup methods for PaperCLI."""
-    
+
     def setup_key_bindings(self):
         """Setup key bindings."""
         self.kb = KeyBindings()
+
+        def no_modal_dialog():
+            """Check if no modal dialog is blocking navigation."""
+            return (
+                self.edit_dialog is None
+                or not (
+                    hasattr(get_app().layout.current_control, "buffer")
+                    and get_app().layout.current_control.buffer
+                    in [f.buffer for f in self.edit_dialog.input_fields.values()]
+                )
+            ) and self.sync_dialog is None
+
+        def no_blocking_dialog():
+            """Check if no dialog is blocking space/selection."""
+            return (
+                self.add_dialog is None
+                and self.filter_dialog is None
+                and self.sort_dialog is None
+                and self.sync_dialog is None
+            )
+
+        def any_dialog_open():
+            """Check if any dialog is open (for shift-tab handling)."""
+            return (
+                self.add_dialog is not None
+                or self.filter_dialog is not None
+                or self.sort_dialog is not None
+                or self.edit_dialog is not None
+                or self.sync_dialog is not None
+                or self.collect_dialog is not None
+            )
 
         # Navigation
         @self.kb.add(
             "up",
             filter=~has_focus(self.help_control)
             & ~has_focus(self.details_control)
-            & Condition(
-                lambda: self.edit_dialog is None
-                or not (
-                    hasattr(get_app().layout.current_control, "buffer")
-                    and get_app().layout.current_control.buffer
-                    in [f.buffer for f in self.edit_dialog.input_fields.values()]
-                )
-            ),
+            & Condition(no_modal_dialog),
         )
         def move_up(event):
-            # If completion menu is open, navigate it
             if self.input_buffer.complete_state:
                 self.input_buffer.complete_previous()
             else:
-                # Otherwise, navigate the paper list
                 self.paper_list_control.move_up()
                 self._scroll_to_selected()
                 event.app.invalidate()
@@ -61,21 +89,12 @@ class UISetupMixin:
             "down",
             filter=~has_focus(self.help_control)
             & ~has_focus(self.details_control)
-            & Condition(
-                lambda: self.edit_dialog is None
-                or not (
-                    hasattr(get_app().layout.current_control, "buffer")
-                    and get_app().layout.current_control.buffer
-                    in [f.buffer for f in self.edit_dialog.input_fields.values()]
-                )
-            ),
+            & Condition(no_modal_dialog),
         )
         def move_down(event):
-            # If completion menu is open, navigate it
             if self.input_buffer.complete_state:
                 self.input_buffer.complete_next()
             else:
-                # Otherwise, navigate the paper list
                 self.paper_list_control.move_down()
                 self._scroll_to_selected()
                 event.app.invalidate()
@@ -85,14 +104,7 @@ class UISetupMixin:
             "pageup",
             filter=~has_focus(self.help_control)
             & ~has_focus(self.details_control)
-            & Condition(
-                lambda: self.edit_dialog is None
-                or not (
-                    hasattr(get_app().layout.current_control, "buffer")
-                    and get_app().layout.current_control.buffer
-                    in [f.buffer for f in self.edit_dialog.input_fields.values()]
-                )
-            ),
+            & Condition(no_modal_dialog),
         )
         def move_page_up(event):
             self.paper_list_control.move_page_up()
@@ -103,14 +115,7 @@ class UISetupMixin:
             "pagedown",
             filter=~has_focus(self.help_control)
             & ~has_focus(self.details_control)
-            & Condition(
-                lambda: self.edit_dialog is None
-                or not (
-                    hasattr(get_app().layout.current_control, "buffer")
-                    and get_app().layout.current_control.buffer
-                    in [f.buffer for f in self.edit_dialog.input_fields.values()]
-                )
-            ),
+            & Condition(no_modal_dialog),
         )
         def move_page_down(event):
             self.paper_list_control.move_page_down()
@@ -121,14 +126,7 @@ class UISetupMixin:
             "home",
             filter=~has_focus(self.help_control)
             & ~has_focus(self.details_control)
-            & Condition(
-                lambda: self.edit_dialog is None
-                or not (
-                    hasattr(get_app().layout.current_control, "buffer")
-                    and get_app().layout.current_control.buffer
-                    in [f.buffer for f in self.edit_dialog.input_fields.values()]
-                )
-            ),
+            & Condition(no_modal_dialog),
         )
         def move_to_top(event):
             self.paper_list_control.move_to_top()
@@ -139,14 +137,7 @@ class UISetupMixin:
             "end",
             filter=~has_focus(self.help_control)
             & ~has_focus(self.details_control)
-            & Condition(
-                lambda: self.edit_dialog is None
-                or not (
-                    hasattr(get_app().layout.current_control, "buffer")
-                    and get_app().layout.current_control.buffer
-                    in [f.buffer for f in self.edit_dialog.input_fields.values()]
-                )
-            ),
+            & Condition(no_modal_dialog),
         )
         def move_to_bottom(event):
             self.paper_list_control.move_to_bottom()
@@ -154,16 +145,7 @@ class UISetupMixin:
             event.app.invalidate()
 
         # Selection (in select mode) - smart space key handling
-        @self.kb.add(
-            "space",
-            filter=~(
-                Condition(
-                    lambda: self.add_dialog is not None
-                    or self.filter_dialog is not None
-                    or self.sort_dialog is not None
-                )
-            ),
-        )
+        @self.kb.add("space", filter=Condition(no_blocking_dialog))
         def toggle_selection(event):
             # If edit dialog is open and a TextArea is focused, insert space into it.
             if self.edit_dialog and hasattr(event.app.layout.current_control, "buffer"):
@@ -303,6 +285,14 @@ class UISetupMixin:
                 self.status_bar.set_status("Closed details panel", "close")
                 event.app.invalidate()
                 return
+            elif self.sync_dialog is not None:
+                self.app.layout.container.floats.remove(self.sync_float)
+                self.sync_dialog = None
+                self.sync_float = None
+                self.app.layout.focus(self.input_buffer)
+                self.status_bar.set_status("Closed sync dialog", "close")
+                event.app.invalidate()
+                return
             elif self.edit_dialog is not None:
                 self.app.layout.container.floats.remove(self.edit_float)
                 self.edit_dialog = None
@@ -384,13 +374,7 @@ class UISetupMixin:
         @self.kb.add("s-tab")
         def complete_previous(event):
             # If a dialog is open, let the dialog handle the shift-tab key.
-            if (
-                self.add_dialog
-                or self.filter_dialog
-                or self.sort_dialog
-                or self.edit_dialog
-                or self.collect_dialog
-            ):
+            if any_dialog_open():
                 return
 
             # If the current focused control has a buffer, let it handle the shift-tab.
@@ -464,6 +448,10 @@ class UISetupMixin:
         # Handle normal character input
         @self.kb.add("<any>")
         def handle_any_key(event):
+            # Block input if sync dialog is open (except for its own key bindings)
+            if self.sync_dialog is not None:
+                return
+
             # If the current focused control has a buffer, let it handle the key.
             # This allows TextArea to handle its own input.
             if hasattr(event.app.layout.current_control, "buffer"):
@@ -570,7 +558,7 @@ class UISetupMixin:
             key_bindings=self._get_help_key_bindings(),
         )
         self.help_dialog = Dialog(
-            title=lambda: getattr(self, 'help_dialog_title', "PaperCLI Help"),
+            title=lambda: getattr(self, "help_dialog_title", "PaperCLI Help"),
             body=Window(
                 content=self.help_control,
                 wrap_lines=True,
@@ -603,9 +591,8 @@ class UISetupMixin:
         )
 
         # Error panel
-        self.error_buffer = Buffer(read_only=True, multiline=True)
-        self.error_control = BufferControl(
-            buffer=self.error_buffer,
+        self.error_control = FormattedTextControl(
+            text=lambda: self.error_panel.get_formatted_text(),
             focusable=True,
             key_bindings=self._get_error_key_bindings(),
         )

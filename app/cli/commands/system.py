@@ -1,7 +1,6 @@
 """System commands handler."""
 
 import os
-import threading
 import traceback
 from pathlib import Path
 from typing import List
@@ -9,7 +8,6 @@ from typing import List
 import requests
 from openai import OpenAI
 
-from ...services.sync_service import SyncService
 from ...version import VersionManager
 from .base import BaseCommandHandler
 
@@ -63,9 +61,9 @@ class SystemCommandHandler(BaseCommandHandler):
     def handle_doctor_command(self, args: List[str]):
         """Handle /doctor command for database diagnostics and cleanup."""
         try:
-            action = args[0] if args else "diagnose"
+            action = args[0] if args else None
 
-            if action == "diagnose":
+            if not args:
                 self.cli.status_bar.set_status(
                     "Running diagnostic checks...", "diagnose"
                 )
@@ -74,20 +72,33 @@ class SystemCommandHandler(BaseCommandHandler):
 
             elif action == "clean":
                 self.cli.status_bar.set_status(
-                    "Cleaning orphaned records and files...", "clean"
+                    "Cleaning orphaned records, files, and PDF filenames...", "clean"
                 )
                 cleaned_records = self.cli.db_health_service.clean_orphaned_records()
                 cleaned_pdfs = self.cli.db_health_service.clean_orphaned_pdfs()
+                fixed_paths = self.cli.db_health_service.fix_absolute_pdf_paths()
+                renamed_files = self.cli.db_health_service.clean_pdf_filenames()
 
                 total_cleaned_records = sum(cleaned_records.values())
                 total_cleaned_pdfs = sum(cleaned_pdfs.values())
+                total_fixed_paths = sum(fixed_paths.values())
+                total_renamed = sum(renamed_files.values())
 
-                if total_cleaned_records > 0 or total_cleaned_pdfs > 0:
+                if (
+                    total_cleaned_records > 0
+                    or total_cleaned_pdfs > 0
+                    or total_fixed_paths > 0
+                    or total_renamed > 0
+                ):
                     details = []
                     if total_cleaned_records > 0:
                         details.append(f"Records: {total_cleaned_records}")
                     if total_cleaned_pdfs > 0:
                         details.append(f"PDF files: {total_cleaned_pdfs}")
+                    if total_fixed_paths > 0:
+                        details.append(f"PDF paths: {total_fixed_paths}")
+                    if total_renamed > 0:
+                        details.append(f"Renamed files: {total_renamed}")
 
                     # Log detailed cleanup results on one line
                     cleanup_details = " • ".join(details)
@@ -102,32 +113,43 @@ class SystemCommandHandler(BaseCommandHandler):
                         cleanup_summary.append(f"{total_cleaned_records} records")
                     if total_cleaned_pdfs > 0:
                         cleanup_summary.append(f"{total_cleaned_pdfs} PDFs")
+                    if total_fixed_paths > 0:
+                        cleanup_summary.append(f"{total_fixed_paths} paths")
+                    if total_renamed > 0:
+                        cleanup_summary.append(f"{total_renamed} filenames")
 
                     if cleanup_summary:
                         self.cli.status_bar.set_success(
-                            f"Database cleanup complete - cleaned {' and '.join(cleanup_summary)}"
+                            f"Database cleanup complete - fixed {' and '.join(cleanup_summary)}"
                         )
                     else:
                         self.cli.status_bar.set_success("Database cleanup complete")
                 else:
                     self.cli.status_bar.set_success(
-                        "No orphaned items found - database is clean"
+                        "No issues found - database is clean"
                     )
 
             elif action == "help":
                 help_text = """Database Doctor Commands:
 
 /doctor                 - Run full diagnostic check
-/doctor diagnose        - Run full diagnostic check  
-/doctor clean           - Clean orphaned database records and PDF files
+/doctor clean           - Clean orphaned records, files, and rename PDFs to follow naming convention
 /doctor help            - Show this help
 
 The doctor command helps maintain database health by:
 • Checking database integrity and structure
 • Detecting orphaned association records and PDF files
+• Identifying papers with absolute PDF paths (should be relative)
 • Verifying system dependencies  
 • Checking terminal capabilities
-• Providing automated cleanup"""
+• Providing automated cleanup
+• Ensuring PDF filenames follow consistent naming rules
+
+PDF Filename Convention:
+• Format: {author_lastname}{year}{first_word}_{hash}.pdf
+• Example: smith2023learning_a1b2c3.pdf
+• Uses first author's last name, publication year, first significant word from title
+• Includes 6-character hash from PDF content for uniqueness"""
 
                 self.cli.show_help_dialog(help_text, "Database Doctor Help")
 
@@ -139,8 +161,7 @@ The doctor command helps maintain database health by:
         except Exception as e:
             self.show_error_panel_with_message(
                 "PaperCLI Doctor - Error",
-                f"Failed to run doctor command: {str(e)}",
-                f"Action: {action if 'action' in locals() else 'unknown'}\nError details: {traceback.format_exc()}",
+                f"Failed to run doctor command: {str(e)}\n\nAction: {action if 'action' in locals() else 'unknown'}\nError details: {traceback.format_exc()}",
             )
 
     def _show_doctor_report(self, report: dict):
@@ -184,6 +205,16 @@ The doctor command helps maintain database health by:
         if pdf_count > 0:
             lines.append(f"  Orphaned PDF files: {pdf_count}")
 
+        absolute_paths = report.get("absolute_pdf_paths", {}).get("summary", {})
+        absolute_count = absolute_paths.get("absolute_path_count", 0)
+        if absolute_count > 0:
+            lines.append(f"  Papers with absolute PDF paths: {absolute_count}")
+
+        missing_pdfs = report.get("missing_pdfs", {}).get("summary", {})
+        missing_count = missing_pdfs.get("missing_pdf_count", 0)
+        if missing_count > 0:
+            lines.append(f"  Papers with missing PDF files: {missing_count}")
+
         lines.extend(["", "💻 SYSTEM HEALTH:"])
         sys_checks = report["system_checks"]
         lines.append(f"  Python version: {sys_checks['python_version']}")
@@ -219,8 +250,8 @@ The doctor command helps maintain database health by:
             for rec in report["recommendations"]:
                 lines.append(f"  • {rec}")
 
-        if pc_count > 0 or pa_count > 0:
-            lines.extend(["", "🧹 To clean orphaned records, run: /doctor clean"])
+        if pc_count > 0 or pa_count > 0 or absolute_count > 0 or pdf_count > 0:
+            lines.extend(["", "🧹 To clean issues, run: /doctor clean"])
 
         report_text = "\n".join(lines)
 
@@ -431,7 +462,9 @@ The doctor command helps maintain database health by:
                 elif setting in ["disable", "off", "false"]:
                     self._set_auto_sync(False)
                 else:
-                    self.cli.status_bar.set_error("Use 'enable' or 'disable' for auto-sync")
+                    self.cli.status_bar.set_error(
+                        "Use 'enable' or 'disable' for auto-sync"
+                    )
 
         elif action == "show":
             self._show_all_config()
@@ -690,7 +723,7 @@ gpt-3.5-turbo                   - GPT-3.5 Turbo model (faster, cheaper)"""
         """Set the remote sync path."""
         # Expand user path
         expanded_path = os.path.expanduser(remote_path)
-        
+
         # Update environment variable
         os.environ["PAPERCLI_REMOTE_PATH"] = expanded_path
 
@@ -700,7 +733,9 @@ gpt-3.5-turbo                   - GPT-3.5 Turbo model (faster, cheaper)"""
 
         if self._write_env_file(env_vars):
             self.cli.status_bar.set_success(f"Remote sync path set to: {expanded_path}")
-            self._add_log("config_remote", f"Remote sync path changed to: {expanded_path}")
+            self._add_log(
+                "config_remote", f"Remote sync path changed to: {expanded_path}"
+            )
         else:
             self.cli.status_bar.set_error("Failed to save remote path to .env file")
 
@@ -713,7 +748,7 @@ gpt-3.5-turbo                   - GPT-3.5 Turbo model (faster, cheaper)"""
     def _set_auto_sync(self, enabled):
         """Set the auto-sync setting."""
         value = "true" if enabled else "false"
-        
+
         # Update environment variable
         os.environ["PAPERCLI_AUTO_SYNC"] = value
 
@@ -726,7 +761,9 @@ gpt-3.5-turbo                   - GPT-3.5 Turbo model (faster, cheaper)"""
             self.cli.status_bar.set_success(f"Auto-sync {status}")
             self._add_log("config_auto_sync", f"Auto-sync {status}")
         else:
-            self.cli.status_bar.set_error("Failed to save auto-sync setting to .env file")
+            self.cli.status_bar.set_error(
+                "Failed to save auto-sync setting to .env file"
+            )
 
     def _show_all_config(self):
         """Show all current configuration."""
@@ -777,199 +814,93 @@ To change settings:
 
         # Get local data directory
         local_path = os.path.dirname(self.cli.db_path)
-        
-        # Run sync synchronously but with progress updates
-        # The progress callback will update the status bar in real-time
+
+        # Check if already syncing
+        if getattr(self.cli, "is_syncing", False):
+            self.cli.status_bar.set_error("Sync already in progress")
+            return
+
         try:
+            # Set sync state to block other operations
+            self.cli.is_syncing = True
+
+            # Show initial progress message
             self.cli.status_bar.set_status("Starting sync operation...", "sync")
-            
-            # Create progress callback that updates UI
-            def progress_callback(percentage: int, message: str):
-                status_message = f"Sync {percentage}%: {message}"
-                self.cli.status_bar.set_status(status_message, "sync")
-                # Force UI update
-                if hasattr(self.cli, 'app') and self.cli.app:
-                    self.cli.app.invalidate()
-            
-            # Create sync service with progress tracking
-            sync_service = SyncService(local_path, remote_path, progress_callback=progress_callback)
-            
-            # Perform sync with conflict resolution
-            result = sync_service.sync(conflict_resolver=self._resolve_sync_conflicts)
-            
-            if result.cancelled:
-                self.cli.status_bar.set_status("Sync cancelled", "cancelled")
-                self._add_log("sync_cancelled", "Sync operation was cancelled by user")
-                return
-                
-            # Log the sync results
-            self._add_log("sync", result.get_summary())
-            
-            # Show summary dialog if manual sync
-            auto_sync = os.getenv("PAPERCLI_AUTO_SYNC", "false").lower() == "true"
-            if not auto_sync:
-                self._show_sync_summary(result)
-            else:
-                # For auto-sync, also log with auto-sync prefix
-                self._add_log("auto_sync", result.get_summary())
-                
-            # Update status
-            if result.errors:
-                self.cli.status_bar.set_error(f"Sync completed with errors: {result.errors[0]}")
-            elif result.has_conflicts():
-                self.cli.status_bar.set_status("Sync completed with conflicts resolved", "success")
-            else:
-                self.cli.status_bar.set_success("Sync completed successfully")
-                
+            self._add_log("sync_start", "Sync operation started")
+
+            # Run sync in background with progress updates
+            self._run_sync_with_progress(local_path, remote_path)
+
         except Exception as e:
             error_msg = f"Sync failed: {str(e)}"
             self.cli.status_bar.set_error(error_msg)
             self._add_log("sync_error", error_msg)
+        finally:
+            # Always reset sync state
+            self.cli.is_syncing = False
 
-    def _resolve_sync_conflicts(self, conflicts):
-        """Show conflict resolution dialog and return user choices."""
-        if not conflicts:
-            return {}
-        
-        # Create detailed conflict summary for the dialog
-        conflict_lines = [f"Found {len(conflicts)} sync conflicts that need resolution:", ""]
-        
-        for i, conflict in enumerate(conflicts, 1):
-            conflict_lines.append(f"Conflict {i}: {conflict.conflict_type.title()} #{conflict.item_id}")
-            conflict_lines.append("-" * 50)
-            
-            if conflict.conflict_type == "paper":
-                for field, diff in conflict.differences.items():
-                    local_val = str(diff['local'])[:100] + ("..." if len(str(diff['local'])) > 100 else "")
-                    remote_val = str(diff['remote'])[:100] + ("..." if len(str(diff['remote'])) > 100 else "")
-                    conflict_lines.append(f"Field: {field}")
-                    conflict_lines.append(f"  Local:  {local_val}")
-                    conflict_lines.append(f"  Remote: {remote_val}")
-                    conflict_lines.append("")
-                    
-            elif conflict.conflict_type == "pdf":
-                local_info = conflict.local_data
-                remote_info = conflict.remote_data
-                conflict_lines.append(f"PDF File: {conflict.item_id}")
-                conflict_lines.append(f"  Local:  Size={local_info.get('size', 0):,} bytes, Modified={local_info.get('modified', 'Unknown')}")
-                conflict_lines.append(f"  Remote: Size={remote_info.get('size', 0):,} bytes, Modified={remote_info.get('modified', 'Unknown')}")
-                conflict_lines.append(f"  Local MD5:  {local_info.get('hash', 'Unknown')}")
-                conflict_lines.append(f"  Remote MD5: {remote_info.get('hash', 'Unknown')}")
-                conflict_lines.append("")
-            
-            conflict_lines.append("")
-        
-        conflict_lines.extend([
-            "RESOLUTION OPTIONS:",
-            "",
-            "Press ENTER to continue and auto-resolve conflicts:",
-            "• LOCAL versions will be kept (safer option)",
-            "• Remote changes will be discarded",
-            "• You can review changes in the sync summary",
-            "",
-            "Press ESC to cancel sync operation.",
-            "",
-            "Note: Interactive conflict resolution will be added in future versions."
-        ])
-        
-        conflict_text = "\n".join(conflict_lines)
-        
-        # Show conflict details and wait for user confirmation
-        self.cli.show_help_dialog(conflict_text, f"Sync Conflicts Found ({len(conflicts)} conflicts)")
-        
-        # Log the conflicts for debugging
-        self._add_log("sync_conflicts", f"Found {len(conflicts)} sync conflicts that will be auto-resolved by keeping local versions")
-        
-        # Auto-resolve all conflicts by keeping local versions for safety
-        resolutions = {}
-        for conflict in conflicts:
-            conflict_id = f"{conflict.conflict_type}_{conflict.item_id}"
-            resolutions[conflict_id] = "local"
-            # Log each conflict resolution
-            self._add_log("sync_conflict_resolved", f"Conflict {conflict.conflict_type} #{conflict.item_id}: kept local version")
-            
-        return resolutions
+    def _run_sync_with_progress(self, local_path, remote_path):
+        """Show centered progress dialog using SyncProgressDialog."""
+        # Prevent multiple sync dialogs
+        if hasattr(self.cli, "sync_dialog") and self.cli.sync_dialog is not None:
+            self.cli.status_bar.set_warning("Sync is already in progress")
+            return
 
-    def _show_sync_summary(self, result):
-        """Show sync summary dialog."""
-        # Use the existing help dialog system instead of creating new application
-        summary_text = self._format_sync_summary(result)
-        self.cli.show_help_dialog(summary_text, "Sync Operation Summary")
-        
-    def _format_sync_summary(self, result):
-        """Format sync summary as text."""
-        lines = []
-        
-        # Overall status
-        if result.cancelled:
-            lines.append("❌ Sync was cancelled")
-            lines.append("\nNo changes were made to local or remote data.")
-            return "\n".join(lines)
-            
-        if result.errors:
-            lines.append("❌ Sync completed with errors")
-            lines.append("")
-            for error in result.errors:
-                lines.append(f"Error: {error}")
-            lines.append("")
-            
-        if not result.errors and not result.has_conflicts():
-            lines.append("✅ Sync completed successfully")
-            lines.append("")
-            
-        # Changes summary
-        changes = result.changes_applied
-        total_changes = sum(changes.values())
-        
-        if total_changes == 0:
-            lines.append("No changes were needed - local and remote are in sync.")
-        else:
-            lines.append("Changes Applied:")
-            lines.append("")
-            
-            # Show detailed changes if available
-            detailed_changes = getattr(result, 'detailed_changes', None)
-            
-            if changes['papers_added'] > 0:
-                lines.append(f"📄 Papers Added ({changes['papers_added']}):")
-                if detailed_changes and 'papers_added' in detailed_changes:
-                    for paper_title in detailed_changes['papers_added'][:10]:  # Limit to first 10
-                        lines.append(f"  • {paper_title}")
-                    if len(detailed_changes['papers_added']) > 10:
-                        lines.append(f"  • ... and {len(detailed_changes['papers_added']) - 10} more")
-                lines.append("")
-                
-            if changes['papers_updated'] > 0:
-                lines.append(f"📝 Papers Updated ({changes['papers_updated']}):")
-                if detailed_changes and 'papers_updated' in detailed_changes:
-                    for paper_title in detailed_changes['papers_updated'][:10]:
-                        lines.append(f"  • {paper_title}")
-                    if len(detailed_changes['papers_updated']) > 10:
-                        lines.append(f"  • ... and {len(detailed_changes['papers_updated']) - 10} more")
-                lines.append("")
-                
-            if changes['collections_added'] > 0:
-                lines.append(f"📁 Collections Added ({changes['collections_added']}):")
-                if detailed_changes and 'collections_added' in detailed_changes:
-                    for collection_name in detailed_changes['collections_added']:
-                        lines.append(f"  • {collection_name}")
-                lines.append("")
-                
-            if changes['collections_updated'] > 0:
-                lines.append(f"📂 Collections Updated ({changes['collections_updated']}):")
-                if detailed_changes and 'collections_updated' in detailed_changes:
-                    for collection_name in detailed_changes['collections_updated']:
-                        lines.append(f"  • {collection_name}")
-                lines.append("")
-                
-            if changes['pdfs_copied'] > 0:
-                lines.append(f"📎 PDF Files Synchronized: {changes['pdfs_copied']}")
-                lines.append("")
-                
-        # Conflicts resolved
-        if result.has_conflicts():
-            lines.append("")
-            lines.append(f"⚠️  {len(result.conflicts)} conflicts were auto-resolved")
-            lines.append("Local versions were kept for safety.")
-            
-        return "\n".join(lines)
+        from prompt_toolkit.layout.containers import Float
+
+        from ...dialogs.sync import SyncProgressDialog
+
+        def callback(result):
+            """Called when sync dialog is closed."""
+            # Remove dialog from floats
+            if (
+                hasattr(self.cli, "sync_float")
+                and self.cli.sync_float in self.cli.app.layout.container.floats
+            ):
+                self.cli.app.layout.container.floats.remove(self.cli.sync_float)
+            self.cli.sync_dialog = None
+            self.cli.sync_float = None
+
+            # Focus back to input
+            self.cli.app.layout.focus(self.cli.input_buffer)
+
+            # Handle result
+            if result:
+                # Status bar is already updated by the dialog, just handle post-sync actions
+                # Reload papers after successful sync
+                if hasattr(self.cli, "load_papers"):
+                    self.cli.load_papers()
+                self._add_log("sync", result.get_summary())
+            else:
+                self.cli.status_bar.set_status("Sync cancelled", "cancelled")
+
+            self.cli.app.invalidate()
+
+        # Create status updater function
+        def status_updater(message, status_type):
+            if status_type == "error":
+                self.cli.status_bar.set_error(message)
+            elif status_type == "success":
+                self.cli.status_bar.set_success(message)
+            else:
+                self.cli.status_bar.set_status(message, status_type)
+
+        # Create and show sync dialog as a float
+        self.cli.sync_dialog = SyncProgressDialog(
+            callback,
+            local_path,
+            remote_path,
+            status_updater,
+            log_callback=self._add_log,
+        )
+        self.cli.sync_float = Float(self.cli.sync_dialog.dialog)
+
+        # Apply dialog key bindings to the float container to make it truly modal
+        if hasattr(self.cli.sync_dialog, "key_bindings"):
+            self.cli.sync_float.key_bindings = self.cli.sync_dialog.key_bindings
+
+        self.cli.app.layout.container.floats.append(self.cli.sync_float)
+        self.cli.app.layout.focus(
+            self.cli.sync_dialog.get_initial_focus() or self.cli.sync_dialog.dialog
+        )
+        self.cli.app.invalidate()

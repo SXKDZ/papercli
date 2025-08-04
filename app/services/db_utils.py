@@ -1,12 +1,18 @@
 """Database utility functions to reduce session boilerplate."""
 
 from contextlib import contextmanager
-from typing import Any, Callable, List, Optional, Type
+from typing import Any
+from typing import Callable
+from typing import List
+from typing import Optional
+from typing import Type
 
 from sqlalchemy.orm import Session
 
 from ..db.database import get_db_session
-from ..db.models import Author, Collection, Paper
+from ..db.models import Author
+from ..db.models import Collection
+from ..db.models import Paper
 
 
 class DatabaseHelper:

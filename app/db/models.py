@@ -3,11 +3,20 @@ Database models for PaperCLI using SQLAlchemy ORM.
 """
 
 from datetime import datetime
-from typing import List, Optional
+from typing import List
+from typing import Optional
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Table, Text
+from sqlalchemy import Column
+from sqlalchemy import DateTime
+from sqlalchemy import ForeignKey
+from sqlalchemy import Integer
+from sqlalchemy import String
+from sqlalchemy import Table
+from sqlalchemy import Text
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped
+from sqlalchemy.orm import mapped_column
+from sqlalchemy.orm import relationship
 
 Base = declarative_base()
 

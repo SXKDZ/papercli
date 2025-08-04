@@ -7,14 +7,14 @@ from typing import List
 from prompt_toolkit.document import Document
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.layout.containers import Float
-from prompt_toolkit.widgets import Button, Dialog, Label
+from prompt_toolkit.widgets import Button
+from prompt_toolkit.widgets import Dialog
+from prompt_toolkit.widgets import Label
 
 from ...dialogs import EditDialog
-from ...services import (
-    LLMSummaryService,
-    PDFMetadataExtractionService,
-    normalize_paper_data,
-)
+from ...services import LLMSummaryService
+from ...services import PDFMetadataExtractionService
+from ...services import normalize_paper_data
 from .base import BaseCommandHandler
 
 
@@ -136,7 +136,7 @@ class PaperCommandHandler(BaseCommandHandler):
                             f"Updated '{field}' for paper '{paper.title}'. From '{old_value}' to '{value}'",
                         )
                         updated_count += 1
-                        
+
                         # Trigger auto-sync if enabled
                         self.cli.trigger_auto_sync_if_enabled()
                     except Exception as e:
@@ -157,7 +157,7 @@ class PaperCommandHandler(BaseCommandHandler):
 
         except Exception as e:
             self.show_error_panel_with_message(
-                "Update Error", f"Failed to update papers", traceback.format_exc()
+                "Update Error", f"Failed to update papers\n\n{traceback.format_exc()}"
             )
 
     def handle_delete_command(self):
@@ -194,11 +194,11 @@ class PaperCommandHandler(BaseCommandHandler):
             self.cli.app.invalidate()
 
         paper_titles = [
-            paper.title[:50] + "..." if len(paper.title) > 50 else paper.title
+            paper.title[:70] + "..." if len(paper.title) > 70 else paper.title
             for paper in papers_to_delete
         ]
         dialog_text = (
-            f"Are you sure you want to delete {len(papers_to_delete)} papers?\n\n"
+            f"Are you sure you want to delete {len(papers_to_delete)} paper{'s' if len(papers_to_delete) != 1 else ''}?\n\n"
             + "\n".join(f"• {title}" for title in paper_titles[:5])
             + (
                 f"\n... and {len(paper_titles) - 5} more"
@@ -220,7 +220,7 @@ class PaperCommandHandler(BaseCommandHandler):
 
         confirmation_dialog = Dialog(
             title="Confirm Deletion",
-            body=Label(text=dialog_text, dont_extend_height=True),
+            body=Label(text=dialog_text, dont_extend_height=False, wrap_lines=True),
             buttons=[
                 Button(text="Yes", handler=cleanup_delete),
                 Button(text="No", handler=cleanup_cancel),
@@ -256,17 +256,22 @@ class PaperCommandHandler(BaseCommandHandler):
             opened_count = 0
             for paper in papers_to_open:
                 if paper.pdf_path:
-                    success, error_msg = self.cli.system_service.open_pdf(
-                        paper.pdf_path
-                    )
+                    # Resolve PDF path against data directory if it's relative
+                    pdf_path = paper.pdf_path
+                    if not os.path.isabs(pdf_path):
+                        # Get data directory from CLI's db_path
+                        data_dir = os.path.dirname(self.cli.db_path)
+                        # Always put PDFs in the pdfs/ subdirectory
+                        pdf_path = os.path.join(data_dir, "pdfs", pdf_path)
+
+                    success, error_msg = self.cli.system_service.open_pdf(pdf_path)
                     if success:
                         opened_count += 1
                     else:
                         # Show detailed error in error panel instead of just status bar
                         self.show_error_panel_with_message(
                             "PDF Viewer Error",
-                            f"Failed to open PDF for: {paper.title}",
-                            error_msg,
+                            f"Failed to open PDF for: {paper.title}\n\n{error_msg}",
                         )
                         break  # Show only first error
                 else:
@@ -277,14 +282,7 @@ class PaperCommandHandler(BaseCommandHandler):
 
             if opened_count > 0:
                 self.cli.status_bar.set_success(f"Opened {opened_count} PDF(s)")
-            elif (
-                opened_count == 0
-                and len(papers_to_open) == 1
-                and not papers_to_open[0].pdf_path
-            ):
-                # This case is already handled above, so this is for clarity
-                pass
-            else:
+            elif opened_count == 0 and len(papers_to_open) > 1:
                 self.cli.status_bar.set_error(
                     "No PDFs found to open for the selected paper(s)"
                 )
@@ -311,8 +309,7 @@ class PaperCommandHandler(BaseCommandHandler):
         except Exception as e:
             self.show_error_panel_with_message(
                 "Detail View Error",
-                "Could not display paper details.",
-                traceback.format_exc(),
+                f"Could not display paper details.\n\n{traceback.format_exc()}",
             )
 
     def _add_arxiv_paper(self, arxiv_id: str):
@@ -325,8 +322,7 @@ class PaperCommandHandler(BaseCommandHandler):
             if error:
                 self.show_error_panel_with_message(
                     "Add arXiv Paper Error",
-                    f"Failed to add arXiv paper: {arxiv_id}",
-                    str(error),
+                    f"Failed to add arXiv paper: {arxiv_id}\n\n{error}",
                 )
                 return
 
@@ -377,8 +373,7 @@ class PaperCommandHandler(BaseCommandHandler):
             if error:
                 self.show_error_panel_with_message(
                     "Add DBLP Paper Error",
-                    f"Failed to add DBLP paper: {dblp_url}",
-                    str(error),
+                    f"Failed to add DBLP paper: {dblp_url}\n\n{error}",
                 )
                 return
 
@@ -404,8 +399,7 @@ class PaperCommandHandler(BaseCommandHandler):
             if error:
                 self.show_error_panel_with_message(
                     "Add OpenReview Paper Error",
-                    f"Failed to add OpenReview paper: {openreview_id}",
-                    str(error),
+                    f"Failed to add OpenReview paper: {openreview_id}\n\n{error}",
                 )
                 return
 
@@ -461,8 +455,7 @@ class PaperCommandHandler(BaseCommandHandler):
             if error:
                 self.show_error_panel_with_message(
                     "Add DOI Paper Error",
-                    f"Failed to add DOI paper: {doi}",
-                    str(error),
+                    f"Failed to add DOI paper: {doi}\n\n{error}",
                 )
                 return
 
@@ -488,8 +481,7 @@ class PaperCommandHandler(BaseCommandHandler):
             if error:
                 self.show_error_panel_with_message(
                     "Add PDF Paper Error",
-                    f"Failed to add PDF paper: {pdf_path}",
-                    str(error),
+                    f"Failed to add PDF paper: {pdf_path}\n\n{error}",
                 )
                 return
 
@@ -515,8 +507,7 @@ class PaperCommandHandler(BaseCommandHandler):
             if error:
                 self.show_error_panel_with_message(
                     "Add BibTeX Papers Error",
-                    f"Failed to process BibTeX file: {bib_path}",
-                    str(error),
+                    f"Failed to process BibTeX file: {bib_path}\n\n{error}",
                 )
                 return
 
@@ -572,8 +563,7 @@ class PaperCommandHandler(BaseCommandHandler):
             if error:
                 self.show_error_panel_with_message(
                     "Add RIS Papers Error",
-                    f"Failed to process RIS file: {ris_path}",
-                    str(error),
+                    f"Failed to process RIS file: {ris_path}\n\n{error}",
                 )
                 return
 
@@ -660,8 +650,7 @@ class PaperCommandHandler(BaseCommandHandler):
         except Exception as e:
             self.show_error_panel_with_message(
                 "Add Manual Paper Error",
-                "Failed to add manual paper",
-                traceback.format_exc(),
+                f"Failed to add manual paper\n\n{traceback.format_exc()}",
             )
 
     def _show_edit_dialog(self, papers):
@@ -669,7 +658,6 @@ class PaperCommandHandler(BaseCommandHandler):
             papers = [papers]
 
         def callback(result):
-            # This callback is executed when the dialog is closed.
             if self.cli.edit_float in self.cli.app.layout.container.floats:
                 self.cli.app.layout.container.floats.remove(self.cli.edit_float)
             self.cli.edit_dialog = None
@@ -691,8 +679,7 @@ class PaperCommandHandler(BaseCommandHandler):
                             if "PDF processing failed" in error:
                                 self.show_error_panel_with_message(
                                     "PDF Processing Error",
-                                    f"Failed to process PDF for '{paper.title}'",
-                                    error,
+                                    f"Failed to process PDF for '{paper.title}'\n\n{error}",
                                 )
                         else:
                             updated_count += 1
@@ -707,8 +694,7 @@ class PaperCommandHandler(BaseCommandHandler):
                 except Exception as e:
                     self.show_error_panel_with_message(
                         "Update Error",
-                        "Failed to update paper(s)",
-                        traceback.format_exc(),
+                        f"Failed to update paper(s)\n\n{traceback.format_exc()}",
                     )
             else:
                 self.cli.status_bar.set_status("Update cancelled.")
@@ -855,7 +841,12 @@ class PaperCommandHandler(BaseCommandHandler):
             if paper.url:
                 lines.append(f"URL:          {paper.url}")
             if paper.pdf_path:
-                lines.append(f"PDF Path:     {paper.pdf_path}")
+                # Show full absolute path instead of relative path
+                from ...services.pdf import PDFManager
+
+                pdf_manager = PDFManager()
+                full_path = pdf_manager.get_absolute_path(paper.pdf_path)
+                lines.append(f"PDF Path:     {full_path}")
             lines.append(f"Added:        {added_date_str}")
             lines.append(f"Modified:     {modified_date_str}")
             lines.append("")

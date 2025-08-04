@@ -2,13 +2,19 @@
 
 import os
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Optional
 
 from sqlalchemy import text
 from sqlalchemy.orm import joinedload
 
 from ..db.database import get_db_session
-from ..db.models import Author, Collection, Paper, PaperAuthor
+from ..db.models import Author
+from ..db.models import Collection
+from ..db.models import Paper
+from ..db.models import PaperAuthor
 
 
 class PaperService:
@@ -17,8 +23,6 @@ class PaperService:
     def get_all_papers(self) -> List[Paper]:
         """Get all papers ordered by added date (newest first)."""
         with get_db_session() as session:
-
-            # Eagerly load relationships to avoid detached instance errors
             papers = (
                 session.query(Paper)
                 .options(
@@ -29,12 +33,10 @@ class PaperService:
                 .all()
             )
 
-            # Force load all relationships while in session
             for paper in papers:
-                _ = paper.paper_authors  # Force load paper_authors
-                _ = paper.collections  # Force load collections
+                _ = paper.paper_authors
+                _ = paper.collections
 
-            # Expunge all objects to make them detached but accessible
             session.expunge_all()
 
             return papers
@@ -42,7 +44,6 @@ class PaperService:
     def get_paper_by_id(self, paper_id: int) -> Optional[Paper]:
         """Get paper by ID."""
         with get_db_session() as session:
-
             paper = (
                 session.query(Paper)
                 .options(
@@ -54,14 +55,11 @@ class PaperService:
             )
 
             if paper:
-                # Force load relationships while in session
                 _ = paper.paper_authors
-                # Force load authors within each paper_author
                 for paper_author in paper.paper_authors:
                     _ = paper_author.author
                 _ = paper.collections
 
-                # Expunge to make detached but accessible
                 session.expunge_all()
 
             return paper
@@ -93,14 +91,11 @@ class PaperService:
             pdf_error = ""
 
             try:
-                # Handle PDF path processing if present
                 if "pdf_path" in paper_data and paper_data["pdf_path"]:
-                    # Import here to avoid circular imports
-                    from .pdf_service import PDFManager
+                    from .pdf import PDFManager
 
                     pdf_manager = PDFManager()
 
-                    # Create paper data for filename generation
                     current_paper_data = {
                         "title": paper_data.get("title", paper.title),
                         "authors": (
@@ -117,24 +112,18 @@ class PaperService:
 
                     if error:
                         pdf_error = f"PDF processing failed: {error}"
-                        # Remove pdf_path from update data to prevent invalid path from being saved
                         paper_data.pop("pdf_path")
-                        # Return immediately with the PDF error
                         return None, pdf_error
                     else:
                         paper_data["pdf_path"] = new_pdf_path
 
-                # Handle relationships by merging the detached objects from the dialog
-                # into the current session. This avoids primary key conflicts.
                 if "authors" in paper_data:
                     authors = paper_data.pop("authors")
-                    # Delete existing paper_authors manually to avoid cascade issues
                     session.query(PaperAuthor).filter(
                         PaperAuthor.paper_id == paper.id
                     ).delete()
-                    session.flush()  # Ensure deletions are committed before adding new ones
+                    session.flush()
 
-                    # Add authors in order with position tracking
                     for position, author in enumerate(authors):
                         merged_author = session.merge(author)
                         paper_author = PaperAuthor(
@@ -148,7 +137,6 @@ class PaperService:
                         session.merge(collection) for collection in collections
                     ]
 
-                # Update remaining attributes
                 for key, value in paper_data.items():
                     if hasattr(paper, key):
                         setattr(paper, key, value)
@@ -157,14 +145,12 @@ class PaperService:
                 session.commit()
                 session.refresh(paper)
 
-                # Force load relationships before expunging
-                _ = paper.paper_authors  # Force load paper_authors
+                _ = paper.paper_authors
                 for pa in paper.paper_authors:
-                    _ = pa.author  # Force load each author
-                    _ = pa.position  # Force load position
-                _ = paper.collections  # Force load collections
+                    _ = pa.author
+                    _ = pa.position
+                _ = paper.collections
 
-                # Expunge to follow the detached object pattern used elsewhere in the app
                 session.expunge(paper)
 
                 return paper, pdf_error
@@ -183,7 +169,6 @@ class PaperService:
                     try:
                         os.remove(paper.pdf_path)
                     except Exception:
-                        # Log this error, but don't prevent db deletion
                         pass
 
                 session.delete(paper)
@@ -205,7 +190,6 @@ class PaperService:
                     try:
                         os.remove(paper.pdf_path)
                     except Exception:
-                        # Log this error, but don't prevent db deletion
                         pass
                 session.delete(paper)
 
@@ -220,8 +204,6 @@ class PaperService:
     ) -> Paper:
         """Add paper with authors and collections."""
         with get_db_session() as session:
-
-            # Check for existing paper by preprint ID, DOI, or title
             existing_paper = None
             if paper_data.get("preprint_id"):
                 existing_paper = (
@@ -245,16 +227,14 @@ class PaperService:
                     f"Paper already exists in database (ID: {existing_paper.id})"
                 )
 
-            # Create paper
             paper = Paper()
             for key, value in paper_data.items():
                 if hasattr(paper, key) and value is not None:
                     setattr(paper, key, value)
 
             session.add(paper)
-            session.flush()  # Get the paper ID without committing
+            session.flush()
 
-            # Add authors with position tracking
             for position, author_name in enumerate(authors):
                 author = (
                     session.query(Author)
@@ -264,14 +244,13 @@ class PaperService:
                 if not author:
                     author = Author(full_name=author_name)
                     session.add(author)
-                    session.flush()  # Ensure author has an ID
+                    session.flush()
 
                 paper_author = PaperAuthor(
                     paper=paper, author=author, position=position
                 )
                 session.add(paper_author)
 
-            # Add collections
             if collections:
                 for collection_name in collections:
                     collection = (
@@ -282,9 +261,7 @@ class PaperService:
                     if not collection:
                         collection = Collection(name=collection_name)
                         session.add(collection)
-                        session.flush()  # Ensure collection has an ID
-
-                    # Double-check for existing association in the database
+                        session.flush()
 
                     existing_association = session.execute(
                         text(
@@ -299,7 +276,6 @@ class PaperService:
             session.commit()
             session.refresh(paper)
 
-            # Create a new query with eager loading to get a properly attached instance
             paper_with_relationships = (
                 session.query(Paper)
                 .options(
@@ -310,11 +286,9 @@ class PaperService:
                 .first()
             )
 
-            # Force load all relationships while still in session
             _ = paper_with_relationships.paper_authors
             _ = paper_with_relationships.collections
 
-            # Expunge to make detached but accessible
             session.expunge_all()
 
             return paper_with_relationships

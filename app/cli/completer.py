@@ -2,7 +2,8 @@
 
 from typing import TYPE_CHECKING
 
-from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.completion import Completer
+from prompt_toolkit.completion import Completion
 
 if TYPE_CHECKING:
     from .main import PaperCLI
@@ -152,8 +153,7 @@ class SmartCompleter(Completer):
             "/doctor": {
                 "description": "Diagnose and fix database/system issues",
                 "subcommands": {
-                    "diagnose": "Run full diagnostic check",
-                    "clean": "Clean orphaned database records",
+                    "clean": "Clean orphaned database records and PDF files",
                     "help": "Show doctor command help",
                 },
             },
