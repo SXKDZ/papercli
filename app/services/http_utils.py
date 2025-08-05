@@ -1,9 +1,6 @@
 """HTTP utility functions for making web requests with consistent error handling."""
 
-from typing import Any
-from typing import Dict
-from typing import Optional
-from typing import Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import requests
 

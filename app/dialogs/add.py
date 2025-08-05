@@ -6,18 +6,16 @@ from typing import Callable
 
 from prompt_toolkit.application import get_app
 from prompt_toolkit.filters import Condition
-from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.key_binding import merge_key_bindings
-from prompt_toolkit.layout.containers import ConditionalContainer
-from prompt_toolkit.layout.containers import HSplit
-from prompt_toolkit.layout.containers import VSplit
-from prompt_toolkit.layout.containers import Window
+from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
+from prompt_toolkit.layout.containers import (
+    ConditionalContainer,
+    HSplit,
+    VSplit,
+    Window,
+)
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
-from prompt_toolkit.widgets import Button
-from prompt_toolkit.widgets import Dialog
-from prompt_toolkit.widgets import RadioList
-from prompt_toolkit.widgets import TextArea
+from prompt_toolkit.widgets import Button, Dialog, RadioList, TextArea
 
 
 class AddDialog:

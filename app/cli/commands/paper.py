@@ -7,14 +7,15 @@ from typing import List
 from prompt_toolkit.document import Document
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.layout.containers import Float
-from prompt_toolkit.widgets import Button
-from prompt_toolkit.widgets import Dialog
-from prompt_toolkit.widgets import Label
+from prompt_toolkit.widgets import Button, Dialog, Label
 
 from ...dialogs import EditDialog
-from ...services import LLMSummaryService
-from ...services import PDFMetadataExtractionService
-from ...services import normalize_paper_data
+from ...services import (
+    LLMSummaryService,
+    PDFMetadataExtractionService,
+    normalize_paper_data,
+)
+from ...services.pdf import PDFManager
 from .base import BaseCommandHandler
 
 
@@ -178,6 +179,10 @@ class PaperCommandHandler(BaseCommandHandler):
                 paper_titles = [paper.title for paper in papers_to_delete]
                 deleted_count = self.cli.paper_service.delete_papers(paper_ids)
                 self.load_papers()
+                
+                # Clear selection after deletion to prevent deleted papers from staying selected if they're restored
+                if self.cli.in_select_mode:
+                    self.cli.paper_list_control.selected_paper_ids.clear()
                 self._add_log(
                     "delete",
                     f"Deleted {deleted_count} paper(s): {', '.join(paper_titles)}",
@@ -755,14 +760,17 @@ class PaperCommandHandler(BaseCommandHandler):
     def _handle_extract_pdf_command(self, papers):
         """Handle /edit extract-pdf command to extract metadata from PDF(s)."""
         # Filter papers that have PDFs
-        papers_with_pdfs = [
-            paper
-            for paper in papers
-            if paper.pdf_path and os.path.exists(paper.pdf_path)
-        ]
+        pdf_manager = PDFManager()
+        papers_with_pdfs = []
+
+        for paper in papers:
+            if paper.pdf_path:
+                absolute_path = pdf_manager.get_absolute_path(paper.pdf_path)
+                if os.path.exists(absolute_path):
+                    papers_with_pdfs.append(paper)
 
         if not papers_with_pdfs:
-            self.cli.status_bar.set_status("No papers have PDF files to extract from")
+            self.cli.status_bar.set_error("No papers have PDF files to extract from")
             return
 
         # Create the extraction service and run with confirmation
@@ -786,11 +794,15 @@ class PaperCommandHandler(BaseCommandHandler):
             background_service=self.cli.background_service,
             log_callback=self._add_log,
         )
-        summary_service.generate_summaries(
+        result = summary_service.generate_summaries(
             papers=papers,
             operation_prefix="summarize",
             on_all_complete=lambda tracking: self.load_papers(),
         )
+
+        # If no papers with PDFs found, show error in status bar
+        if result is None:
+            self.cli.status_bar.set_error("No papers have PDF files to summarize")
 
     def _format_paper_details(self, papers: List) -> str:
         """Format metadata for one or more papers into a string."""

@@ -5,9 +5,7 @@ import os
 import re
 import secrets
 import shutil
-from typing import Any
-from typing import Dict
-from typing import Tuple
+from typing import Any, Dict, Tuple
 
 from ..db.database import get_pdf_directory
 from .http_utils import HTTPClient

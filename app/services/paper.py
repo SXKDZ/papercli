@@ -2,19 +2,13 @@
 
 import os
 from datetime import datetime
-from typing import Any
-from typing import Dict
-from typing import List
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy import text
 from sqlalchemy.orm import joinedload
 
 from ..db.database import get_db_session
-from ..db.models import Author
-from ..db.models import Collection
-from ..db.models import Paper
-from ..db.models import PaperAuthor
+from ..db.models import Author, Collection, Paper, PaperAuthor
 
 
 class PaperService:

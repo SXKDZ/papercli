@@ -5,9 +5,7 @@ import os
 import re
 import tempfile
 import xml.etree.ElementTree as ET
-from typing import Any
-from typing import Dict
-from typing import List
+from typing import Any, Dict, List
 
 import bibtexparser
 import PyPDF2
@@ -16,11 +14,9 @@ import rispy
 from openai import OpenAI
 from titlecase import titlecase
 
-from ..prompts import MetadataPrompts
-from ..prompts import SummaryPrompts
+from ..prompts import MetadataPrompts, SummaryPrompts
 from .http_utils import HTTPClient
-from .utils import fix_broken_lines
-from .utils import normalize_paper_data
+from .utils import fix_broken_lines, normalize_paper_data
 
 
 class MetadataExtractor:
@@ -499,6 +495,10 @@ Respond in this exact JSON format:
     def extract_from_pdf(self, pdf_path: str) -> Dict[str, Any]:
         """Extract metadata from PDF file using LLM analysis of first two pages."""
         try:
+            from .pdf import PDFManager
+
+            pdf_manager = PDFManager()
+            pdf_path = pdf_manager.get_absolute_path(pdf_path)
 
             with open(pdf_path, "rb") as file:
                 pdf_reader = PyPDF2.PdfReader(file)
@@ -614,6 +614,11 @@ Respond in this exact JSON format:
     def generate_paper_summary(self, pdf_path: str) -> str:
         """Generate an academic summary of the paper using LLM analysis of the full text."""
         try:
+            from .pdf import PDFManager
+
+            pdf_manager = PDFManager()
+            pdf_path = pdf_manager.get_absolute_path(pdf_path)
+
             with open(pdf_path, "rb") as file:
                 pdf_reader = PyPDF2.PdfReader(file)
 

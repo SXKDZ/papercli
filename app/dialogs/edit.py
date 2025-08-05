@@ -3,30 +3,24 @@ Custom dialog for editing paper metadata in a full-window form with paper type b
 """
 
 import os
-from typing import Any
-from typing import Callable
-from typing import Dict
-from typing import List
+from typing import Any, Callable, Dict, List
 
 from prompt_toolkit.application import get_app
-from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.key_binding import merge_key_bindings
+from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
 from prompt_toolkit.layout import ScrollablePane
-from prompt_toolkit.layout.containers import HSplit
-from prompt_toolkit.layout.containers import VSplit
-from prompt_toolkit.layout.containers import Window
-from prompt_toolkit.layout.containers import WindowAlign
+from prompt_toolkit.layout.containers import HSplit, VSplit, Window, WindowAlign
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
-from prompt_toolkit.widgets import Button
-from prompt_toolkit.widgets import Dialog
-from prompt_toolkit.widgets import TextArea
+from prompt_toolkit.widgets import Button, Dialog, TextArea
 
-from ..services import AuthorService
-from ..services import BackgroundOperationService
-from ..services import CollectionService
-from ..services import MetadataExtractor
-from ..services import normalize_paper_data
+from ..services import (
+    AuthorService,
+    BackgroundOperationService,
+    CollectionService,
+    MetadataExtractor,
+    normalize_paper_data,
+)
+from ..services.pdf import PDFManager
 
 
 class EditDialog:
@@ -52,6 +46,7 @@ class EditDialog:
         self.background_service = BackgroundOperationService(
             status_bar=self.status_bar, log_callback=self.log_callback
         )
+        self.pdf_manager = PDFManager()
         self.read_only_fields = read_only_fields or []
 
         # Track fields that have been changed by Extract/Summarize operations
@@ -165,10 +160,7 @@ class EditDialog:
         if not pdf_path:
             return ""
 
-        from ..services.pdf import PDFManager
-
-        pdf_manager = PDFManager()
-        return pdf_manager.get_absolute_path(pdf_path)
+        return self.pdf_manager.get_absolute_path(pdf_path)
 
     def _create_input_fields(self):
         """Create input fields for fields visible in the current paper type."""
@@ -525,11 +517,20 @@ class EditDialog:
     def _handle_extract_pdf(self):
         """Handle Extract PDF button press."""
         pdf_path = self.paper_data.get("pdf_path")
-        if not pdf_path or not os.path.exists(pdf_path):
+        if not pdf_path:
             self.error_display_callback(
                 "Extract PDF Error",
-                "No PDF file available for this paper.",
-                "Please ensure the paper has an associated PDF and the file exists.",
+                "No PDF file path specified for this paper.",
+            )
+            return
+
+        original_path = pdf_path
+        pdf_path = self.pdf_manager.get_absolute_path(pdf_path)
+
+        if not os.path.exists(pdf_path):
+            self.error_display_callback(
+                "Extract PDF Error",
+                f"PDF file not found. Original path: '{original_path}', Resolved path: '{pdf_path}'. Please ensure the file exists.",
             )
             return
 
@@ -696,11 +697,20 @@ class EditDialog:
     def _handle_summarize(self):
         """Handle Summarize button press."""
         pdf_path = self.paper_data.get("pdf_path")
-        if not pdf_path or not os.path.exists(pdf_path):
+        if not pdf_path:
             self.error_display_callback(
                 "Summarize Error",
-                "No PDF file available for this paper.",
-                "Please ensure the paper has an associated PDF and the file exists.",
+                "No PDF file path specified for this paper.",
+            )
+            return
+
+        original_path = pdf_path
+        pdf_path = self.pdf_manager.get_absolute_path(pdf_path)
+
+        if not os.path.exists(pdf_path):
+            self.error_display_callback(
+                "Summarize Error",
+                f"PDF file not found. Original path: '{original_path}', Resolved path: '{pdf_path}'. Please ensure the file exists.",
             )
             return
 
@@ -892,11 +902,18 @@ class EditDialog:
 
         @kb.add("c-k")
         def _(event):
-            # Cut text from cursor to end of line
+            # Cut text from cursor to end of line, or delete empty line
             current_control = event.app.layout.current_control
             if hasattr(current_control, "buffer"):
                 buffer = current_control.buffer
-                buffer.delete(count=len(buffer.document.current_line_after_cursor))
+                current_line = buffer.document.current_line
+
+                # If the line is empty, delete the entire line
+                if not current_line.strip():
+                    buffer.delete_line()
+                else:
+                    # Otherwise, delete from cursor to end of line
+                    buffer.delete(count=len(buffer.document.current_line_after_cursor))
 
         self.body_container.key_bindings = merge_key_bindings(
             [self.body_container.key_bindings or KeyBindings(), kb]

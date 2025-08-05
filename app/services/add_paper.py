@@ -1,10 +1,7 @@
 """Service for adding papers from various sources."""
 
 import os
-from typing import Any
-from typing import Dict
-from typing import List
-from typing import Tuple
+from typing import Any, Dict, List, Tuple
 
 from ..db.database import get_pdf_directory
 from ..db.models import Paper

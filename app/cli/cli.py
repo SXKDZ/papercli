@@ -2,37 +2,36 @@
 
 import traceback
 from datetime import datetime
-from typing import List
-from typing import Optional
+from typing import List, Optional
 
 from prompt_toolkit.document import Document
 from prompt_toolkit.layout.containers import Float
 
 from ..db.models import Paper
-from ..dialogs import AddDialog
-from ..dialogs import FilterDialog
-from ..dialogs import SortDialog
-from ..services import AddPaperService
-from ..services import AuthorService
-from ..services import BackgroundOperationService
-from ..services import ChatService
-from ..services import CollectionService
-from ..services import DatabaseHealthService
-from ..services import ExportService
-from ..services import MetadataExtractor
-from ..services import PaperService
-from ..services import SearchService
-from ..services import SystemService
+from ..dialogs import AddDialog, FilterDialog, SortDialog
+from ..services import (
+    AddPaperService,
+    AuthorService,
+    BackgroundOperationService,
+    ChatService,
+    CollectionService,
+    DatabaseHealthService,
+    ExportService,
+    MetadataExtractor,
+    PaperService,
+    SearchService,
+    SystemService,
+)
 from ..services.auto_sync import trigger_auto_sync
-from ..ui import ErrorPanel
-from ..ui import PaperListControl
-from ..ui import StatusBar
+from ..ui import ErrorPanel, PaperListControl, StatusBar
 from ..version import get_version
-from .commands import CollectionCommandHandler
-from .commands import ExportCommandHandler
-from .commands import PaperCommandHandler
-from .commands import SearchCommandHandler
-from .commands import SystemCommandHandler
+from .commands import (
+    CollectionCommandHandler,
+    ExportCommandHandler,
+    PaperCommandHandler,
+    SearchCommandHandler,
+    SystemCommandHandler,
+)
 from .completer import SmartCompleter
 from .ui_setup import UISetupMixin
 

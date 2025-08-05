@@ -864,15 +864,44 @@ To change settings:
             # Focus back to input
             self.cli.app.layout.focus(self.cli.input_buffer)
 
+            # Restore original key bindings
+            if hasattr(self.cli, "original_key_bindings"):
+                self.cli.app.key_bindings = self.cli.original_key_bindings
+                del self.cli.original_key_bindings
+
             # Handle result
             if result:
                 # Status bar is already updated by the dialog, just handle post-sync actions
                 # Reload papers after successful sync
                 if hasattr(self.cli, "load_papers"):
                     self.cli.load_papers()
-                self._add_log("sync", result.get_summary())
+                # Log sync completion with detailed breakdown in one entry
+                if result.errors:
+                    error_details = []
+                    for error in result.errors:
+                        error_details.append(f"  • {error}")
+                    error_summary = f"Sync finished with errors: {len(result.errors)} error(s)\n" + "\n".join(error_details)
+                    self._add_log("sync_finished", error_summary)
+                else:
+                    # Build comprehensive success log with details
+                    log_parts = [f"Sync finished successfully: {result.get_summary()}"]
+                    
+                    # Add detailed breakdown if available
+                    if hasattr(result, 'detailed_changes') and any(result.detailed_changes.values()):
+                        for change_type, items in result.detailed_changes.items():
+                            if items:
+                                category = change_type.replace("_", " ").title()
+                                # Fix PDF capitalization
+                                if "Pdfs" in category:
+                                    category = category.replace("Pdfs", "PDFs")
+                                log_parts.append(f"  {category}: {', '.join(items[:5])}")
+                                if len(items) > 5:
+                                    log_parts.append(f"    ... and {len(items) - 5} more")
+                    
+                    self._add_log("sync_finished", "\n".join(log_parts))
             else:
                 self.cli.status_bar.set_status("Sync cancelled", "cancelled")
+                self._add_log("sync_finished", "Sync cancelled by user")
 
             self.cli.app.invalidate()
 
@@ -894,13 +923,17 @@ To change settings:
             log_callback=self._add_log,
         )
         self.cli.sync_float = Float(self.cli.sync_dialog.dialog)
-
-        # Apply dialog key bindings to the float container to make it truly modal
-        if hasattr(self.cli.sync_dialog, "key_bindings"):
-            self.cli.sync_float.key_bindings = self.cli.sync_dialog.key_bindings
-
         self.cli.app.layout.container.floats.append(self.cli.sync_float)
-        self.cli.app.layout.focus(
-            self.cli.sync_dialog.get_initial_focus() or self.cli.sync_dialog.dialog
+
+        initial_focus_target = self.cli.sync_dialog.get_initial_focus()
+        if initial_focus_target:
+            self.cli.app.layout.focus(initial_focus_target)
+        else:
+            self.cli.app.layout.focus(self.cli.sync_dialog.dialog)
+
+        # Save original key bindings and set dialog's key bindings
+        self.cli.original_key_bindings = self.cli.app.key_bindings
+        self.cli.app.key_bindings = (
+            self.cli.sync_dialog.key_bindings or self.cli.app.key_bindings
         )
         self.cli.app.invalidate()

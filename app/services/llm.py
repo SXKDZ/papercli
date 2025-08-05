@@ -7,12 +7,11 @@ from functools import partial
 from prompt_toolkit.application import get_app
 from prompt_toolkit.layout.containers import Float
 from prompt_toolkit.layout.dimension import Dimension
-from prompt_toolkit.widgets import Button
-from prompt_toolkit.widgets import Dialog
-from prompt_toolkit.widgets import TextArea
+from prompt_toolkit.widgets import Button, Dialog, TextArea
 
 from ..services.utils import compare_extracted_metadata_with_paper
 from .author import AuthorService
+from .pdf import PDFManager
 
 
 class LLMSummaryService:
@@ -22,6 +21,22 @@ class LLMSummaryService:
         self.paper_service = paper_service
         self.background_service = background_service
         self.log_callback = log_callback
+        self.pdf_manager = PDFManager()
+
+    def _filter_papers_with_pdfs(self, papers):
+        """Filter papers that have accessible PDF files (resolving relative paths)."""
+        # Normalize to list
+        if not isinstance(papers, list):
+            papers = [papers]
+
+        papers_with_pdfs = []
+        for p in papers:
+            if p.pdf_path:
+                absolute_path = self.pdf_manager.get_absolute_path(p.pdf_path)
+                if os.path.exists(absolute_path):
+                    papers_with_pdfs.append(p)
+
+        return papers_with_pdfs
 
     def generate_summaries(
         self, papers, on_all_complete=None, operation_prefix="summary"
@@ -37,14 +52,8 @@ class LLMSummaryService:
         Returns:
             dict: Tracking info with completed/total counts and queue, or None if no valid papers
         """
-        # Normalize to list
-        if not isinstance(papers, list):
-            papers = [papers]
-
         # Filter papers that have PDFs
-        papers_with_pdfs = [
-            p for p in papers if p.pdf_path and os.path.exists(p.pdf_path)
-        ]
+        papers_with_pdfs = self._filter_papers_with_pdfs(papers)
 
         if not papers_with_pdfs:
             if self.log_callback:
@@ -99,7 +108,7 @@ class LLMSummaryService:
             summary = extractor.generate_paper_summary(current_paper.pdf_path)
 
             if not summary:
-                raise Exception("Failed to generate summary - empty response")
+                return None
 
             return {
                 "paper_id": current_paper.id,
@@ -117,6 +126,14 @@ class LLMSummaryService:
                     self.log_callback(
                         f"{tracking['operation_prefix']}_error_{current_paper.id}",
                         f"Failed to generate summary for '{current_paper.title[:50]}...': {error}",
+                    )
+            elif result is None:
+                # Empty summary - treat as failed
+                tracking["failed"].append((current_paper.id, "Empty response"))
+                if self.log_callback:
+                    self.log_callback(
+                        f"{tracking['operation_prefix']}_error_{current_paper.id}",
+                        f"Failed to generate summary for '{current_paper.title[:50]}...': Empty response",
                     )
             else:
                 # Add to success queue
@@ -255,14 +272,8 @@ class PDFMetadataExtractionService:
         Returns:
             dict: Tracking info with completed/total counts and results, or None if no valid papers
         """
-        # Normalize to list
-        if not isinstance(papers, list):
-            papers = [papers]
-
         # Filter papers that have PDFs
-        papers_with_pdfs = [
-            p for p in papers if p.pdf_path and os.path.exists(p.pdf_path)
-        ]
+        papers_with_pdfs = self._filter_papers_with_pdfs(papers)
 
         if not papers_with_pdfs:
             if self.log_callback:
@@ -309,14 +320,8 @@ class PDFMetadataExtractionService:
             papers: Single Paper object or list of Paper objects
             operation_prefix: Prefix for operation names and logs
         """
-        # Normalize to list
-        if not isinstance(papers, list):
-            papers = [papers]
-
         # Filter papers that have PDFs
-        papers_with_pdfs = [
-            p for p in papers if p.pdf_path and os.path.exists(p.pdf_path)
-        ]
+        papers_with_pdfs = self._filter_papers_with_pdfs(papers)
 
         if not papers_with_pdfs:
             if self.log_callback:

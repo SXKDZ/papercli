@@ -3,17 +3,12 @@
 import os
 import shutil
 from datetime import datetime
-from typing import Any
-from typing import Dict
-from typing import List
+from typing import Any, Dict, List
 
 from sqlalchemy import text
 
-from ..db.database import get_db_manager
-from ..db.database import get_db_session
-from ..db.models import Author
-from ..db.models import Collection
-from ..db.models import Paper
+from ..db.database import get_db_manager, get_db_session
+from ..db.models import Author, Collection, Paper
 
 
 class DatabaseHealthService:

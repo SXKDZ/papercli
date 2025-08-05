@@ -5,12 +5,10 @@ UI components for PaperCLI using prompt-toolkit.
 import threading
 import time
 from io import StringIO
-from typing import List
-from typing import Optional
+from typing import List, Optional
 
 from prompt_toolkit.application import get_app
-from prompt_toolkit.formatted_text import ANSI
-from prompt_toolkit.formatted_text import FormattedText
+from prompt_toolkit.formatted_text import ANSI, FormattedText
 from rich.console import Console
 from rich.style import Style as RichStyle
 from rich.table import Table

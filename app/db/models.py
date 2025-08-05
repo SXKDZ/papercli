@@ -3,20 +3,11 @@ Database models for PaperCLI using SQLAlchemy ORM.
 """
 
 from datetime import datetime
-from typing import List
-from typing import Optional
+from typing import List, Optional
 
-from sqlalchemy import Column
-from sqlalchemy import DateTime
-from sqlalchemy import ForeignKey
-from sqlalchemy import Integer
-from sqlalchemy import String
-from sqlalchemy import Table
-from sqlalchemy import Text
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Table, Text
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import Mapped
-from sqlalchemy.orm import mapped_column
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 Base = declarative_base()
 
@@ -84,6 +75,7 @@ class Collection(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     description: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    last_modified: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.utcnow)
 
     # Relationships
     papers: Mapped[List["Paper"]] = relationship(

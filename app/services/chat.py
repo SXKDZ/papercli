@@ -5,14 +5,13 @@ import platform
 import subprocess
 import traceback
 import webbrowser
-from typing import Any
-from typing import Dict
-from typing import List
+from typing import Any, Dict, List
 
 import pyperclip
 
 from ..db.models import Paper
 from ..prompts import ChatPrompts
+from .pdf import PDFManager
 
 
 class ChatService:
@@ -20,6 +19,7 @@ class ChatService:
 
     def __init__(self, log_callback=None):
         self.log_callback = log_callback
+        self.pdf_manager = PDFManager()
 
     def copy_prompt_to_clipboard(self, papers: List[Paper]) -> Dict[str, Any]:
         """Generate and copy paper prompt to clipboard for external LLM use."""
@@ -83,28 +83,32 @@ class ChatService:
             failed_files = []
 
             for paper in papers:
-                if paper.pdf_path and os.path.exists(paper.pdf_path):
-                    try:
-                        if system == "Darwin":  # macOS
-                            subprocess.run(["open", "-R", paper.pdf_path], check=True)
-                        elif system == "Windows":
-                            subprocess.run(
-                                ["explorer", "/select,", paper.pdf_path], check=True
-                            )
-                        elif system == "Linux":
-                            # For Linux, open the directory containing the file
-                            pdf_dir = os.path.dirname(paper.pdf_path)
-                            subprocess.run(["xdg-open", pdf_dir], check=True)
+                if paper.pdf_path:
+                    absolute_path = self.pdf_manager.get_absolute_path(paper.pdf_path)
+                    if os.path.exists(absolute_path):
+                        try:
+                            if system == "Darwin":  # macOS
+                                subprocess.run(
+                                    ["open", "-R", absolute_path], check=True
+                                )
+                            elif system == "Windows":
+                                subprocess.run(
+                                    ["explorer", "/select,", absolute_path], check=True
+                                )
+                            elif system == "Linux":
+                                # For Linux, open the directory containing the file
+                                pdf_dir = os.path.dirname(absolute_path)
+                                subprocess.run(["xdg-open", pdf_dir], check=True)
 
-                        opened_files.append(paper.title)
-                    except Exception as e:
-                        error_msg = f"{paper.title}: {str(e)}"
-                        failed_files.append(error_msg)
-                        if self.log_callback:
-                            self.log_callback(
-                                "chat_pdf_error",
-                                f"Failed to open PDF for {paper.title}: {traceback.format_exc()}",
-                            )
+                            opened_files.append(paper.title)
+                        except Exception as e:
+                            error_msg = f"{paper.title}: {str(e)}"
+                            failed_files.append(error_msg)
+                            if self.log_callback:
+                                self.log_callback(
+                                    "chat_pdf_error",
+                                    f"Failed to open PDF for {paper.title}: {traceback.format_exc()}",
+                                )
 
             # Prepare result message
             result_parts = []

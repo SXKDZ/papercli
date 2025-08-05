@@ -1,23 +1,217 @@
-"""Sync-related dialogs for conflict resolution and sync summaries."""
+"Sync-related dialogs for conflict resolution and sync summaries."
 
+import difflib
 import threading
-from typing import Callable
-from typing import Dict
-from typing import List
+from io import StringIO
+from typing import Callable, Dict, List
 
 from prompt_toolkit.application import get_app
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout import Dimension
-from prompt_toolkit.layout import HSplit
-from prompt_toolkit.layout import Window
-from prompt_toolkit.layout.containers import ConditionalContainer
-from prompt_toolkit.layout.containers import ScrollOffsets
+from prompt_toolkit.layout import Dimension, HSplit, UIContent, UIControl, Window
+from prompt_toolkit.layout.containers import ConditionalContainer, ScrollOffsets
 from prompt_toolkit.layout.controls import FormattedTextControl
-from prompt_toolkit.widgets import Button
-from prompt_toolkit.widgets import Dialog
+from prompt_toolkit.widgets import Button, Dialog
+from rich.console import Console
+from rich.table import Table
+from rich.text import Text
 
 from ..services import SyncConflict
+
+
+class ConflictDisplayControl(UIControl):
+    """A UI control to display sync conflicts with a side-by-side, word-level diff."""
+
+    def __init__(self, get_conflict_info_func: Callable[[], tuple]):
+        self.get_conflict_info_func = get_conflict_info_func
+
+    def _create_diff_text(
+        self, local_str: str, remote_str: str, field_name: str
+    ) -> (Text, Text):
+        """Generates concise diff showing only differences with context."""
+        if local_str == remote_str:
+            return Text(local_str, no_wrap=False), Text(remote_str, no_wrap=False)
+
+        local_words = local_str.split()
+        remote_words = remote_str.split()
+        matcher = difflib.SequenceMatcher(None, local_words, remote_words, autojunk=False)
+
+        local_text = Text(no_wrap=False, justify="left")
+        remote_text = Text(no_wrap=False, justify="left")
+
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            if tag != "equal":
+                # Get context around difference
+                context_start = max(0, min(i1, j1) - 5)
+                local_end = min(len(local_words), i2 + 5)
+                remote_end = min(len(remote_words), j2 + 5)
+                
+                local_snippet = local_words[context_start:local_end]
+                remote_snippet = remote_words[context_start:remote_end]
+                
+                # Truncate if too long
+                if len(local_snippet) > 25:
+                    local_snippet = local_snippet[:25]
+                if len(remote_snippet) > 25:
+                    remote_snippet = remote_snippet[:25]
+
+                self._add_diff_snippet(local_text, remote_text, local_snippet, remote_snippet, context_start > 0)
+                break
+
+        return local_text, remote_text
+
+    def _add_diff_snippet(self, local_text, remote_text, local_snippet, remote_snippet, has_prefix):
+        """Add diff snippet with highlighting to text objects."""
+        if has_prefix:
+            local_text.append("... ")
+            remote_text.append("... ")
+
+        snippet_matcher = difflib.SequenceMatcher(None, local_snippet, remote_snippet)
+        for tag, i1, i2, j1, j2 in snippet_matcher.get_opcodes():
+            local_chunk = " ".join(local_snippet[i1:i2])
+            remote_chunk = " ".join(remote_snippet[j1:j2])
+
+            if tag == "equal":
+                local_text.append(local_chunk + " ")
+                remote_text.append(remote_chunk + " ")
+            elif tag == "replace":
+                local_text.append(local_chunk + " ", style="red")
+                remote_text.append(remote_chunk + " ", style="green")
+            elif tag == "delete":
+                local_text.append(local_chunk + " ", style="red")
+            elif tag == "insert":
+                remote_text.append(remote_chunk + " ", style="green")
+
+    def create_content(self, width: int, height: int) -> UIContent:
+        conflict_info = self.get_conflict_info_func()
+        if not conflict_info or not conflict_info[0]:
+            return UIContent(
+                get_line=lambda i: [("", "No conflict to display")], line_count=1
+            )
+
+        conflict, index, total = conflict_info
+
+        output = StringIO()
+        console = Console(
+            file=output,
+            force_terminal=True,
+            width=width,
+            legacy_windows=False,
+            _environ={},
+        )
+
+        # --- 1. High-Level Conflict Information ---
+        title = conflict.item_id
+        paper_id = conflict.local_data.get("id") or conflict.remote_data.get("id")
+
+        header_text = f"Conflict {index} of {total}: {title} (Paper #{paper_id})"
+        console.print(Text(header_text, justify="center", style="bold"))
+        console.print()
+
+        # --- 2. Side-by-Side Grid for Differences (No Boxes) ---
+        grid = Table.grid(padding=(0, 2), expand=True)
+        grid.add_column(ratio=1)
+        grid.add_column(ratio=1)
+
+        grid.add_row(Text("LOCAL", style="bold"), Text("REMOTE", style="bold"))
+        grid.add_row()  # Spacer
+
+        if conflict.conflict_type == "paper":
+            # Exclude internal fields that users shouldn't see in conflicts
+            excluded_fields = {"id", "created_at", "updated_at"}
+            field_order = [
+                "title",
+                "authors",
+                "abstract",
+                "doi",
+                "arxiv_id",
+                "venue_full",
+                "publication_year",
+                "notes",
+                "tags",
+                "read_status",
+                "priority",
+            ]
+            all_fields = field_order + sorted(
+                [
+                    f
+                    for f in conflict.differences.keys()
+                    if f not in field_order and f not in excluded_fields
+                ]
+            )
+
+            for field in all_fields:
+                if field not in conflict.differences or field in excluded_fields:
+                    continue
+                diff = conflict.differences[field]
+                local_val, remote_val = str(diff.get("local", "")), str(
+                    diff.get("remote", "")
+                )
+                if local_val == remote_val:
+                    continue
+
+                local_content, remote_content = self._create_diff_text(
+                    local_val, remote_val, field
+                )
+                field_title = field.replace("_", " ").title()
+
+                grid.add_row(Text(field_title), Text(field_title))
+                grid.add_row(local_content, remote_content)
+                grid.add_row()  # Spacer
+
+        elif conflict.conflict_type == "pdf":
+            details = {
+                "File Size": (
+                    f'{conflict.local_data.get("size", "N/A"):,}',
+                    f'{conflict.remote_data.get("size", "N/A"):,}',
+                ),
+                "Modified": (
+                    str(conflict.local_data.get("modified", "N/A")),
+                    str(conflict.remote_data.get("modified", "N/A")),
+                ),
+                "Hash": (
+                    str(conflict.local_data.get("hash", "N/A")),
+                    str(conflict.remote_data.get("hash", "N/A")),
+                ),
+            }
+            for field, (local_val, remote_val) in details.items():
+                if local_val == remote_val:
+                    continue
+                local_text, remote_text = self._create_diff_text(
+                    local_val, remote_val, field
+                )
+                grid.add_row(Text(field), Text(field))
+                grid.add_row(local_text, remote_text)
+                grid.add_row()
+
+        console.print(grid)
+
+        # --- 3. Conversion to prompt_toolkit format ---
+        ansi_output = output.getvalue()
+        try:
+            from prompt_toolkit.formatted_text import ANSI, to_formatted_text
+
+            formatted_text = to_formatted_text(ANSI(ansi_output))
+        except Exception:
+            formatted_text = [("", ansi_output)]
+
+        lines = []
+        current_line = []
+        for style, text in formatted_text:
+            text_lines = text.split("\n")
+            for i, part in enumerate(text_lines):
+                if i > 0:
+                    lines.append(current_line)
+                    current_line = []
+                if part:
+                    current_line.append((style, part))
+        if current_line:
+            lines.append(current_line)
+
+        def get_line(i: int):
+            return lines[i] if i < len(lines) else [("", "")]
+
+        return UIContent(get_line=get_line, line_count=len(lines))
 
 
 class SyncProgressDialog:
@@ -37,12 +231,10 @@ class SyncProgressDialog:
         self.status_updater = status_updater
         self.log_callback = log_callback
 
-        # Check auto-sync mode
         import os
 
         self.auto_sync_mode = os.getenv("PAPERCLI_AUTO_SYNC", "false").lower() == "true"
 
-        # Dialog state
         self.progress_text = "Checking remote database..."
         self.conflicts: List[SyncConflict] = []
         self.current_conflict_index = 0
@@ -55,25 +247,16 @@ class SyncProgressDialog:
         self.sync_complete = False
         self.progress_percentage = 0
         self.conflict_resolution_event = threading.Event()
-        # Progress counters
         self.papers_total = 0
-        self.papers_processed = 0
         self.collections_total = 0
-        self.collections_processed = 0
         self.pdfs_total = 0
-        self.pdfs_processed = 0
+        self.should_focus_close = False
 
-        # Create key bindings first
         self._setup_key_bindings()
-
-        # Create dialog layout
         self._create_layout()
-
-        # Start sync immediately
         self.start_sync()
 
     def _setup_key_bindings(self):
-        """Setup key bindings for the dialog."""
         kb = KeyBindings()
 
         @kb.add("escape", eager=True)
@@ -89,193 +272,112 @@ class SyncProgressDialog:
                 # Close dialog (works for summary, conflicts, or completed sync)
                 self.callback(self.sync_result if self.sync_complete else None)
 
-        @kb.add("c")
-        def _(event):
-            """Confirm conflict resolutions and continue sync."""
-            if self.show_conflicts and len(self.resolutions) == len(self.conflicts):
-                self.show_conflicts = False
-                self.sync_complete = True
-                self.conflict_resolution_event.set()
-                event.app.invalidate()
-
         # Conflict resolution keys (only active when conflicts are shown)
-        @kb.add("l")
+        @kb.add("l", eager=True)
         def _(event):
             """Use local version for current conflict."""
             if self.show_conflicts and self.conflicts:
-                conflict = self.conflicts[self.current_conflict_index]
-                self.resolutions[f"{conflict.conflict_type}_{conflict.item_id}"] = (
-                    "local"
-                )
-                self._next_conflict()
+                self._resolve_current("local")
 
-                event.app.invalidate()
-
-        @kb.add("r")
+        @kb.add("r", eager=True)
         def _(event):
             """Use remote version for current conflict."""
             if self.show_conflicts and self.conflicts:
-                conflict = self.conflicts[self.current_conflict_index]
-                self.resolutions[f"{conflict.conflict_type}_{conflict.item_id}"] = (
-                    "remote"
-                )
-                self._next_conflict()
+                self._resolve_current("remote")
 
-                event.app.invalidate()
-
-        @kb.add("b")
-        @kb.add("k")
+        @kb.add("b", eager=True)
         def _(event):
             """Keep both versions for current conflict."""
             if self.show_conflicts and self.conflicts:
-                conflict = self.conflicts[self.current_conflict_index]
-                self.resolutions[f"{conflict.conflict_type}_{conflict.item_id}"] = (
-                    "keep_both"
-                )
-                self._next_conflict()
+                self._resolve_current("keep_both")
 
-                event.app.invalidate()
-
-        @kb.add("L")
+        @kb.add("L", eager=True)
         def _(event):
             """Use local version for all remaining conflicts."""
             if self.show_conflicts:
-                for conflict in self.conflicts:
-                    self.resolutions[f"{conflict.conflict_type}_{conflict.item_id}"] = (
-                        "local"
-                    )
-                self.show_conflicts = False
-                self.sync_complete = True
+                self._resolve_all("local")
 
-                event.app.invalidate()
-
-        @kb.add("R")
+        @kb.add("R", eager=True)
         def _(event):
             """Use remote version for all remaining conflicts."""
             if self.show_conflicts:
-                for conflict in self.conflicts:
-                    self.resolutions[f"{conflict.conflict_type}_{conflict.item_id}"] = (
-                        "remote"
-                    )
-                self.show_conflicts = False
-                self.sync_complete = True
+                self._resolve_all("remote")
 
-                event.app.invalidate()
-
-        @kb.add("A")
+        @kb.add("A", eager=True)
         def _(event):
             """Keep all versions for all remaining conflicts."""
             if self.show_conflicts:
-                for conflict in self.conflicts:
-                    self.resolutions[f"{conflict.conflict_type}_{conflict.item_id}"] = (
-                        "keep_both"
-                    )
-                self.show_conflicts = False
-                self.sync_complete = True
+                self._resolve_all("keep_both")
 
-                event.app.invalidate()
 
-        @kb.add("n")
-        def _(event):
-            """Next conflict."""
-            if self.show_conflicts:
-                self._next_conflict()
 
-                event.app.invalidate()
-
-        @kb.add("p")
-        def _(event):
-            """Previous conflict."""
-            if self.show_conflicts:
-                self._prev_conflict()
-
-                event.app.invalidate()
-
-        @kb.add("right")
-        def _(event):
-            """Next conflict."""
-            if self.show_conflicts:
-                self._next_conflict()
-
-                event.app.invalidate()
-
-        @kb.add("left")
-        def _(event):
-            """Previous conflict."""
-            if self.show_conflicts:
-                self._prev_conflict()
-
-                event.app.invalidate()
-
-        # Block all other keys during sync progress
-        @kb.add("<any>")
-        def _(event):
-            """Block all other key input during sync."""
-            # Only allow the specific keys we've already defined above
-            # This prevents typing in the main input while sync is running
-            pass
-
-        # Store key bindings for the dialog
         self.key_bindings = kb
 
     def _create_layout(self):
-        """Create the dialog layout."""
-        # Create conditions for visibility
-        conflicts_visible = Condition(lambda: self.show_conflicts)
-        summary_visible = Condition(lambda: self.show_summary)
-
-        # Create the three-part layout as specified:
-        # 1. Top: Progress bar (vertically centered, almost full width)
-        # 2. Middle: Large text area (status + conflicts + summary)
-        # 3. Bottom: Buttons (handled separately in Dialog)
+        self.conflict_display = ConflictDisplayControl(
+            lambda: (
+                (
+                    self.conflicts[self.current_conflict_index],
+                    self.current_conflict_index + 1,
+                    len(self.conflicts),
+                )
+                if self.show_conflicts and self.conflicts
+                else (None, 0, 0)
+            )
+        )
 
         self.body_content = HSplit(
             [
-                # Part 1: Progress bar at top (vertically centered, almost full width)
                 Window(
                     FormattedTextControl(
-                        self._get_progress_bar_only,
+                        self._get_progress_and_status, show_cursor=False
                     ),
-                    height=Dimension(min=3, max=3),  # Fixed height for progress bar
-                    wrap_lines=False,
-                    align="center",  # Center the progress bar
-                ),
-                # Part 2: Large text area in middle (combines status, conflicts, summary)
-                Window(
-                    FormattedTextControl(self._get_combined_text_content),
-                    height=Dimension(min=15, max=30),  # Large text area
+                    height=Dimension(min=5, max=6),
                     wrap_lines=True,
-                    scroll_offsets=ScrollOffsets(top=1, bottom=1),
+                    align="center",
+                ),
+                ConditionalContainer(
+                    Window(
+                        self.conflict_display,
+                        height=Dimension(min=15, max=30),
+                        wrap_lines=True,
+                        scroll_offsets=ScrollOffsets(top=2, bottom=2),
+                    ),
+                    filter=Condition(lambda: self.show_conflicts),
+                ),
+                ConditionalContainer(
+                    Window(
+                        FormattedTextControl(self._get_summary_text),
+                        height=Dimension(min=5, max=15),
+                        wrap_lines=True,
+                        scroll_offsets=ScrollOffsets(top=1, bottom=1),
+                    ),
+                    filter=Condition(
+                        lambda: self.show_summary and self._has_detailed_changes()
+                    ),
+                ),
+                Window(
+                    FormattedTextControl(self._get_instructions),
+                    height=Dimension(min=2, max=5),
+                    wrap_lines=True,
                 ),
             ]
         )
 
-        # Create conflict resolution buttons (always present but conditionally visible)
-        self.local_button = Button(
-            text="Use Local", handler=self._create_resolution_handler("local")
-        )
-        self.remote_button = Button(
-            text="Use Remote", handler=self._create_resolution_handler("remote")
-        )
-        self.both_button = Button(
-            text="Keep Both", handler=self._create_resolution_handler("keep_both")
-        )
-        self.all_local_button = Button(
-            text="All Local", handler=self._create_all_resolution_handler("local")
-        )
-        self.all_remote_button = Button(
-            text="All Remote", handler=self._create_all_resolution_handler("remote")
-        )
-        self.keep_all_button = Button(
-            text="Keep All", handler=self._create_all_resolution_handler("keep_both")
-        )
+        # Create buttons with consistent width
+        button_width = 13
+        self.cancel_button = Button(text="Close", handler=self._handle_close, width=button_width)
 
-        # Create cancel button
-        self.cancel_button = Button(text="Cancel", handler=self._handle_close)
+        # Create conflict resolution buttons using a helper
+        self.local_button = Button(text="Local", handler=lambda: self._resolve_current("local"), width=button_width)
+        self.remote_button = Button(text="Remote", handler=lambda: self._resolve_current("remote"), width=button_width)
+        self.keep_both_button = Button(text="Both", handler=lambda: self._resolve_current("keep_both"), width=button_width)
+        self.all_local_button = Button(text="All Local", handler=lambda: self._resolve_all("local"), width=button_width)
+        self.all_remote_button = Button(text="All Remote", handler=lambda: self._resolve_all("remote"), width=button_width)
+        self.all_both_button = Button(text="Keep All", handler=lambda: self._resolve_all("keep_both"), width=button_width)
 
-        # Create dialog with all buttons
-        # Conflict resolution buttons (6 buttons with spacing before cancel)
-        conflict_buttons = [
+        # Use all buttons with conditional visibility - simpler approach
+        all_buttons = [
             ConditionalContainer(
                 self.local_button, filter=Condition(lambda: self.show_conflicts)
             ),
@@ -283,7 +385,7 @@ class SyncProgressDialog:
                 self.remote_button, filter=Condition(lambda: self.show_conflicts)
             ),
             ConditionalContainer(
-                self.both_button, filter=Condition(lambda: self.show_conflicts)
+                self.keep_both_button, filter=Condition(lambda: self.show_conflicts)
             ),
             ConditionalContainer(
                 self.all_local_button, filter=Condition(lambda: self.show_conflicts)
@@ -292,12 +394,10 @@ class SyncProgressDialog:
                 self.all_remote_button, filter=Condition(lambda: self.show_conflicts)
             ),
             ConditionalContainer(
-                self.keep_all_button, filter=Condition(lambda: self.show_conflicts)
+                self.all_both_button, filter=Condition(lambda: self.show_conflicts)
             ),
+            self.cancel_button,  # Always visible
         ]
-
-        # Add spacing and cancel button
-        all_buttons = conflict_buttons + [self.cancel_button]
 
         self.dialog = Dialog(
             title=self._get_dynamic_title,
@@ -308,529 +408,261 @@ class SyncProgressDialog:
             width=Dimension(min=139, max=139),
         )
 
+        # Apply key bindings to dialog
+
+        self.dialog.key_bindings = self.key_bindings
+
+
     def _get_dynamic_title(self):
-        """Get dynamic title based on sync state."""
-        if self.sync_complete:
+        if self.sync_cancelled:
+            return "Syncing with Remote Database - Cancelled"
+        elif self.sync_complete:
             if self.sync_result and self.sync_result.errors:
                 return "Syncing with Remote Database - Completed with Errors"
             elif self.conflicts and not self.resolutions:
                 return "Syncing with Remote Database - Conflicts Found"
             else:
                 return "Syncing with Remote Database - Completed Successfully"
-        else:
-            return "Syncing with Remote Database"
+        return "Syncing with Remote Database"
 
-    def _get_progress_bar_only(self):
-        """Get only the progress bar for the top section with the specified internal spacing."""
-        # A fixed width for the bar portion to keep the UI stable.
-        # This width is chosen to fit within the Dialog's max width (160) and allow centering.
+    def _resolve_current(self, resolution: str):
+        """Resolve the current conflict and move to next unresolved conflict."""
+        self._resolve_conflict(resolution)
+
+        # Move to next unresolved conflict
+        self._next_unresolved_conflict()
+        get_app().invalidate()
+
+    def _resolve_all(self, resolution: str):
+        """Resolve all conflicts and complete the sync."""
+        for conflict in self.conflicts:
+            self.resolutions[f"{conflict.conflict_type}_{conflict.item_id}"] = (
+                resolution
+            )
+
+        # All conflicts resolved, finish conflict resolution
+        self.show_conflicts = False
+        # Don't mark as complete yet - let sync service finish applying resolutions
+        self.progress_text = "Applying conflict resolutions..."
+        self.conflict_resolution_event.set()
+        get_app().invalidate()
+
+    def _next_unresolved_conflict(self):
+        """Move to next conflict that hasn't been resolved yet."""
+        original_index = self.current_conflict_index
+
+        # First try to find next unresolved conflict
+        for i in range(self.current_conflict_index + 1, len(self.conflicts)):
+            conflict = self.conflicts[i]
+            conflict_id = f"{conflict.conflict_type}_{conflict.item_id}"
+            if conflict_id not in self.resolutions:
+                self.current_conflict_index = i
+                return
+
+        # If no unresolved conflicts after current, look before current
+        for i in range(0, self.current_conflict_index):
+            conflict = self.conflicts[i]
+            conflict_id = f"{conflict.conflict_type}_{conflict.item_id}"
+            if conflict_id not in self.resolutions:
+                self.current_conflict_index = i
+                return
+
+        # All conflicts resolved, finish conflict resolution
+        self.show_conflicts = False
+        # Don't mark as complete yet - let sync service finish applying resolutions
+        self.progress_text = "Applying conflict resolutions..."
+        self.conflict_resolution_event.set()
+
+    def _get_progress_and_status(self):
+        lines = []
+        
+        # Handle focus change request if needed
+        if self.should_focus_close and self.sync_complete and self.show_summary:
+            self.should_focus_close = False
+            try:
+                # Direct focus change - this is called during UI rendering so it's safe
+                get_app().layout.focus(self.cancel_button)
+            except Exception as e:
+                if self.log_callback:
+                    self.log_callback("focus_error", f"Failed to focus Close button: {e}")
+
+        # Progress bar
         bar_width = 122
-
         filled = int((self.progress_percentage / 100) * bar_width)
         bar = "█" * filled + "░" * (bar_width - filled)
-
         percentage_text = f"{self.progress_percentage:>3}%"
+        progress_line = f"   [{bar}]  {percentage_text}   \n"
+        lines.append(("", progress_line))
 
-        # Create the complete progress text with your specified spacing.
-        # The Window's `align="center"` will handle the horizontal centering of this entire string.
-        progress_line = f"   [{bar}]  {percentage_text}   "
-
-        return [("", progress_line)]
-
-    def _get_combined_text_content(self):
-        """Get all text content for the middle section (status + conflicts + summary + instructions)."""
-        lines = []
-
-        # Add status text
-        if not self.sync_complete:
-            lines.append(("", "\n"))  # Some spacing from progress bar
-
-            # Show progress with counts
-            progress_with_counts = self.progress_text
-            if "papers" in self.progress_text.lower() and self.papers_total > 0:
-                progress_with_counts = (
-                    f"Status: Synchronizing {self.papers_total} papers..."
-                )
-            elif (
-                "collections" in self.progress_text.lower()
-                and self.collections_total > 0
-            ):
-                progress_with_counts = (
-                    f"Status: Synchronizing {self.collections_total} collections..."
-                )
-            elif "pdf" in self.progress_text.lower() and self.pdfs_total > 0:
-                progress_with_counts = (
-                    f"Status: Synchronizing {self.pdfs_total} PDFs..."
-                )
+        # Status text (close to progress bar)
+        if self.sync_cancelled:
+            lines.append(("class:progress-message", "Status: Sync was cancelled"))
+        elif self.sync_complete and self.sync_result and not self.show_conflicts:
+            # Show final summary in the same position as progress status
+            lines.append(
+                ("class:progress-message", f"Status: {self.sync_result.get_summary()}")
+            )
+        elif not self.sync_complete or self.show_conflicts:
+            if self.show_conflicts:
+                progress_with_counts = f"Resolving {len(self.conflicts)} conflicts ({len(self.resolutions)} resolved)"
             else:
-                progress_with_counts = f"Status: {self.progress_text}"
-
-            lines.append(("class:progress-message", progress_with_counts))
-            lines.append(("", "\n\n"))
-
-        # Add conflict details if showing conflicts
-        if self.show_conflicts:
-            lines.extend(self._get_conflict_text())
-            lines.append(("", "\n"))
-
-        # Add summary if showing summary
-        if self.show_summary:
-            lines.extend(self._get_summary_text())
-            lines.append(("", "\n"))
-
-        # Add instructions
-        instruction_lines = self._get_instructions()
-        if instruction_lines:
-            lines.extend(instruction_lines)
-
-        return lines
-
-    def _get_progress_text(self):
-        """Get the progress text as formatted text."""
-        lines = []
-
-        if self.sync_complete:
-            if self.sync_result and self.sync_result.errors:
-                lines.append(("class:error", "❌ Sync completed with errors"))
-                lines.append(("", "\n"))
-                lines.append(
-                    ("class:error", f"Errors: {', '.join(self.sync_result.errors)}")
-                )
-            elif self.conflicts and not self.resolutions:
-                lines.append(
-                    ("class:warning", f"⚠️ Sync found {len(self.conflicts)} conflicts")
-                )
-                lines.append(("", "\n"))
-                lines.append(
-                    ("", "Conflicts need to be resolved before completing sync.")
-                )
-            else:
-                # Sync completed - show summary without extra lines
-                if self.conflicts and self.resolutions:
-                    lines.append(("", f"Resolved {len(self.conflicts)} conflicts"))
-        else:
-            # Just show progress text without redundant progress bar (top bar is sufficient)
-            lines.append(("", "\n"))
-
-            # Show progress with counts - if processed is 0, show total only
-            progress_with_counts = self.progress_text
-            if "papers" in self.progress_text.lower() and self.papers_total > 0:
-                progress_with_counts = f"Synchronizing {self.papers_total} papers..."
-            elif (
-                "collections" in self.progress_text.lower()
-                and self.collections_total > 0
-            ):
-                progress_with_counts = (
-                    f"Synchronizing {self.collections_total} collections..."
-                )
-            elif "pdf" in self.progress_text.lower() and self.pdfs_total > 0:
-                progress_with_counts = f"Synchronizing {self.pdfs_total} PDFs..."
-            lines.append(("class:progress-message", progress_with_counts))
-
-        return lines
-
-    def _get_conflict_text(self):
-        """Get the current conflict details as formatted text."""
-        conflict = self.conflicts[self.current_conflict_index]
-        lines = []
-
-        # Conflict header
-        db_id = conflict.local_data.get("id") or conflict.remote_data.get("id")
-        title = conflict.item_id  # The user confirmed item_id is the title
-
-        lines.append(
-            (
-                "class:conflict-header",
-                f"Conflict {self.current_conflict_index + 1} of {len(self.conflicts)}",
-            )
-        )
-        lines.append(("", "\n"))
-        lines.append(
-            (
-                "class:conflict-type",
-                f"Type: {conflict.conflict_type.title()} (ID: {db_id})",
-            )
-        )
-        lines.append(
-            (
-                "class:paper-title",
-                f"Title: {title}",
-            )
-        )
-        lines.append(("", "\n\n"))
-
-        # Conflict details - treat PDF conflicts as part of paper conflicts
-        if conflict.conflict_type in ["paper", "pdf"]:
-            lines.extend(self._format_paper_conflict(conflict))
-
-        return lines
-
-    def _format_paper_conflict(self, conflict: SyncConflict):
-        """Format paper/PDF conflict details."""
-        lines = []
-
-        if conflict.conflict_type == "pdf":
-            # PDF conflict - show as PDF file conflict
-            lines.append(("class:paper-title", f"PDF File: {conflict.item_id}"))
-            lines.append(("", "\n\n"))
-
-            # Show PDF-specific information
-            local_info = conflict.local_data
-            remote_info = conflict.remote_data
-
-            # Compare file information
-            local_size = local_info.get("size", 0)
-            remote_size = remote_info.get("size", 0)
-            size_diff = abs(local_size - remote_size)
-
-            lines.append(("class:section-header", "PDF Information:"))
-            lines.append(("", "\n"))
-
-            if size_diff > 0:
-                if local_size > remote_size:
-                    lines.append(
-                        ("class:info", f"Local file is {size_diff:,} bytes larger")
+                progress_with_counts = self.progress_text
+                if "papers" in self.progress_text.lower() and self.papers_total > 0:
+                    progress_with_counts = (
+                        f"Synchronizing {self.papers_total} papers..."
                     )
+                elif (
+                    "collections" in self.progress_text.lower()
+                    and self.collections_total > 0
+                ):
+                    progress_with_counts = (
+                        f"Synchronizing {self.collections_total} collections..."
+                    )
+                elif "pdf" in self.progress_text.lower() and self.pdfs_total > 0:
+                    progress_with_counts = f"Synchronizing {self.pdfs_total} PDFs..."
                 else:
-                    lines.append(
-                        ("class:info", f"Remote file is {size_diff:,} bytes larger")
-                    )
-                lines.append(("", "\n"))
+                    progress_with_counts = self.progress_text
 
-            lines.append(
-                ("class:warning", "⚠️ Files have different content (hash mismatch)")
-            )
-            lines.append(("", "\n\n"))
-
-            # Show local PDF info
-            lines.append(("class:local-version", "Local PDF:"))
-            lines.append(("", "\n"))
-            lines.append(("", f"  Size: {local_size:,} bytes"))
-            lines.append(("", "\n"))
-            lines.append(("", f"  Modified: {local_info.get('modified', 'Unknown')}"))
-            lines.append(("", "\n"))
-            lines.append(("", f"  Hash: {local_info.get('hash', 'Unknown')[:16]}..."))
-            lines.append(("", "\n\n"))
-
-            # Show remote PDF info
-            lines.append(("class:remote-version", "Remote PDF:"))
-            lines.append(("", "\n"))
-            lines.append(("", f"  Size: {remote_size:,} bytes"))
-            lines.append(("", "\n"))
-            lines.append(("", f"  Modified: {remote_info.get('modified', 'Unknown')}"))
-            lines.append(("", "\n"))
-            lines.append(("", f"  Hash: {remote_info.get('hash', 'Unknown')[:16]}..."))
-            lines.append(("", "\n\n"))
-
-        else:
-            # Paper conflict - show paper title first
-            title = conflict.local_data.get("title") or conflict.remote_data.get(
-                "title", "Unknown Paper"
-            )
-            lines.append(
-                (
-                    "class:paper-title",
-                    f"Paper: {title[:80]}{'...' if len(title) > 80 else ''}",
-                )
-            )
-            lines.append(("", "\n\n"))
-
-        # Only show field differences for paper conflicts, not PDF conflicts
-        if conflict.conflict_type == "paper":
-            # Group differences by importance
-            important_fields = ["title", "abstract", "authors", "doi", "arxiv_id"]
-        metadata_fields = [
-            "venue_full",
-            "venue_short",
-            "publication_year",
-            "paper_type",
-        ]
-        user_fields = ["notes", "tags", "read_status", "priority", "summary"]
-
-        def format_field_group(field_names, group_title):
-            group_lines = []
-            has_content = False
-
-            for field in field_names:
-                if field in conflict.differences:
-                    has_content = True
-                    diff = conflict.differences[field]
-
-                    # Format field name
-                    display_name = field.replace("_", " ").title()
-                    group_lines.append(("class:field-name", f"{display_name}:"))
-                    group_lines.append(("", "\n"))
-
-                    # Format local value
-                    local_val = (
-                        str(diff["local"] or "") if diff["local"] is not None else ""
-                    )
-                    local_display = local_val[:80] + (
-                        "..." if len(local_val) > 80 else ""
-                    )
-                    group_lines.append(
-                        ("class:local-version", f"  Local:  {local_display}")
-                    )
-                    group_lines.append(("", "\n"))
-
-                    # Format remote value
-                    remote_val = (
-                        str(diff["remote"] or "") if diff["remote"] is not None else ""
-                    )
-                    remote_display = remote_val[:80] + (
-                        "..." if len(remote_val) > 80 else ""
-                    )
-                    group_lines.append(
-                        ("class:remote-version", f"  Remote: {remote_display}")
-                    )
-                    group_lines.append(("", "\n\n"))
-
-            if has_content:
-                return (
-                    [("class:section-header", f"{group_title}:")]
-                    + [("", "\n")]
-                    + group_lines
-                )
-            return []
-
-        # Add field groups
-        lines.extend(format_field_group(important_fields, "Key Information"))
-        lines.extend(format_field_group(metadata_fields, "Publication Details"))
-        lines.extend(format_field_group(user_fields, "User Data"))
-
-        # Check for PDF hash conflicts
-        local_pdf = conflict.local_data.get("pdf_path")
-        remote_pdf = conflict.remote_data.get("pdf_path")
-        if local_pdf or remote_pdf:
-            lines.append(("class:section-header", "PDF Information:"))
-            lines.append(("", "\n"))
-            if local_pdf and remote_pdf and local_pdf == remote_pdf:
-                lines.append(
-                    (
-                        "class:warning",
-                        "⚠️ Same PDF filename but different content hashes",
-                    )
-                )
-                lines.append(("", "\n"))
-            lines.append(
-                ("class:local-version", f"  Local PDF:  {local_pdf or 'None'}")
-            )
-            lines.append(("", "\n"))
-            lines.append(
-                ("class:remote-version", f"  Remote PDF: {remote_pdf or 'None'}")
-            )
-            lines.append(("", "\n\n"))
+            lines.append(("class:progress-message", f"Status: {progress_with_counts}"))
 
         return lines
 
     def _get_summary_text(self):
-        """Get the sync summary as formatted text."""
         if not self.sync_result:
-            return "No summary available."
+            return [("", "No summary available.")]
 
         lines = []
-
+        # Don't show summary here - it's now shown in progress status
+        
+        # Show errors if any
         if self.sync_result.errors:
-            lines.append(
-                ("class:error", f"Completed with {len(self.sync_result.errors)} errors")
-            )
-            lines.append(("", "\n"))
-        elif self.sync_result.has_conflicts():
-            lines.append(
-                (
-                    "class:warning",
-                    f"Completed with {len(self.sync_result.conflicts)} conflicts resolved",
-                )
-            )
-            lines.append(("", "\n"))
-
-        # Two-list summary as specified: Local and Remote
-        detailed = self.sync_result.detailed_changes
-        local_changes = []
-        remote_changes = []
-
-        # Categorize changes into Local and Remote operations
-        for category, items in detailed.items():
-            if items:
-                for item in items:
-                    display_item = f"{category.replace('_', ' ').title()}: {item}"
-                    if "(from remote)" in item:
-                        remote_changes.append(display_item)
-                    elif "(kept both versions)" in item:
-                        # This is a new local entry created to keep both, so it's a local change
-                        local_changes.append(display_item)
-                    else:
-                        # Default to local change (applied to remote)
-                        local_changes.append(display_item)
-
-        # Show Local changes
-        if local_changes:
-            lines.append(("class:section-header", "Local Changes (Applied to Remote):"))
-            lines.append(("", "\n"))
-            for change in local_changes[:10]:  # Limit to first 10
-                lines.append(("", f"  • {change}"))
-                lines.append(("", "\n"))
-            if len(local_changes) > 10:
-                lines.append(
-                    ("class:info", f"  ... and {len(local_changes) - 10} more")
-                )
-                lines.append(("", "\n"))
-            lines.append(("", "\n"))
-
-        # Show Remote changes
-        if remote_changes:
-            lines.append(("class:section-header", "Remote Changes (Applied to Local):"))
-            lines.append(("", "\n"))
-            for change in remote_changes[:10]:  # Limit to first 10
-                lines.append(("", f"  • {change}"))
-                lines.append(("", "\n"))
-            if len(remote_changes) > 10:
-                lines.append(
-                    ("class:info", f"  ... and {len(remote_changes) - 10} more")
-                )
-                lines.append(("", "\n"))
-            lines.append(("", "\n"))
-
-        # If no changes in either direction
-        if not local_changes and not remote_changes:
-            lines.append(
-                ("class:info", "No changes were needed - databases are in sync")
-            )
-            lines.append(("", "\n"))
-
-        # Errors if any
-        if self.sync_result.errors:
-            lines.append(("class:section-header", "Errors:"))
-            lines.append(("", "\n"))
+            lines.append(("class:error bold", "ERRORS:"))
             for error in self.sync_result.errors:
-                lines.append(("class:error", f"  • {error}"))
+                lines.append(("class:error", f"\n  • {error}"))
+
+        # Add detailed changes if available, organized by Local/Remote
+        if hasattr(self.sync_result, "detailed_changes") and any(
+            self.sync_result.detailed_changes.values()
+        ):
+            # Add spacing only if there were errors above
+            if self.sync_result.errors:
                 lines.append(("", "\n"))
+            # Separate local and remote changes
+            local_changes = {}
+            remote_changes = {}
+
+            for change_type, items in self.sync_result.detailed_changes.items():
+                if items:
+                    local_items = []
+                    remote_items = []
+
+                    for item in items:
+                        # Remove redundant resolution text
+                        clean_item = (
+                            item.replace(" (used local version)", "")
+                            .replace(" (used remote version)", "")
+                            .replace(" (from remote)", "")
+                        )
+
+                        if "(used remote version)" in item or "(from remote)" in item:
+                            # This was added/updated from remote to local
+                            remote_items.append(clean_item)
+                        else:
+                            # This was added/updated from local to remote
+                            local_items.append(clean_item)
+
+                    if local_items:
+                        local_changes[change_type] = local_items
+                    if remote_items:
+                        remote_changes[change_type] = remote_items
+
+            # Display Local changes
+            if local_changes:
+                lines.append(("class:info bold", "LOCAL → REMOTE:"))
+                for change_type, items in local_changes.items():
+                    category = change_type.replace("_", " ").title()
+                    # Fix PDF capitalization
+                    if "Pdfs" in category:
+                        category = category.replace("Pdfs", "PDFs")
+                    lines.append(("", f"\n  {category}:"))
+                    for item in items[:8]:  # Show up to 8 items per category
+                        lines.append(("", f"\n    • {item}"))
+                    if len(items) > 8:
+                        lines.append(("", f"\n    ... and {len(items) - 8} more"))
+
+            # Display Remote changes
+            if remote_changes:
+                if (
+                    local_changes
+                ):  # Only add extra spacing if there were local changes above
+                    lines.append(("", "\n"))
+                    lines.append(("class:info bold", "\nREMOTE → LOCAL:"))
+                else:
+                    lines.append(("class:info bold", "REMOTE → LOCAL:"))
+                for change_type, items in remote_changes.items():
+                    category = change_type.replace("_", " ").title()
+                    # Fix PDF capitalization
+                    if "Pdfs" in category:
+                        category = category.replace("Pdfs", "PDFs")
+                    lines.append(("", f"\n  {category}:"))
+                    for item in items[:8]:  # Show up to 8 items per category
+                        lines.append(("", f"\n    • {item}"))
+                    if len(items) > 8:
+                        lines.append(("", f"\n    ... and {len(items) - 8} more"))
+
 
         return lines
+
+    def _has_detailed_changes(self):
+        """Check if there are detailed changes or errors to display."""
+        if not self.sync_result:
+            return False
+        # Show summary if there are errors or detailed changes
+        return (
+            (self.sync_result.errors and len(self.sync_result.errors) > 0) or
+            (hasattr(self.sync_result, "detailed_changes") and any(
+                self.sync_result.detailed_changes.values()
+            ))
+        )
 
     def _get_instructions(self):
-        """Get instruction text based on current state."""
-        lines = []
-
+        """Get instructions text for the dialog."""
         if self.show_conflicts:
-            lines.append(
-                (
-                    "class:instruction",
-                    "Shortcuts: [L] Use Local  [R] Use Remote  [K] Keep Both",
-                )
-            )
-            lines.append(("", "\n"))
-            lines.append(
-                (
-                    "class:instruction",
-                    "All Actions: [Shift+L] All Local  [Shift+R] All Remote  [A] Keep All",
-                )
-            )
-            lines.append(("", "\n"))
-            lines.append(
-                (
-                    "class:instruction",
-                    "Navigate: ← → [N]ext [P]rev | [Esc] Close",
-                )
-            )
-
-        return lines
-
-    def _next_conflict(self):
-        """Move to next conflict or finish if all resolved."""
-        if self.current_conflict_index < len(self.conflicts) - 1:
-            self.current_conflict_index += 1
-        else:
-            # All conflicts resolved, finish conflict resolution
-            self.show_conflicts = False
-            self.conflict_resolution_event.set()  # Wake up the sync thread
-
-    def _prev_conflict(self):
-        """Move to previous conflict."""
-        if self.current_conflict_index > 0:
-            self.current_conflict_index -= 1
-
-    def _create_resolution_handler(self, resolution: str):
-        """Create a handler for conflict resolution buttons."""
-
-        def handler():
-            self._resolve_conflict(resolution)
-
-        return handler
-
-    def _create_all_resolution_handler(self, resolution: str):
-        """Create a handler for all-conflict resolution buttons."""
-
-        def handler():
-            self._resolve_all_conflicts(resolution)
-
-        return handler
+            return [("", "L=Local, R=Remote, B=Both | Shift+L/R/A=All | Esc=Cancel")]
+        return []
 
     def _resolve_conflict(self, resolution: str):
-        """Resolve the current conflict."""
         if self.show_conflicts and self.conflicts:
             conflict = self.conflicts[self.current_conflict_index]
             self.resolutions[f"{conflict.conflict_type}_{conflict.item_id}"] = (
                 resolution
             )
-            self._next_conflict()
 
-    def _resolve_all_conflicts(self, resolution: str):
-        """Resolve all remaining conflicts with the given resolution."""
-        if self.show_conflicts:
-            for conflict in self.conflicts:
-                self.resolutions[f"{conflict.conflict_type}_{conflict.item_id}"] = (
-                    resolution
-                )
-            self.show_conflicts = False
-            self.sync_complete = True
-            self.conflict_resolution_event.set()
+    def _handle_close(self):
+        if not self.sync_complete:
+            self.sync_cancelled = True
+        self.callback(self.sync_result if self.sync_complete else None)
 
     def start_sync(self):
-        """Start the sync operation in a background thread."""
-
         def sync_worker():
             try:
                 from ..services import SyncService
 
-                # Create a conflict resolver that will set conflicts and expand the dialog
                 def conflict_resolver(conflicts):
                     if conflicts and not self.sync_cancelled:
                         self.conflicts = conflicts
-
                         if self.auto_sync_mode:
-                            # Auto-sync mode: automatically resolve all conflicts as "keep_both"
-                            self.progress_text = f"Auto-sync mode: keeping all {len(conflicts)} conflicting items"
-                            get_app().invalidate()
+                            return {
+                                f"{c.conflict_type}_{c.item_id}": "keep_both"
+                                for c in conflicts
+                            }
 
-                            # Auto-resolve all conflicts
-                            auto_resolutions = {}
-                            for conflict in conflicts:
-                                conflict_id = (
-                                    f"{conflict.conflict_type}_{conflict.item_id}"
-                                )
-                                auto_resolutions[conflict_id] = "keep_both"
-
-                            # Brief pause to show the auto-resolution message
-                            import time
-
-                            time.sleep(0.2)
-
-                            return auto_resolutions
-                        else:
-                            # Manual mode: show conflicts for user resolution
-                            self.show_conflicts = True
-                            self.progress_text = (
-                                f"Found {len(conflicts)} conflicts requiring resolution"
-                            )
-                            get_app().invalidate()
-
-                            # Wait for the user to resolve conflicts
-                            self.conflict_resolution_event.wait()
-                            return self.resolutions
+                        self.show_conflicts = True
+                        get_app().invalidate()
+                        self.conflict_resolution_event.wait()
+                        return self.resolutions
                     return {}
 
-                # Run sync with progress updates
                 def progress_updater(message, counts=None):
                     if not self.sync_cancelled:
                         self.progress_text = message
@@ -862,10 +694,7 @@ class SyncProgressDialog:
                                     ((i + 1) / len(steps)) * 100
                                 )
                                 break
-                        # Debug delay to see progress bar (0.5s as requested)
-                        import time
 
-                        time.sleep(0.2)
                         get_app().invalidate()
 
                 sync_service = SyncService(
@@ -883,25 +712,12 @@ class SyncProgressDialog:
                     self.sync_complete = True
                     self.progress_percentage = 100
                     self.progress_text = "Sync completed"
-
-                    # Update status bar immediately if status updater is provided
-                    if self.status_updater:
-                        if self.sync_result.errors:
-                            self.status_updater(
-                                f"Sync completed with errors: {self.sync_result.errors[0]}",
-                                "error",
-                            )
-                        elif self.sync_result.has_conflicts():
-                            self.status_updater(
-                                "Sync completed with conflicts resolved", "success"
-                            )
-                        else:
-                            self.status_updater("Finalizing sync", "success")
-
-                    # Auto-show summary after sync completion
                     if self.sync_result:
+                        # Always show summary after completion, regardless of conflict state
                         self.show_summary = True
-
+                        self.show_conflicts = False
+                        # Set flag to focus Close button after UI updates
+                        self.should_focus_close = True
                     get_app().invalidate()
 
             except Exception as e:
@@ -914,19 +730,7 @@ class SyncProgressDialog:
         self.sync_thread.start()
 
     def get_initial_focus(self):
-        """Return the initial focus element."""
         return self.cancel_button
-
-    def _handle_close(self):
-        """Handle close button press."""
-        if self.sync_complete or self.sync_cancelled:
-            self.callback(self.sync_result if self.sync_complete else None)
-        else:
-            # Cancel sync immediately
-            self.sync_cancelled = True
-            self.progress_text = "Sync cancelled"
-            # Close dialog immediately on cancel
-            self.callback(None)
 
     def __pt_container__(self):
         return self.dialog

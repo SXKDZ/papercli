@@ -1,35 +1,148 @@
 """UI setup utilities for PaperCLI."""
 
-from prompt_toolkit.application import Application
-from prompt_toolkit.application import get_app
+from prompt_toolkit.application import Application, get_app
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.data_structures import Point
 from prompt_toolkit.document import Document
-from prompt_toolkit.filters import Condition
-from prompt_toolkit.filters import has_focus
+from prompt_toolkit.filters import Condition, has_focus, to_filter
 from prompt_toolkit.formatted_text import FormattedText
-from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.key_binding import merge_key_bindings
+from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
 from prompt_toolkit.key_binding.bindings import scroll
 from prompt_toolkit.key_binding.defaults import load_key_bindings
-from prompt_toolkit.layout import HSplit
-from prompt_toolkit.layout import Layout
-from prompt_toolkit.layout import Window
-from prompt_toolkit.layout import WindowAlign
-from prompt_toolkit.layout.containers import ConditionalContainer
-from prompt_toolkit.layout.containers import Float
-from prompt_toolkit.layout.containers import FloatContainer
-from prompt_toolkit.layout.containers import ScrollOffsets
-from prompt_toolkit.layout.controls import BufferControl
-from prompt_toolkit.layout.controls import FormattedTextControl
-from prompt_toolkit.layout.margins import ScrollbarMargin
+from prompt_toolkit.layout import HSplit, Layout, Window, WindowAlign
+from prompt_toolkit.layout.containers import (
+    ConditionalContainer,
+    Float,
+    FloatContainer,
+    ScrollOffsets,
+    WindowRenderInfo,
+)
+from prompt_toolkit.layout.controls import (
+    BufferControl,
+    FormattedTextControl,
+    UIContent,
+    UIControl,
+)
+from prompt_toolkit.layout.margins import Margin, ScrollbarMargin
 from prompt_toolkit.layout.menus import CompletionsMenu
 from prompt_toolkit.layout.processors import BeforeInput
 from prompt_toolkit.styles import Style
-from prompt_toolkit.widgets import Dialog
-from prompt_toolkit.widgets import Frame
+from prompt_toolkit.widgets import Dialog, Frame
 
 from ..version import get_version
+
+
+class SpacingMargin(Margin):
+    """A simple margin that creates spacing with the specified number of spaces."""
+
+    def __init__(self, width: int = 1):
+        self.width = width
+
+    def get_width(self, ui_content):
+        return self.width
+
+    def create_margin(self, window_render_info, width, height):
+        return [" " * width for _ in range(height)]
+
+
+class CustomScrollbarMargin(Margin):
+    """Custom scrollbar margin that gets scroll info directly from paper list control."""
+
+    def __init__(
+        self,
+        paper_list_control,
+        display_arrows=False,
+        up_arrow_symbol="^",
+        down_arrow_symbol="v",
+        log_callback=None,
+    ):
+        self.paper_list_control = paper_list_control
+        self.display_arrows = to_filter(display_arrows)
+        self.up_arrow_symbol = up_arrow_symbol
+        self.down_arrow_symbol = down_arrow_symbol
+        self.log_callback = log_callback
+
+    def get_width(self, get_ui_content):
+        return 1
+
+    def create_margin(self, window_render_info, width, height):
+        # Get info directly from our paper list control
+        content_height = (
+            len(self.paper_list_control.papers) if self.paper_list_control.papers else 1
+        )
+        actual_window_height = (
+            window_render_info.window_height
+        )  # The real visible lines
+        display_arrows = self.display_arrows()
+
+        # Available space for scrollbar (minus arrows)
+        scrollbar_space = actual_window_height
+        if display_arrows:
+            scrollbar_space -= 2
+
+        try:
+            # Calculate what portion of content is visible - use actual window height
+            fraction_visible = min(1.0, actual_window_height / float(content_height))
+
+            # Use the window's actual vertical scroll offset
+            if content_height <= actual_window_height:
+                fraction_above = 0.0
+            else:
+                # Get the actual scroll position from window render info
+                scroll_top = window_render_info.vertical_scroll
+                max_scroll = content_height - actual_window_height
+                fraction_above = scroll_top / float(max_scroll) if max_scroll > 0 else 0.0
+
+            scrollbar_height = int(
+                min(scrollbar_space, max(1, scrollbar_space * fraction_visible))
+            )
+            # Position scrollbar so it ends at the right place, not starts
+            scrollbar_top = int((scrollbar_space - scrollbar_height) * fraction_above)
+
+        except ZeroDivisionError:
+            return []
+        else:
+
+            def is_scroll_button(row):
+                """True if we should display a button on this row."""
+                return scrollbar_top <= row < scrollbar_top + scrollbar_height
+
+            # Up arrow.
+            result = []
+            if display_arrows:
+                result.extend(
+                    [
+                        ("class:scrollbar.arrow", self.up_arrow_symbol),
+                        ("class:scrollbar", "\n"),
+                    ]
+                )
+
+            # Scrollbar body.
+            scrollbar_background = "class:scrollbar.background"
+            scrollbar_background_start = "class:scrollbar.background,scrollbar.start"
+            scrollbar_button = "class:scrollbar.button"
+            scrollbar_button_end = "class:scrollbar.button,scrollbar.end"
+
+            for i in range(scrollbar_space):
+                if is_scroll_button(i):
+                    if not is_scroll_button(i + 1):
+                        # Give the last cell a different style, because we
+                        # want to underline this.
+                        result.append((scrollbar_button_end, " "))
+                    else:
+                        result.append((scrollbar_button, " "))
+                else:
+                    if is_scroll_button(i + 1):
+                        result.append((scrollbar_background_start, " "))
+                    else:
+                        result.append((scrollbar_background, " "))
+                result.append(("", "\n"))
+
+            # Down arrow
+            if display_arrows:
+                result.append(("class:scrollbar.arrow", self.down_arrow_symbol))
+
+            return result
 
 
 class UISetupMixin:
@@ -503,11 +616,14 @@ class UISetupMixin:
             wrap_lines=False,
         )
 
-        # Paper list content (scrollable)
+        # Paper list content (scrollable) - use custom scrollbar margin for proper scrollbar
+        log_callback = getattr(
+            self, "_add_log", None
+        )  # Use _add_log method from CLI class
         self.paper_list_control_widget = FormattedTextControl(
             text=lambda: self.paper_list_control.get_content_text(),
             focusable=True,
-            show_cursor=False,
+            show_cursor=False,  # Hide cursor visually but keep position for scrolling
             get_cursor_position=lambda: Point(
                 0, self.paper_list_control.selected_index
             ),
@@ -516,7 +632,14 @@ class UISetupMixin:
             content=self.paper_list_control_widget,
             scroll_offsets=ScrollOffsets(top=1, bottom=1),
             wrap_lines=False,
-            right_margins=[ScrollbarMargin(display_arrows=True)],
+            right_margins=[
+                SpacingMargin(width=2),  # Add 2 spaces before scrollbar
+                CustomScrollbarMargin(
+                    self.paper_list_control,
+                    display_arrows=True,
+                    log_callback=log_callback,
+                ),
+            ],
         )
 
         # Combined paper list window
@@ -678,7 +801,6 @@ class UISetupMixin:
             [
                 # UI Components
                 ("header_content", "#f8f8f2 bg:#282a36"),
-                ("header_help_text", "italic #f8f8f2 bg:#282a36"),
                 ("mode_select", "bold #ff5555 bg:#282a36"),
                 ("mode_list", "bold #ffffff bg:#6272a4"),
                 ("mode_filtered", "bold #f1fa8c bg:#282a36"),
@@ -695,7 +817,6 @@ class UISetupMixin:
                 ("empty", "#6272a4 italic"),
                 # Input & Prompt
                 ("prompt", "bold #50fa7b"),
-                ("input", "#f8f8f2 bg:#1e1f29"),
                 # Status bar
                 ("status", "#f8f8f2 bg:#282a36"),
                 ("status-info", "#f8f8f2 bg:#282a36"),
@@ -710,15 +831,25 @@ class UISetupMixin:
                 ("error_title", "bold #ff5555"),
                 ("error_message", "#ffb8b8"),
                 ("error_details", "#6272a4 italic"),
-                ("help_header", "bold #f8f8f2 bg:#8be9fd"),
-                ("help_footer", "bold #f1fa8c"),
                 # Shortkey bar
                 ("shortkey_bar", "italic #f8f8f2 bg:#44475a"),
-                # Frame styles for CollectDialog
-                ("frame.focused", "bold #8be9fd"),  # Blue border for focused frame
-                ("frame.unfocused", "#6272a4"),  # Grey border for unfocused frame
                 # Styling for pending changes
                 ("italic", "italic #f8f8f2"),  # Italic text for pending changes
+                # Conflict resolution styles - softer colors
+                (
+                    "diff-local",
+                    "#50fa7b bg:#1a2f1a",
+                ),  # Subtle green background for local differences
+                (
+                    "diff-remote",
+                    "#8be9fd bg:#1a1a2f",
+                ),  # Subtle blue background for remote differences
+                ("local-version", "#6fa86f"),  # Muted green text for local version
+                ("remote-version", "#6fa8cf"),  # Muted blue text for remote version
+                ("conflict-header", "#cc79a6"),  # Softer pink for conflict header
+                ("conflict-type", "#c1ca8c"),  # Muted yellow for conflict type
+                ("field-name", "#9d83c9"),  # Softer purple for field names
+                ("section-header", "#cc5555"),  # Softer red for section headers
             ]
         )
 

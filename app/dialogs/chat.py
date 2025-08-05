@@ -9,11 +9,7 @@ import threading
 from datetime import datetime
 from io import StringIO
 from pathlib import Path
-from typing import Any
-from typing import Callable
-from typing import Dict
-from typing import List
-from typing import Tuple
+from typing import Any, Callable, Dict, List, Tuple
 
 import PyPDF2
 from openai import OpenAI
@@ -21,27 +17,19 @@ from prompt_toolkit.application import get_app
 from prompt_toolkit.data_structures import Point
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.formatted_text import ANSI
-from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.key_binding import merge_key_bindings
+from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
 from prompt_toolkit.layout import UIContent
-from prompt_toolkit.layout.containers import HSplit
-from prompt_toolkit.layout.containers import ScrollOffsets
-from prompt_toolkit.layout.containers import VSplit
-from prompt_toolkit.layout.containers import Window
+from prompt_toolkit.layout.containers import HSplit, ScrollOffsets, VSplit, Window
 from prompt_toolkit.layout.controls import UIControl
 from prompt_toolkit.layout.dimension import Dimension
-from prompt_toolkit.layout.margins import Margin
-from prompt_toolkit.layout.margins import ScrollbarMargin
-from prompt_toolkit.widgets import Button
-from prompt_toolkit.widgets import Dialog
-from prompt_toolkit.widgets import TextArea
+from prompt_toolkit.layout.margins import Margin, ScrollbarMargin
+from prompt_toolkit.widgets import Button, Dialog, TextArea
 from rich.console import Console
 from rich.markdown import Markdown
 
 from ..prompts import ChatPrompts
-from ..services import BackgroundOperationService
-from ..services import LLMSummaryService
-from ..services import PaperService
+from ..services import BackgroundOperationService, LLMSummaryService, PaperService
+from ..services.pdf import PDFManager
 
 
 class SpacingMargin(Margin):
@@ -312,6 +300,7 @@ class ChatDialog:
         self.background_service = BackgroundOperationService(
             status_bar=self.status_bar, log_callback=self.log_callback
         )
+        self.pdf_manager = PDFManager()
 
         # Initialize OpenAI client
         self.openai_client = OpenAI()
@@ -337,13 +326,13 @@ class ChatDialog:
 
         # Get paper details and potentially generate summaries
         paper_details = []
-        papers_needing_summaries = [
-            paper
-            for paper in self.papers
-            if not self._get_paper_fields(paper)["notes"]
-            and self._get_paper_fields(paper)["pdf_path"]
-            and os.path.exists(self._get_paper_fields(paper)["pdf_path"])
-        ]
+        papers_needing_summaries = []
+        for paper in self.papers:
+            fields = self._get_paper_fields(paper)
+            if not fields["notes"] and fields["pdf_path"]:
+                absolute_path = self.pdf_manager.get_absolute_path(fields["pdf_path"])
+                if os.path.exists(absolute_path):
+                    papers_needing_summaries.append(paper)
 
         # Generate summaries using the shared service
         if papers_needing_summaries:
@@ -380,7 +369,14 @@ class ChatDialog:
 
             if not fields["notes"]:
                 # Try to generate summary from PDF
-                if fields["pdf_path"] and os.path.exists(fields["pdf_path"]):
+                pdf_accessible = False
+                if fields["pdf_path"]:
+                    absolute_path = self.pdf_manager.get_absolute_path(
+                        fields["pdf_path"]
+                    )
+                    pdf_accessible = os.path.exists(absolute_path)
+
+                if pdf_accessible:
 
                     # Add placeholder message for background generation
                     paper_info = (
@@ -636,11 +632,18 @@ class ChatDialog:
 
         @kb.add("c-k")
         def _(event):
-            # Cut text from cursor to end of line
+            # Cut text from cursor to end of line, or delete empty line
             current_control = event.app.layout.current_control
             if hasattr(current_control, "buffer"):
                 buffer = current_control.buffer
-                buffer.delete(count=len(buffer.document.current_line_after_cursor))
+                current_line = buffer.document.current_line
+
+                # If the line is empty, delete the entire line
+                if not current_line.strip():
+                    buffer.delete_line()
+                else:
+                    # Otherwise, delete from cursor to end of line
+                    buffer.delete(count=len(buffer.document.current_line_after_cursor))
 
         # Add backspace and delete handling for text input
         @kb.add("backspace")
@@ -868,22 +871,24 @@ class ChatDialog:
 
             # Extract first 10 pages from PDF if available
             pdf_content_added = False
-            if fields["pdf_path"] and os.path.exists(fields["pdf_path"]):
-                try:
-                    pdf_text = self._extract_first_pages(
-                        fields["pdf_path"], max_pages=10
-                    )
-                    if pdf_text:
-                        paper_context += (
-                            f"First 10 pages attached to this chat:\n{pdf_text}\n"
+            if fields["pdf_path"]:
+                absolute_path = self.pdf_manager.get_absolute_path(fields["pdf_path"])
+                if os.path.exists(absolute_path):
+                    try:
+                        pdf_text = self._extract_first_pages(
+                            absolute_path, max_pages=10
                         )
-                        pdf_content_added = True
-                except Exception as e:
-                    if self.log_callback:
-                        self.log_callback(
-                            "pdf_extract_error",
-                            f"Failed to extract PDF pages for '{fields['title']}': {e}",
-                        )
+                        if pdf_text:
+                            paper_context += (
+                                f"First 10 pages attached to this chat:\n{pdf_text}\n"
+                            )
+                            pdf_content_added = True
+                    except Exception as e:
+                        if self.log_callback:
+                            self.log_callback(
+                                "pdf_extract_error",
+                                f"Failed to extract PDF pages for '{fields['title']}': {e}",
+                            )
 
             # Only include notes/summary if we don't have PDF content (to avoid redundancy)
             if not pdf_content_added and fields["notes"]:

@@ -4,10 +4,7 @@ import os
 import re
 import subprocess
 import traceback
-from typing import Any
-from typing import Dict
-from typing import Optional
-from typing import Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import pyperclip
 

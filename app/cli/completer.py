@@ -2,8 +2,7 @@
 
 from typing import TYPE_CHECKING
 
-from prompt_toolkit.completion import Completer
-from prompt_toolkit.completion import Completion
+from prompt_toolkit.completion import Completer, Completion
 
 if TYPE_CHECKING:
     from .main import PaperCLI
