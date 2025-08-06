@@ -23,7 +23,7 @@ A powerful command-line paper management system for researchers and academics. P
 
 ### 🤖 AI-Powered Features
 - **Interactive Chat Interface**: Local chat dialog with configurable OpenAI models (GPT-4o, etc.)
-  - Automatic PDF content inclusion (first 10 pages) for comprehensive context
+  - Automatic PDF content inclusion (configurable pages limit) for comprehensive context
   - Auto-summarization for papers without notes
   - Input history navigation and keyboard shortcuts
 - **Browser Chat Integration**: Quick access to Claude, ChatGPT, or Gemini web interfaces
@@ -149,13 +149,18 @@ Work on the paper under the cursor ► or selected papers ✓:
 ### System Commands
 - `/sync` - OneDrive synchronization with conflict detection and resolution
 - `/doctor` - Diagnose and fix database/system issues (runs diagnostic check by default)
-  - `clean` - Clean orphaned database records and PDF files
-  - `help` - Show doctor command help
+  - `/doctor clean` - Clean orphaned database records and PDF files
+  - `/doctor help` - Show doctor command help
 - `/config` - Configuration management for models, API keys, and sync settings
+  - `/config model <model>` - Set OpenAI model (gpt-4o, gpt-3.5-turbo, etc.)
+  - `/config openai_api_key <key>` - Set OpenAI API key
+  - `/config remote <path>` - Set remote sync path for OneDrive
+  - `/config auto-sync enable|disable` - Enable/disable automatic sync after edits
+  - `/config pdf-pages <number>` - Set PDF pages limit for chat/summarize operations
 - `/version` - Version management and updates
-  - `check` - Check for available updates
-  - `update` - Update to the latest version (if possible)
-  - `info` - Show detailed version information
+  - `/version check` - Check for available updates
+  - `/version update` - Update to the latest version (if possible)
+  - `/version info` - Show detailed version information
 - `/log` - Show activity log panel
 
 ## Supported Sources
@@ -183,6 +188,7 @@ export OPENAI_API_KEY=your_openai_api_key_here
 # Optional settings
 export OPENAI_MODEL=gpt-4o  # defaults to gpt-4o
 export PAPERCLI_DATA_DIR=/path/to/data  # defaults to ~/.papercli
+export PAPERCLI_PDF_PAGES=10  # defaults to 10 pages for chat/summarize
 ```
 
 ### Method 2: .env File
@@ -197,6 +203,9 @@ OPENAI_MODEL=gpt-4o
 
 # Data directory for database and PDFs (optional, defaults to ~/.papercli)
 PAPERCLI_DATA_DIR=/path/to/your/papercli/data
+
+# PDF pages limit for chat and summarization (optional, defaults to 10)
+PAPERCLI_PDF_PAGES=10
 ```
 
 ### Data Storage
@@ -229,7 +238,7 @@ PaperCLI uses a SQLite database with the following main entities:
 
 ### Function Keys (Quick Actions)
 - **F1** - Add paper dialog
-- **F2** - Open paper PDF
+- **F2** - Open paper PDF  
 - **F3** - Show paper details
 - **F4** - Chat with AI about paper
 - **F5** - Edit paper metadata
@@ -257,7 +266,7 @@ When using the local chat interface (`/chat`):
 
 1. **PDF Download Failures**:
    ```
-   /doctor diagnose
+   /doctor
    ```
 
 2. **Database Issues**:
@@ -272,7 +281,7 @@ When using the local chat interface (`/chat`):
 
 ### Logs and Debugging
 - Check `/log` panel for recent errors
-- Use `/doctor diagnose` for system health checks
+- Use `/doctor` for system health checks
 - Log files are stored in `~/.papercli/logs/`
 
 ## Contributing
