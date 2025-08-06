@@ -10,6 +10,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List
 
+from .database import DatabaseHealthService
+
 
 class SyncOperation:
     """Represents a sync operation to be performed."""
@@ -88,9 +90,11 @@ class SyncResult:
 
         summary_parts = []
         if self.changes_applied["papers_added"] > 0:
-            summary_parts.append(f"{self.changes_applied['papers_added']} papers added")
+            count = self.changes_applied['papers_added']
+            summary_parts.append(f"{count} {'paper' if count == 1 else 'papers'} added")
         if self.changes_applied["papers_updated"] > 0:
-            summary_parts.append(f"{self.changes_applied['papers_updated']} papers updated")
+            count = self.changes_applied['papers_updated']
+            summary_parts.append(f"{count} {'paper' if count == 1 else 'papers'} updated")
         if self.changes_applied["collections_added"] > 0:
             summary_parts.append(f"{self.changes_applied['collections_added']} collections added")
         if self.changes_applied["collections_updated"] > 0:
@@ -198,6 +202,11 @@ class SyncService:
             raise Exception("Another sync operation is already in progress. Please wait for it to complete.")
 
         try:
+            # Fix absolute PDF paths to relative before sync to prevent conflicts
+            if self.progress_callback:
+                self.progress_callback("Converting absolute PDF paths to relative...")
+            self._fix_absolute_pdf_paths()
+            time.sleep(0.1)
             # Ensure remote directory exists
             if self.progress_callback:
                 self.progress_callback("Creating remote directory...")
@@ -915,3 +924,15 @@ class SyncService:
             conn.commit()
         finally:
             conn.close()
+
+    def _fix_absolute_pdf_paths(self):
+        """Fix absolute PDF paths to relative paths before sync."""
+        try:
+            db_health = DatabaseHealthService(log_callback=self.log_callback)
+            fixed = db_health.fix_absolute_pdf_paths()
+            if self.log_callback and fixed["pdf_paths"] > 0:
+                count = fixed['pdf_paths']
+                self.log_callback("sync_prep", f"Fixed {count} absolute PDF {'path' if count == 1 else 'paths'} to relative")
+        except Exception as e:
+            if self.log_callback:
+                self.log_callback("sync_prep_error", f"Failed to fix PDF paths: {str(e)}")

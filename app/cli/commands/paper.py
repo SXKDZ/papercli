@@ -116,8 +116,9 @@ class PaperCommandHandler(BaseCommandHandler):
                 normalized_value = normalized_data.get(field, value)
 
                 updates = {field: normalized_value}
+                count = len(papers_to_update)
                 self.cli.status_bar.set_status(
-                    f"Updating {len(papers_to_update)} paper(s)...", "edit"
+                    f"Updating {count} {'paper' if count == 1 else 'papers'}...", "edit"
                 )
 
                 # Update papers
@@ -149,7 +150,7 @@ class PaperCommandHandler(BaseCommandHandler):
                 if updated_count > 0:
                     self.load_papers()
                     self.cli.status_bar.set_success(
-                        f"Updated '{field}' for {updated_count} paper(s)"
+                        f"Updated '{field}' for {updated_count} {'paper' if updated_count == 1 else 'papers'}"
                     )
 
             else:
@@ -185,9 +186,9 @@ class PaperCommandHandler(BaseCommandHandler):
                     self.cli.paper_list_control.selected_paper_ids.clear()
                 self._add_log(
                     "delete",
-                    f"Deleted {deleted_count} paper(s): {', '.join(paper_titles)}",
+                    f"Deleted {deleted_count} {'paper' if deleted_count == 1 else 'papers'}: {', '.join(paper_titles)}",
                 )
-                self.cli.status_bar.set_success(f"Deleted {deleted_count} papers")
+                self.cli.status_bar.set_success(f"Deleted {deleted_count} {'paper' if deleted_count == 1 else 'papers'}")
             except Exception as e:
                 self.cli.status_bar.set_error(f"Error during deletion: {e}")
 
@@ -286,10 +287,10 @@ class PaperCommandHandler(BaseCommandHandler):
                     break
 
             if opened_count > 0:
-                self.cli.status_bar.set_success(f"Opened {opened_count} PDF(s)")
+                self.cli.status_bar.set_success(f"Opened {opened_count} {'PDF' if opened_count == 1 else 'PDFs'}")
             elif opened_count == 0 and len(papers_to_open) > 1:
                 self.cli.status_bar.set_error(
-                    "No PDFs found to open for the selected paper(s)"
+                    "No PDFs found to open for the selected papers"
                 )
 
         except Exception as e:
@@ -692,7 +693,7 @@ class PaperCommandHandler(BaseCommandHandler):
                     self.load_papers()
                     if updated_count > 0:
                         self.cli.status_bar.set_success(
-                            f"Updated {updated_count} paper(s)."
+                            f"Updated {updated_count} {'paper' if updated_count == 1 else 'papers'}."
                         )
                         # Trigger auto-sync if enabled
                         self.cli.trigger_auto_sync_if_enabled()

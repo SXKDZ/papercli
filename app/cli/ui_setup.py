@@ -281,7 +281,7 @@ class UISetupMixin:
                 self.paper_list_control.toggle_selection()
                 selected_count = len(self.paper_list_control.selected_paper_ids)
                 self.status_bar.set_status(
-                    f"Toggled selection. Selected: {selected_count} papers", "success"
+                    f"Toggled selection. Selected: {selected_count} {'paper' if selected_count == 1 else 'papers'}", "success"
                 )
                 event.app.invalidate()  # Force refresh of UI
             else:
@@ -316,7 +316,7 @@ class UISetupMixin:
                 selected_count = len(self.paper_list_control.selected_paper_ids)
                 if selected_count > 0:
                     self.status_bar.set_status(
-                        f"Exited selection mode ({selected_count} papers remain selected)",
+                        f"Exited selection mode ({selected_count} {'paper' if selected_count == 1 else 'papers'} remain selected)",
                         "info",
                     )
                 else:
@@ -444,7 +444,7 @@ class UISetupMixin:
                 selected_count = len(self.paper_list_control.selected_paper_ids)
                 if selected_count > 0:
                     self.status_bar.set_status(
-                        f"Exited selection mode ({selected_count} papers remain selected)",
+                        f"Exited selection mode ({selected_count} {'paper' if selected_count == 1 else 'papers'} remain selected)",
                         "info",
                     )
                 else:

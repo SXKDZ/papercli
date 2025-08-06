@@ -869,18 +869,19 @@ class ChatDialog:
             if fields["abstract"]:
                 paper_context += f"Abstract: {fields['abstract']}\n"
 
-            # Extract first 10 pages from PDF if available
+            # Extract first N pages from PDF if available (configurable)
             pdf_content_added = False
             if fields["pdf_path"]:
                 absolute_path = self.pdf_manager.get_absolute_path(fields["pdf_path"])
                 if os.path.exists(absolute_path):
                     try:
+                        max_pages = int(os.getenv("PAPERCLI_PDF_PAGES", "10"))
                         pdf_text = self._extract_first_pages(
-                            absolute_path, max_pages=10
+                            absolute_path, max_pages=max_pages
                         )
                         if pdf_text:
                             paper_context += (
-                                f"First 10 pages attached to this chat:\n{pdf_text}\n"
+                                f"First {max_pages} pages attached to this chat:\n{pdf_text}\n"
                             )
                             pdf_content_added = True
                     except Exception as e:

@@ -625,8 +625,9 @@ Respond in this exact JSON format:
                 if len(pdf_reader.pages) == 0:
                     return ""
 
-                # Extract text from first 10 pages to stay within token limits
-                pages_to_extract = min(10, len(pdf_reader.pages))
+                # Extract text from first N pages to stay within token limits (configurable)
+                max_pages = int(os.getenv("PAPERCLI_PDF_PAGES", "10"))
+                pages_to_extract = min(max_pages, len(pdf_reader.pages))
                 full_text = ""
 
                 for i in range(pages_to_extract):

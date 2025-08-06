@@ -419,7 +419,7 @@ class PDFMetadataExtractionService:
                         )
                     else:
                         self.background_service.status_bar.set_success(
-                            f"PDF metadata extraction completed - {updated_count} papers updated"
+                            f"PDF metadata extraction completed - {updated_count} {'paper' if updated_count == 1 else 'papers'} updated"
                         )
 
             # Create confirmation dialog with scrollable textarea

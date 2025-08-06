@@ -1,12 +1,14 @@
 "Sync-related dialogs for conflict resolution and sync summaries."
 
 import difflib
+import os
 import threading
 from io import StringIO
 from typing import Callable, Dict, List
 
 from prompt_toolkit.application import get_app
 from prompt_toolkit.filters import Condition
+from prompt_toolkit.formatted_text import ANSI, to_formatted_text
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import Dimension, HSplit, UIContent, UIControl, Window
 from prompt_toolkit.layout.containers import ConditionalContainer, ScrollOffsets
@@ -16,7 +18,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
-from ..services import SyncConflict
+from ..services import SyncConflict, SyncService
 
 
 class ConflictDisplayControl(UIControl):
@@ -189,7 +191,6 @@ class ConflictDisplayControl(UIControl):
         # --- 3. Conversion to prompt_toolkit format ---
         ansi_output = output.getvalue()
         try:
-            from prompt_toolkit.formatted_text import ANSI, to_formatted_text
 
             formatted_text = to_formatted_text(ANSI(ansi_output))
         except Exception:
@@ -231,7 +232,6 @@ class SyncProgressDialog:
         self.status_updater = status_updater
         self.log_callback = log_callback
 
-        import os
 
         self.auto_sync_mode = os.getenv("PAPERCLI_AUTO_SYNC", "false").lower() == "true"
 
@@ -646,7 +646,6 @@ class SyncProgressDialog:
     def start_sync(self):
         def sync_worker():
             try:
-                from ..services import SyncService
 
                 def conflict_resolver(conflicts):
                     if conflicts and not self.sync_cancelled:

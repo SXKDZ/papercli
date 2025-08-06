@@ -9,6 +9,7 @@ from sqlalchemy import text
 
 from ..db.database import get_db_manager, get_db_session
 from ..db.models import Author, Collection, Paper
+from .pdf import PDFManager
 
 
 class DatabaseHealthService:
@@ -588,8 +589,6 @@ class DatabaseHealthService:
 
     def clean_pdf_filenames(self) -> Dict[str, int]:
         """Rename all PDF files according to the established naming convention."""
-        from .pdf import PDFManager
-
         cleaned = {"renamed_files": 0}
         renamed_files = []
 

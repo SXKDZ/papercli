@@ -54,12 +54,14 @@ class CollectionCommandHandler(BaseCommandHandler):
         if successful_collections:
             self.load_papers()
             if len(successful_collections) == 1:
+                count = len(papers_to_add)
                 self.cli.status_bar.set_success(
-                    f"Added {len(papers_to_add)} paper(s) to collection '{successful_collections[0]}'."
+                    f"Added {count} {'paper' if count == 1 else 'papers'} to collection '{successful_collections[0]}'."
                 )
             else:
+                count = len(papers_to_add)
                 self.cli.status_bar.set_success(
-                    f"Added {len(papers_to_add)} paper(s) to {len(successful_collections)} collections: {', '.join(successful_collections)}"
+                    f"Added {count} {'paper' if count == 1 else 'papers'} to {len(successful_collections)} collections: {', '.join(successful_collections)}"
                 )
 
         if failed_collections:
@@ -133,12 +135,14 @@ class CollectionCommandHandler(BaseCommandHandler):
         if successful_collections:
             self.load_papers()
             if len(successful_collections) == 1:
+                count = len(papers_to_remove)
                 self.cli.status_bar.set_success(
-                    f"Removed {len(papers_to_remove)} paper(s) from collection '{successful_collections[0]}'."
+                    f"Removed {count} {'paper' if count == 1 else 'papers'} from collection '{successful_collections[0]}'."
                 )
             else:
+                count = len(papers_to_remove)
                 self.cli.status_bar.set_success(
-                    f"Removed {len(papers_to_remove)} paper(s) from {len(successful_collections)} collections: {', '.join(successful_collections)}"
+                    f"Removed {count} {'paper' if count == 1 else 'papers'} from {len(successful_collections)} collections: {', '.join(successful_collections)}"
                 )
         elif not all_errors:
             self.cli.status_bar.set_status(

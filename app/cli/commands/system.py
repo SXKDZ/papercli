@@ -7,7 +7,9 @@ from typing import List
 
 import requests
 from openai import OpenAI
+from prompt_toolkit.layout.containers import Float
 
+from ...dialogs.sync import SyncProgressDialog
 from ...version import VersionManager
 from .base import BaseCommandHandler
 
@@ -466,6 +468,23 @@ PDF Filename Convention:
                         "Use 'enable' or 'disable' for auto-sync"
                     )
 
+        elif action == "pdf-pages":
+            if len(args) < 2:
+                self._show_current_pdf_pages()
+            else:
+                try:
+                    pages = int(args[1])
+                    if pages > 0:
+                        self._set_pdf_pages(pages)
+                    else:
+                        self.cli.status_bar.set_error(
+                            "PDF pages must be a positive number"
+                        )
+                except ValueError:
+                    self.cli.status_bar.set_error(
+                        "PDF pages must be a valid number"
+                    )
+
         elif action == "show":
             self._show_all_config()
 
@@ -495,6 +514,8 @@ Available Commands:
 /config auto-sync               - Show current auto-sync setting
 /config auto-sync enable        - Enable auto-sync after edits
 /config auto-sync disable       - Disable auto-sync
+/config pdf-pages               - Show current PDF pages limit for chat/summarize
+/config pdf-pages <number>      - Set PDF pages limit (e.g., 15, 20)
 
 {available_models_text}
 
@@ -506,6 +527,7 @@ Examples:
 /config openai_api_key sk-...   - Set your OpenAI API key
 /config remote ~/OneDrive/papercli-sync  - Set OneDrive sync path
 /config auto-sync enable        - Enable automatic sync after edits
+/config pdf-pages 15            - Set PDF pages limit to 15 for chat/summarize
 
 Configuration Storage:
 ----------------------
@@ -765,12 +787,35 @@ gpt-3.5-turbo                   - GPT-3.5 Turbo model (faster, cheaper)"""
                 "Failed to save auto-sync setting to .env file"
             )
 
+    def _show_current_pdf_pages(self):
+        """Show the current PDF pages limit."""
+        pdf_pages = int(os.getenv("PAPERCLI_PDF_PAGES", "10"))
+        self.cli.status_bar.set_status(f"Current PDF pages limit: {pdf_pages}")
+
+    def _set_pdf_pages(self, pages):
+        """Set the PDF pages limit."""
+        value = str(pages)
+
+        # Update environment variable
+        os.environ["PAPERCLI_PDF_PAGES"] = value
+
+        # Update .env file
+        env_vars = self._read_env_file()
+        env_vars["PAPERCLI_PDF_PAGES"] = value
+
+        if self._write_env_file(env_vars):
+            self.cli.status_bar.set_success(f"PDF pages limit set to: {pages}")
+            self._add_log("config_pdf_pages", f"PDF pages limit set to: {pages}")
+        else:
+            self.cli.status_bar.set_error("Failed to save PDF pages setting to .env file")
+
     def _show_all_config(self):
         """Show all current configuration."""
         model = os.getenv("OPENAI_MODEL", "gpt-4o")
         api_key = os.getenv("OPENAI_API_KEY", "")
         remote_path = os.getenv("PAPERCLI_REMOTE_PATH", "Not set")
         auto_sync = os.getenv("PAPERCLI_AUTO_SYNC", "false").lower() == "true"
+        pdf_pages = int(os.getenv("PAPERCLI_PDF_PAGES", "10"))
 
         if api_key:
             masked_key = (
@@ -790,6 +835,7 @@ OpenAI Model: {model}
 OpenAI API Key: {masked_key}
 Remote Sync Path: {remote_path}
 Auto-sync: {auto_sync_status}
+PDF Pages Limit: {pdf_pages}
 
 Configuration file: {env_file}
 File exists: {'Yes' if env_file.exists() else 'No'}
@@ -798,7 +844,8 @@ To change settings:
 /config model <model_name>
 /config openai_api_key <key>
 /config remote <path>
-/config auto-sync enable|disable"""
+/config auto-sync enable|disable
+/config pdf-pages <number>"""
 
         self.cli.show_help_dialog(config_text, "Current Configuration")
 
@@ -845,10 +892,6 @@ To change settings:
         if hasattr(self.cli, "sync_dialog") and self.cli.sync_dialog is not None:
             self.cli.status_bar.set_warning("Sync is already in progress")
             return
-
-        from prompt_toolkit.layout.containers import Float
-
-        from ...dialogs.sync import SyncProgressDialog
 
         def callback(result):
             """Called when sync dialog is closed."""

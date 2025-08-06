@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
@@ -119,7 +120,6 @@ class VersionManager:
             return True
 
         try:
-            from datetime import datetime, timedelta
 
             last_check = datetime.fromisoformat(config["last_check"])
             check_interval = timedelta(days=config.get("check_interval_days", 7))
@@ -130,7 +130,6 @@ class VersionManager:
 
     def mark_update_check(self) -> None:
         """Mark that we've checked for updates."""
-        from datetime import datetime
 
         config = self.get_update_config()
         config["last_check"] = datetime.now().isoformat()
