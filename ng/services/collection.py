@@ -1,0 +1,96 @@
+from typing import List, Optional
+from sqlalchemy.orm import joinedload
+from sqlalchemy import func
+
+from ng.db.database import get_db_session
+from ng.db.models import Collection, Paper, paper_collections
+
+class CollectionService:
+    """Service for managing collections."""
+
+    def get_all_collections(self) -> List[Collection]:
+        """Get all collections with their papers eagerly loaded."""
+        from sqlalchemy.orm import joinedload
+        with get_db_session() as session:
+            collections = session.query(Collection).options(
+                joinedload(Collection.papers)
+            ).order_by(Collection.name).all()
+            
+            # Force loading of relationships before expunging
+            for collection in collections:
+                _ = collection.papers  # Force load papers relationship
+                for paper in collection.papers:
+                    _ = paper.title  # Force load paper attributes
+                    
+            session.expunge_all()
+            return collections
+
+    def get_collection_by_name(self, name: str) -> Optional[Collection]:
+        """Get a collection by its name."""
+        with get_db_session() as session:
+            collection = session.query(Collection).filter_by(name=name).first()
+            if collection:
+                session.expunge(collection)
+            return collection
+
+    def add_collection(self, name: str) -> Collection:
+        """Add a new collection."""
+        with get_db_session() as session:
+            collection = Collection(name=name)
+            session.add(collection)
+            session.commit()
+            session.refresh(collection)
+            session.expunge(collection)
+            return collection
+
+    def add_papers_to_collection(self, paper_ids: List[int], collection_name: str) -> int:
+        """Adds papers to a specified collection. Creates collection if it doesn't exist."""
+        with get_db_session() as session:
+            collection = session.query(Collection).filter_by(name=collection_name).first()
+            if not collection:
+                collection = Collection(name=collection_name)
+                session.add(collection)
+                session.flush() # Ensure collection gets an ID
+
+            added_count = 0
+            for paper_id in paper_ids:
+                paper = session.query(Paper).get(paper_id)
+                if paper and paper not in collection.papers:
+                    collection.papers.append(paper)
+                    added_count += 1
+            session.commit()
+            return added_count
+
+    def remove_papers_from_collection(self, paper_ids: List[int], collection_name: str) -> tuple[int, List[str]]:
+        """Removes papers from a specified collection."""
+        with get_db_session() as session:
+            collection = session.query(Collection).filter_by(name=collection_name).first()
+            if not collection:
+                return 0, [f"Collection '{collection_name}' not found."]
+
+            removed_count = 0
+            errors = []
+            for paper_id in paper_ids:
+                paper = session.query(Paper).get(paper_id)
+                if paper and paper in collection.papers:
+                    collection.papers.remove(paper)
+                    removed_count += 1
+                elif not paper:
+                    errors.append(f"Paper with ID {paper_id} not found.")
+                else:
+                    errors.append(f"Paper with ID {paper_id} is not in collection '{collection_name}'.")
+            session.commit()
+            return removed_count, errors
+
+    def purge_empty_collections(self) -> int:
+        """Deletes collections that have no papers associated with them."""
+        with get_db_session() as session:
+            # Find collections with no associated papers
+            empty_collections = session.query(Collection).outerjoin(PaperCollection).group_by(Collection.id).having(func.count(PaperCollection.paper_id) == 0).all()
+            
+            deleted_count = 0
+            for collection in empty_collections:
+                session.delete(collection)
+                deleted_count += 1
+            session.commit()
+            return deleted_count

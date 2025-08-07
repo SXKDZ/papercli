@@ -1,0 +1,251 @@
+from __future__ import annotations
+import traceback
+from typing import List, TYPE_CHECKING, Any, Dict
+
+from ng.commands.base import CommandHandler
+from ng.dialogs.collect_dialog import CollectDialog
+from ng.services.collection import CollectionService
+
+if TYPE_CHECKING:
+    from ng.papercli import PaperCLIApp
+
+class CollectionCommandHandler(CommandHandler):
+    """Handler for collection commands like collect, add-to, remove-from."""
+
+    def __init__(self, app: PaperCLIApp):
+        super().__init__(app)
+        self.collection_service = CollectionService()
+
+    def _get_target_papers(self):
+        """Helper to get selected papers from the main app's paper list."""
+        return self.app.screen.query_one("#paper-list-view").get_selected_papers()
+
+    async def handle_add_to_command(self, args: List[str]):
+        """Handle /add-to command."""
+        if not args:
+            self.app.screen.query_one("#status-bar").set_error(
+                "Usage: /add-to <collection_name1> [collection_name2] ..."
+            )
+            return
+
+        collection_names = args  # Each argument is a separate collection name
+        papers_to_add = self._get_target_papers()
+
+        if not papers_to_add:
+            self.app.screen.query_one("#status-bar").set_warning("No papers selected or under cursor.")
+            return
+
+        paper_ids = [p.id for p in papers_to_add]
+        paper_titles = [p.title for p in papers_to_add]
+
+        successful_collections = []
+        failed_collections = []
+
+        for collection_name in collection_names:
+            try:
+                added_count = self.collection_service.add_papers_to_collection(
+                    paper_ids, collection_name
+                )
+                if added_count > 0:
+                    successful_collections.append(collection_name)
+                    # self._add_log(
+                    #     "add_to_collection",
+                    #     f"Added {added_count} paper(s) to '{collection_name}': {', '.join(paper_titles)}",
+                    # ) # Need to implement logging
+            except Exception as e:
+                failed_collections.append(collection_name)
+                # self._add_log(
+                #     "add_to_collection_error",
+                #     f"Failed to add papers to collection '{collection_name}': {str(e)}",
+                # ) # Need to implement logging
+
+        if successful_collections:
+            self.app.load_papers() # Reload papers to reflect changes
+            if len(successful_collections) == 1:
+                count = len(papers_to_add)
+                self.app.screen.query_one("#status-bar").set_success(
+                    f"Added {count} {'paper' if count == 1 else 'papers'} to collection '{successful_collections[0]}'."
+                )
+            else:
+                count = len(papers_to_add)
+                self.app.screen.query_one("#status-bar").set_success(
+                    f"Added {count} {'paper' if count == 1 else 'papers'} to {len(successful_collections)} collections: {', '.join(successful_collections)}"
+                )
+
+        if failed_collections:
+            if not successful_collections:
+                self.app.screen.query_one("#status-bar").set_error(
+                    f"Failed to add papers to collections: {', '.join(failed_collections)}"
+                )
+            else:
+                self.app.screen.query_one("#status-bar").set_error(
+                    f"Some collections failed: {', '.join(failed_collections)}"
+                )
+
+    async def handle_remove_from_command(self, args: List[str]):
+        """Handle /remove-from command."""
+        if not args:
+            self.app.screen.query_one("#status-bar").set_error(
+                "Usage: /remove-from <collection_name1> [collection_name2] ..."
+            )
+            return
+
+        collection_names = args  # Each argument is a separate collection name
+        papers_to_remove = self._get_target_papers()
+
+        if not papers_to_remove:
+            self.app.screen.query_one("#status-bar").set_warning("No papers selected or under cursor.")
+            return
+
+        paper_ids = [p.id for p in papers_to_remove]
+        paper_titles = [p.title for p in papers_to_remove]
+
+        successful_collections = []
+        failed_collections = []
+        total_removed = 0
+        all_errors = []
+
+        for collection_name in collection_names:
+            try:
+                removed_count, errors = (
+                    self.collection_service.remove_papers_from_collection(
+                        paper_ids, collection_name
+                    )
+                )
+
+                if errors:
+                    all_errors.extend(
+                        [f"{collection_name}: {error}" for error in errors]
+                    )
+                    failed_collections.append(collection_name)
+
+                if removed_count > 0:
+                    total_removed += removed_count
+                    successful_collections.append(collection_name)
+                    # self._add_log(
+                    #     "remove_from_collection",
+                    #     f"Removed {removed_count} paper(s) from '{collection_name}': {', '.join(paper_titles)}",
+                    # ) # Need to implement logging
+            except Exception as e:
+                failed_collections.append(collection_name)
+                all_errors.append(f"{collection_name}: {str(e)}")
+                # self._add_log(
+                #     "remove_from_collection_error",
+                #     f"Failed to remove papers from collection '{collection_name}': {str(e)}",
+                # ) # Need to implement logging
+
+        # Show errors if any
+        if all_errors:
+            # self.show_error_panel_with_message( # Need to implement error panel message
+            #     "Remove from Collection Error",
+            #     f"Encountered {len(all_errors)} error(s).\n\n{chr(10).join(all_errors)}",
+            # )
+            self.app.screen.query_one("#status-bar").set_error(f"Errors removing from collections: {all_errors[0]}...")
+
+        if successful_collections:
+            self.app.load_papers()
+            if len(successful_collections) == 1:
+                count = len(papers_to_remove)
+                self.app.screen.query_one("#status-bar").set_success(
+                    f"Removed {count} {'paper' if count == 1 else 'papers'} from collection '{successful_collections[0]}'."
+                )
+            else:
+                count = len(papers_to_remove)
+                self.app.screen.query_one("#status-bar").set_success(
+                    f"Removed {count} {'paper' if count == 1 else 'papers'} from {len(successful_collections)} collections: {', '.join(successful_collections)}"
+                )
+        elif not all_errors:
+            self.app.screen.query_one("#status-bar").set_status(
+                "No papers were removed from any collection."
+            )
+
+    async def handle_collect_command(self, args):
+        """Handle /collect command with optional subcommands."""
+        if not args:
+            # No arguments - show the collection management dialog
+            await self.show_collect_dialog()
+        elif args[0] == "purge":
+            # Purge empty collections
+            self.handle_collect_purge_command()
+        else:
+            self.app.screen.query_one("#status-bar").set_error(
+                f"Unknown collect subcommand '{args[0]}'. Usage: /collect [purge]"
+            )
+
+    def handle_collect_purge_command(self):
+        """Handle /collect purge command to delete empty collections."""
+        try:
+            deleted_count = self.collection_service.purge_empty_collections()
+
+            if deleted_count == 0:
+                self.app.screen.query_one("#status-bar").set_status("No empty collections found to purge.")
+                # self._add_log("Collection Purge", "No empty collections found") # Need to implement logging
+            else:
+                self.app.screen.query_one("#status-bar").set_success(
+                    f"Purged {deleted_count} empty collection{'s' if deleted_count != 1 else ''}."
+                )
+                # self._add_log(
+                #     "Collection Purge",
+                #     f"Successfully deleted {deleted_count} empty collection{'s' if deleted_count != 1 else ''}",
+                # ) # Need to implement logging
+        except Exception as e:
+            # self.show_error_panel_with_message(
+            #     "Collection Purge Error",
+            #     f"Failed to purge empty collections: {e}\n\n{traceback.format_exc()}",
+            # ) # Need to implement error panel message
+            self.app.screen.query_one("#status-bar").set_error(f"Failed to purge empty collections: {e}")
+
+    async def show_collect_dialog(self):
+        """Show the collection management dialog."""
+        def callback(result: Dict[str, Any] | None):
+            if result:
+                try:
+                    # Process the changes
+                    changes_made = False
+                    
+                    # Create new collections
+                    for collection_name in result.get("new_collections", []):
+                        self.collection_service.create_collection(collection_name)
+                        changes_made = True
+                    
+                    # Delete collections
+                    for collection_name in result.get("deleted_collections", []):
+                        collection = self.collection_service.get_collection_by_name(collection_name)
+                        if collection:
+                            self.collection_service.delete_collection(collection.id)
+                            changes_made = True
+                    
+                    # Process paper moves
+                    for paper_id, collection_name, action in result.get("paper_moves", []):
+                        collection = self.collection_service.get_collection_by_name(collection_name)
+                        if collection:
+                            if action == "add":
+                                self.collection_service.add_paper_to_collection(paper_id, collection.id)
+                                changes_made = True
+                            elif action == "remove":
+                                self.collection_service.remove_paper_from_collection(paper_id, collection.id)
+                                changes_made = True
+                    
+                    if changes_made:
+                        self.app.load_papers()  # Reload papers to reflect changes
+                        self.app.screen.query_one("#status-bar").set_success("Collections updated successfully.")
+                    else:
+                        self.app.screen.query_one("#status-bar").set_status("No changes made to collections.")
+                        
+                except Exception as e:
+                    self.app.screen.query_one("#status-bar").set_error(f"Error updating collections: {e}")
+            else:
+                self.app.screen.query_one("#status-bar").set_status("Collection management cancelled.")
+
+        # Get collections and papers
+        try:
+            collections = self.collection_service.get_all_collections()
+            papers = self.app.paper_service.get_all_papers()
+            
+            await self.app.push_screen(CollectDialog(
+                collections,
+                papers,
+                callback,
+            ))
+        except Exception as e:
+            self.app.screen.query_one("#status-bar").set_error(f"Error opening collection dialog: {e}")
