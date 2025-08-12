@@ -1,25 +1,27 @@
 from textual.widgets import Markdown
 from textual.reactive import reactive
 from textual.events import Key
-from textual.containers import Vertical
+from textual.containers import VerticalScroll
 from textual.app import ComposeResult
 from datetime import datetime
 
 from ng.services import ThemeService
 
 
-class LogPanel(Vertical):
+class LogPanel(VerticalScroll):
     """A widget to display detailed error messages and logs."""
 
     DEFAULT_CSS = """
     LogPanel {
+        /* Ensure the panel can scroll and the scrollbar is visible */
+        overflow: auto;
         scrollbar-size: 1 1;
         scrollbar-size-horizontal: 0;
         scrollbar-size-vertical: 1;
     }
-    
+
     LogPanel Markdown {
-        height: 1fr;
+        /* Let content determine height so the container can overflow and scroll */
         width: 100%;
         text-wrap: wrap;
     }
@@ -38,32 +40,32 @@ class LogPanel(Vertical):
         self.can_focus = True  # Enable focus to receive key events
         self._app_ref = None  # Reference to app for direct updates
         self._markdown_widget = None  # Reference to the markdown widget
+        self._pending_update = False  # Flag to prevent multiple updates
 
     def compose(self) -> ComposeResult:
         """Compose the log panel with markdown content and word wrapping."""
         self._markdown_widget = Markdown("", id="log-content")
         yield self._markdown_widget
 
-
     def watch_show_panel(self, show: bool) -> None:
         self.styles.display = "block" if show else "none"
 
     def watch_error_messages(self, messages: list) -> None:
         if self.panel_mode == "error":
-            self.update_content()
+            self._schedule_update()
 
     def watch_logs(self, logs: list) -> None:
         if self.panel_mode == "log":
-            self.update_content()
+            self._schedule_update()
 
     def watch_panel_mode(self, mode: str) -> None:
         self._update_theme_colors(mode)
         self.update_content()
-        
+
     def _update_theme_colors(self, mode: str) -> None:
         """Update theme colors based on mode and current theme."""
         is_light = ThemeService.is_light_theme(app=self.app)
-        
+
         if mode == "log":
             if is_light:
                 self.styles.border = ("solid", "blue")
@@ -99,7 +101,7 @@ class LogPanel(Vertical):
         """Set logs for display."""
         self.logs = logs
         if self.panel_mode == "log":
-            self.update_content()
+            self._schedule_update()
 
     def show_logs(self):
         """Switch to log mode and show the panel."""
@@ -111,13 +113,14 @@ class LogPanel(Vertical):
 
     def refresh_if_visible(self):
         """Refresh logs if panel is visible and in log mode. Called directly by app."""
-        if (self.show_panel and 
-            self.panel_mode == "log" and 
-            self._app_ref and 
-            hasattr(self._app_ref, 'logs')):
+        if (
+            self.show_panel
+            and self.panel_mode == "log"
+            and self._app_ref
+            and hasattr(self._app_ref, "logs")
+        ):
             self.logs = self._app_ref.logs
-            self.update_content()
-
+            self._schedule_update()
 
     def show_errors(self):
         """Switch to error mode."""
@@ -140,7 +143,7 @@ class LogPanel(Vertical):
     def update_error_content(self):
         if not self._markdown_widget:
             return
-            
+
         if not self.error_messages:
             self._markdown_widget.update("")
             return
@@ -162,7 +165,7 @@ class LogPanel(Vertical):
     def update_log_content(self):
         if not self._markdown_widget:
             return
-            
+
         if not self.logs:
             markdown_content = "# Activity Log\n\n*No activities logged in this session.*"
             self._markdown_widget.update(markdown_content)
@@ -191,13 +194,23 @@ class LogPanel(Vertical):
 
         markdown_content = "\n".join(text_lines)
         self._markdown_widget.update(markdown_content)
-
+    
+    def _schedule_update(self):
+        """Schedule a batched update to prevent flashing."""
+        if not self._pending_update:
+            self._pending_update = True
+            self.app.call_later(self._do_update, 0.2)  # 200ms delay
+    
+    def _do_update(self, *args):
+        """Perform the actual update."""
+        self._pending_update = False
+        self.update_content()
 
     def on_key(self, event: Key) -> None:
         """Handle key events for log panel interactions."""
         if not self.show_panel:
             return
-            
+
         if event.key == "escape":
             self.show_panel = False
             # Return focus to command input

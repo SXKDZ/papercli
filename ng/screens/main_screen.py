@@ -40,6 +40,29 @@ class MainScreen(Screen):
         border: thick $accent;
         layer: dialog;
     }
+    .autocomplete-dropdown {
+        height: 8;
+        max-height: 8;
+        min-height: 8;
+        width: auto;
+        max-width: 18;
+        layer: notification;
+        background: $surface;
+        scrollbar-size-vertical: 1;
+        padding: 0;
+        margin: 0;
+        overflow-y: auto;
+    }
+
+    .autocomplete-dropdown > OptionList {
+        height: 8;
+        width: 100%;
+        max-height: 8;
+        min-height: 8;
+        scrollbar-size-vertical: 1;
+        overflow-y: auto;
+        padding: 0;
+    }
     """
 
     def __init__(self, papers: List[Paper], *args, **kwargs):
