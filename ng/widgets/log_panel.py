@@ -170,7 +170,7 @@ class LogPanel(Vertical):
 
         text_lines = []
         text_lines.append("# Activity Log")
-        text_lines.append(f"**Total entries:** {len(self.logs)} | **Session active**")
+        text_lines.append(f"**Total entries:** {len(self.logs)}")
         text_lines.append("")
         text_lines.append("---")
         text_lines.append("")

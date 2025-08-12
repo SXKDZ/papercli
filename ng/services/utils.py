@@ -3,6 +3,7 @@
 import re
 
 from titlecase import titlecase
+from typing import Optional
 
 
 def fix_broken_lines(text: str) -> str:
@@ -228,3 +229,25 @@ def normalize_paper_data(paper_data: dict) -> dict:
         normalized_data["authors"] = normalize_author_names(normalized_data["authors"])
 
     return normalized_data
+
+
+def format_count(count: int, singular: str, plural: Optional[str] = None, include_number: bool = True) -> str:
+    """Return a properly pluralized count string.
+
+    Examples:
+        format_count(1, "paper") -> "1 paper"
+        format_count(2, "paper") -> "2 papers"
+        format_count(1, "collection") -> "1 collection"
+        format_count(3, "collection", "collections") -> "3 collections"
+
+    Args:
+        count: The numeric count.
+        singular: The singular form of the noun (e.g., "paper").
+        plural: Optional explicit plural form. If omitted, appends "s" to singular.
+        include_number: If False, returns just the unit word properly pluralized.
+
+    Returns:
+        The formatted count string.
+    """
+    unit = singular if count == 1 else (plural if plural else f"{singular}s")
+    return f"{count} {unit}" if include_number else unit

@@ -33,9 +33,8 @@ class EditDialog(ModalScreen):
         layer: dialog;
     }
     EditDialog > Container {
-        width: 100;
+        width: 90%;
         height: 90%;
-        max-width: 120;
         border: solid $accent;
         background: $panel;
     }

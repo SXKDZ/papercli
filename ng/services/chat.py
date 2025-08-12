@@ -8,7 +8,7 @@ from typing import Any, Dict, List, TYPE_CHECKING
 
 import pyperclip
 
-from ng.prompts import ChatPrompts
+from ng.services.prompts import ChatPrompts
 from ng.services import PDFManager
 
 if TYPE_CHECKING:

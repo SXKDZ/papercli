@@ -1,16 +1,15 @@
-from textual.screen import Screen
-from textual.widgets import Header, Footer, Input
-from textual.events import Key
-from ng.widgets.paper_list import PaperList
-from ng.widgets.log_panel import LogPanel
-from ng.widgets.command_input import CommandInput
 from typing import List
+
+from textual.events import Key
+from textual.screen import Screen
+from textual.widgets import Footer, Header, Input
+
 from ng.db.models import Paper
-from ng.dialogs import DetailDialog
-from ng.dialogs import MessageDialog
-from ng.dialogs import AddDialog
-from ng.dialogs import FilterDialog
+from ng.dialogs import AddDialog, DetailDialog, FilterDialog, MessageDialog
 from ng.services import CollectionService
+from ng.widgets.command_input import CommandInput
+from ng.widgets.log_panel import LogPanel
+from ng.widgets.paper_list import PaperList
 
 
 class MainScreen(Screen):
@@ -144,8 +143,9 @@ class MainScreen(Screen):
 - **Home/End** - Go to first/last paper
 
 ### Function Keys
-- **? or F1** - Show this help
-- **F2** - Open selected paper
+- **F1** - Add papers
+- **F2** - Open selected paper in default PDF viewer
+- **F3** - Show paper details
 - **F4** - Chat with paper
 - **F5** - Edit paper
 - **F6** - Delete paper
@@ -216,7 +216,7 @@ class MainScreen(Screen):
                 # Call the paper command handler in background worker thread
                 self.app.run_worker(add_paper_and_refresh(), exclusive=False)
 
-        self.app.push_screen(AddDialog(add_callback))
+        self.app.push_screen(AddDialog(add_callback, app=self.app))
 
     def action_show_filter_dialog(self) -> None:
         """Show filter dialog (F3)."""
@@ -287,17 +287,17 @@ class MainScreen(Screen):
                         # Store current cursor position before focus changes
                         current_cursor_row = paper_list.cursor_row
                         paper_list._stored_cursor_row = current_cursor_row
-                        
+
                         # Re-apply cursor row to keep highlight even when focus changes
                         if 0 <= paper_list.cursor_row < len(paper_list.papers):
                             paper_list.move_cursor(row=paper_list.cursor_row)
-                        
+
                         # Always add retain-cursor to preserve cursor highlight
                         try:
                             paper_list.add_class("retain-cursor")
                         except Exception:
                             pass
-                        
+
                         # Maintain selection styling if papers are selected
                         if paper_list.selected_paper_ids and paper_list.in_select_mode:
                             try:
@@ -305,7 +305,7 @@ class MainScreen(Screen):
                                 if hasattr(self.app, "_add_log"):
                                     self.app._add_log(
                                         "keyboard_focus_switch_selection",
-                                        f"added retain-selection class, stored_cursor={current_cursor_row}, classes={paper_list.classes}"
+                                        f"added retain-selection class, stored_cursor={current_cursor_row}, classes={paper_list.classes}",
                                     )
                             except Exception:
                                 pass
@@ -314,7 +314,7 @@ class MainScreen(Screen):
                             if hasattr(self.app, "_add_log"):
                                 self.app._add_log(
                                     "keyboard_focus_switch_cursor",
-                                    f"stored cursor position={current_cursor_row} for non-select mode"
+                                    f"stored cursor position={current_cursor_row} for non-select mode",
                                 )
                         if hasattr(self.app, "_add_log"):
                             self.app._add_log(

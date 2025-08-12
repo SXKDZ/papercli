@@ -1,9 +1,15 @@
+from typing import TYPE_CHECKING, Any, Callable, Dict
+
 from textual.app import ComposeResult
-from textual.containers import VerticalScroll, HorizontalScroll, Container
-from textual.widgets import Button, Static, Input, RadioSet, RadioButton
-from textual.screen import ModalScreen
+from textual.containers import Container, HorizontalScroll, VerticalScroll
 from textual.reactive import reactive
-from typing import Callable, Dict, Any
+from textual.screen import ModalScreen
+from textual.widgets import Button, Input, RadioButton, RadioSet, Static
+
+if TYPE_CHECKING:
+    from ng.papercli import PaperCLIApp
+
+from ng.services.validation import ValidationService
 
 
 class AddDialog(ModalScreen):
@@ -75,10 +81,15 @@ class AddDialog(ModalScreen):
     selected_source = reactive("arxiv")
 
     def __init__(
-        self, callback: Callable[[Dict[str, Any] | None], None] = None, *args, **kwargs
+        self,
+        callback: Callable[[Dict[str, Any] | None], None] = None,
+        app: "PaperCLIApp" = None,
+        *args,
+        **kwargs,
     ):
         super().__init__(*args, **kwargs)
         self.callback = callback
+        self.parent_app = app  # Renamed to avoid conflict with Textual's app property
 
     def compose(self) -> ComposeResult:
         with Container(id="dialog-container"):
@@ -150,6 +161,17 @@ class AddDialog(ModalScreen):
     def action_add_paper(self) -> None:
         source = self.selected_source
         path_id = self.query_one("#path-input", Input).value.strip()
+
+        # Validate input based on source type
+        is_valid, error_message = ValidationService.validate_input(source, path_id)
+
+        if not is_valid:
+            # Show validation error as toast
+            if self.parent_app:
+                self.parent_app.notify(
+                    f"Validation Error: {error_message}", severity="error"
+                )
+            return  # Don't proceed with invalid input
 
         result = {"source": source, "path_id": path_id}
         if self.callback:

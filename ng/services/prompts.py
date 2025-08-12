@@ -1,7 +1,6 @@
-"""
-Centralized prompts for LLM interactions throughout PaperCLI.
-"""
-
+# =============================================================================
+# Centralized LLM Prompts for PaperCLI
+# =============================================================================
 
 class ChatPrompts:
     """Prompts for chat functionality."""
@@ -13,18 +12,19 @@ class ChatPrompts:
 
 {paper_context}
 
-IMPORTANT: Only provide information that is explicitly present in the paper information provided above. Do not hallucinate or make up information. If you cannot answer a question based on the provided information, say 'I do not know' or 'This information is not available in the provided paper content.' You can reference papers by their numbers (e.g., "Paper 1", "Paper 2")."""
+IMPORTANT: Only provide information that is explicitly present in the paper information provided above. Do not hallucinate or make up information. If you cannot answer a question based on the provided information, say "I don't know" or "This information is not available in the provided paper content." You can reference papers by their numbers (e.g., "Paper 1", "Paper 2")."""
 
     @staticmethod
     def clipboard_prompt(papers_count: int, context_parts: str) -> str:
         """Prompt for external LLM use via clipboard."""
-        return f"""I have {papers_count} research paper{'s' if papers_count != 1 else ''} that I would like to discuss with you. Here is the information about each paper:
+        return f"""I have {papers_count} research paper{'s' if papers_count != 1 else ''} that I'd like to discuss with you. Here's the information about each paper:
 
 {context_parts}
 
 You can reference these papers by their numbers (e.g., "Paper 1", "Paper 2"). Please help me analyze and understand these papers, compare different approaches, explain key concepts, or discuss how they relate to each other.
 
-IMPORTANT: Only provide information that is explicitly present in the paper information provided above. Do not hallucinate or make up information. If you cannot answer a question based on the provided information, say 'I do not know' or 'This information is not available in the provided paper content.'"""
+IMPORTANT: Only provide information that is explicitly present in the paper information provided above. Do not hallucinate or make up information. If you cannot answer a question based on the provided information, say "I don't know" or "This information is not available in the provided paper content."
+"""
 
     @staticmethod
     def initial_single_paper(paper_details: str) -> str:
@@ -42,7 +42,7 @@ IMPORTANT: Only provide information that is explicitly present in the paper info
 
 {paper_details}
 
-(You can refer to papers by their numbers, e.g., "Paper 1", "Paper 2", etc.)"""
+(You can refer to papers by their numbers, e.g., 'Paper 1', 'Paper 2', etc.)"""
 
     @staticmethod
     def paper_context_header() -> str:
@@ -72,7 +72,7 @@ Experimental Setup and Results: Describe the experimental design and data collec
 
 Advantages and Limitations: Concisely discuss the strengths of the proposed approach and limitations mentioned by the authors. Only include what is explicitly stated in the paper.
 
-Conclusion: Sum up the key points made about the paper technical approach, its uniqueness, and its comparative advantages and limitations. Base this only on information present in the text.
+Conclusion: Sum up the key points made about the paper's technical approach, its uniqueness, and its comparative advantages and limitations. Base this only on information present in the text.
 
 Please provide your analysis in clear, readable text format (not markdown). Use the exact headers provided above. Be honest about missing information rather than making assumptions.
 
@@ -94,6 +94,27 @@ class MetadataPrompts:
         return "You are an expert at extracting metadata from academic papers. Always respond with valid JSON."
 
     @staticmethod
+    def venue_extraction_system_message() -> str:
+        """System message for venue extraction from DBLP."""
+        return "You are a helpful assistant that extracts venue information from academic paper titles."
+
+    @staticmethod
+    def venue_extraction_prompt(venue_field: str) -> str:
+        """Prompt for extracting venue information from DBLP venue field."""
+        return f"""Given this conference/journal venue field from a DBLP BibTeX entry: "{venue_field}"
+
+Please extract:
+1. venue_full: The full venue name following these guidelines:
+   - For journals: Use full journal name (e.g., "Journal of Chemical Information and Modeling")
+   - For conferences: Use full name without "Proceedings of" or ordinal numbers (e.g., "International Conference on Machine Learning" for Proceedings of the 41st International Conference on Machine Learning)
+2. venue_acronym: The abbreviation following these guidelines:
+   - For journals: Use ISO 4 abbreviated format with periods (e.g., "J. Chem. Inf. Model." for Journal of Chemical Information and Modeling)
+   - For conferences: Use common name (e.g., "NeurIPS" for Conference on Neural Information Processing Systems, not "NIPS")
+
+Respond in this exact JSON format:
+{{"venue_full": "...", "venue_acronym": "..."}} """
+
+    @staticmethod
     def extraction_prompt(pdf_text: str) -> str:
         """Prompt for extracting metadata from PDF text."""
         return f"""
@@ -104,15 +125,15 @@ class MetadataPrompts:
             - abstract: The abstract text (if available)
             - year: Publication year as integer (if available)
             - venue_full: Full venue/conference/journal name following these guidelines:
-              * For journals: Use full journal name (e.g., \"Journal of Chemical Information and Modeling\")
-              * For conferences: Use full name without \"Proceedings of\" or ordinal numbers (e.g., \"International Conference on Machine Learning\" for Proceedings of the 41st International Conference on Machine Learning)
+              * For journals: Use full journal name (e.g., "Journal of Chemical Information and Modeling")
+              * For conferences: Use full name without "Proceedings of" or ordinal numbers (e.g., "International Conference on Machine Learning" for Proceedings of the 41st International Conference on Machine Learning)
             - venue_acronym: Venue abbreviation following these guidelines:
-              * For journals: Use ISO 4 abbreviated format with periods (e.g., \"J. Chem. Inf. Model.\" for Journal of Chemical Information and Modeling)
-              * For conferences: Use common name (e.g., \"NeurIPS\" for Conference on Neural Information Processing Systems, not \"NIPS\")
-            - paper_type: One of \"conference\", \"journal\", \"workshop\", \"preprint\", \"other\"
+              * For journals: Use ISO 4 abbreviated format with periods (e.g., "J. Chem. Inf. Model." for Journal of Chemical Information and Modeling)
+              * For conferences: Use common name (e.g., "NeurIPS" for Conference on Neural Information Processing Systems, not "NIPS")
+            - paper_type: One of "conference", "journal", "workshop", "preprint", "other"
             - doi: DOI (if available)
             - url: URL of the PDF to the paper itself mentioned (if available, not the link to the supplementary material or the code repository)
-            - category: Subject category like \"cs.LG\" (if available) 
+            - category: Subject category like "cs.LG" (if available)
             
             If any field is not available, use null for that field.
             

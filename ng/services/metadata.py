@@ -13,7 +13,7 @@ import rispy
 from openai import OpenAI
 from titlecase import titlecase
 
-from ng.prompts import MetadataPrompts, SummaryPrompts
+from ng.services.prompts import MetadataPrompts, SummaryPrompts
 from ng.services import HTTPClient, fix_broken_lines, normalize_paper_data
 
 if TYPE_CHECKING:
@@ -177,7 +177,7 @@ class MetadataExtractor:
         client = OpenAI()
 
         try:
-            prompt = f"""Given this conference/journal venue field from a DBLP BibTeX entry: "{venue_field}"\n\nPlease extract:\n1. venue_full: The full venue name following these guidelines:\n   - For journals: Use full journal name (e.g., \"Journal of Chemical Information and Modeling\")\n   - For conferences: Use full name without \"Proceedings of\" or ordinal numbers (e.g., \"International Conference on Machine Learning\" for Proceedings of the 41st International Conference on Machine Learning)\n2. venue_acronym: The abbreviation following these guidelines:\n   - For journals: Use ISO 4 abbreviated format with periods (e.g., \"J. Chem. Inf. Model.\" for Journal of Chemical Information and Modeling)\n   - For conferences: Use common name (e.g., \"NeurIPS\" for Conference on Neural Information Processing Systems, not \"NIPS\")\n\nRespond in this exact JSON format:\n{{\"venue_full\": \"...\", \"venue_acronym\": \"...\"}} """
+            prompt = MetadataPrompts.venue_extraction_prompt(venue_field)
 
             # Log the LLM request
             if self.app:
@@ -195,7 +195,7 @@ class MetadataExtractor:
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are a helpful assistant that extracts venue information from academic paper titles.",
+                        "content": MetadataPrompts.venue_extraction_system_message(),
                     },
                     {"role": "user", "content": prompt},
                 ],

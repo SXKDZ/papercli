@@ -1,10 +1,18 @@
 from __future__ import annotations
-from typing import List, TYPE_CHECKING, Any, Dict
+
+from typing import TYPE_CHECKING, Any, Dict, List
 
 from ng.commands import CommandHandler
-from ng.services import PaperService, AddPaperService
-from ng.dialogs import AddDialog, EditDialog, ConfirmDialog
 from ng.db.models import Paper
+from ng.dialogs import AddDialog, ConfirmDialog, DetailDialog, EditDialog
+from ng.services import (
+    AddPaperService,
+    PaperService,
+    PDFService,
+    ValidationService,
+    format_count,
+)
+from ng.services.background import BackgroundOperationService
 
 if TYPE_CHECKING:
     from ng.papercli import PaperCLIApp
@@ -20,11 +28,21 @@ class PaperCommandHandler(CommandHandler):
             paper_service=self.paper_service,
             metadata_extractor=self.app.metadata_extractor,  # Assuming metadata_extractor is on app
             system_service=self.app.system_service,  # Assuming system_service is on app
+            app=self.app,
         )
+        self.background_service = BackgroundOperationService(self.app)
 
     def _get_target_papers(self) -> List[Paper]:
         """Helper to get selected papers from the main app's paper list."""
         return self.app.screen.query_one("#paper-list-view").get_selected_papers()
+
+    def _validate_input_for_source(self, source: str, path_id: str) -> bool:
+        """Helper to validate input for a given source and show error if invalid."""
+        is_valid, error_message = ValidationService.validate_input(source, path_id)
+        if not is_valid:
+            self.app.notify(f"Validation Error: {error_message}", severity="error")
+            return False
+        return True
 
     async def handle_add_command(self, args: List[str]):
         """Handle /add command."""
@@ -43,24 +61,103 @@ class PaperCommandHandler(CommandHandler):
                     try:
 
                         if source.lower() == "arxiv":
-                            self.app.notify(
-                                f"Extracting metadata for arXiv: {path_id}...",
-                                severity="information",
-                            )
-                            result = self.add_paper_service.add_arxiv_paper(path_id)
-                            if result and result.get("paper"):
-                                self.app.notify(
-                                    f"Successfully added arXiv paper: {path_id}",
-                                    severity="information",
+                            # Use async approach: add paper first, then download PDF in background
+                            try:
+                                result = self.add_paper_service.add_arxiv_paper_async(
+                                    path_id
                                 )
-                                if result.get("pdf_error"):
+                                if result and result.get("paper"):
+                                    paper = result["paper"]
                                     self.app.notify(
-                                        f"Added paper but PDF download failed: {result['pdf_error']}",
-                                        severity="warning",
+                                        f"Added arXiv paper: {path_id}",
+                                        severity="information",
                                     )
-                            else:
+                                    self.app.load_papers()  # Reload papers to show new entry
+
+                                    # Start background PDF download
+                                    def pdf_download_task():
+                                        return self.add_paper_service.download_and_update_pdf(
+                                            paper.id,
+                                            "arxiv",
+                                            path_id,
+                                            result["paper_data"],
+                                        )
+
+                                    def on_pdf_complete(download_result, error):
+                                        if error:
+                                            self.app.notify(
+                                                f"PDF download failed for {path_id}: {error}",
+                                                severity="error",
+                                            )
+                                        elif download_result and download_result.get(
+                                            "success"
+                                        ):
+                                            try:
+                                                pdf_service = PDFService(app=self.app)
+                                                pdf_path = download_result.get(
+                                                    "pdf_path", ""
+                                                )
+                                                download_duration = download_result.get(
+                                                    "download_duration", 0.0
+                                                )
+                                                if pdf_path and download_duration > 0:
+                                                    import os
+
+                                                    from ng.db.database import (
+                                                        get_pdf_directory,
+                                                    )
+
+                                                    pdf_dir = get_pdf_directory()
+                                                    abs_pdf_path = os.path.join(
+                                                        pdf_dir, pdf_path
+                                                    )
+                                                    summary = pdf_service.create_download_summary(
+                                                        abs_pdf_path,
+                                                        download_duration,
+                                                    )
+                                                    self.app.notify(
+                                                        f"arXiv PDF {path_id}: {summary}",
+                                                        severity="information",
+                                                    )
+                                                else:
+                                                    self.app.notify(
+                                                        f"PDF downloaded for arXiv: {path_id}",
+                                                        severity="information",
+                                                    )
+                                            except Exception:
+
+                                                self.app.notify(
+                                                    f"PDF downloaded for arXiv: {path_id}",
+                                                    severity="information",
+                                                )
+                                            self.app.load_papers()  # Reload to show PDF indicator
+                                        else:
+                                            error_msg = (
+                                                download_result.get(
+                                                    "error", "Unknown error"
+                                                )
+                                                if download_result
+                                                else "Unknown error"
+                                            )
+                                            self.app.notify(
+                                                f"PDF download failed for {path_id}: {error_msg}",
+                                                severity="warning",
+                                            )
+
+                                    self.background_service.run_operation(
+                                        pdf_download_task,
+                                        f"arxiv_pdf_download_{path_id}",
+                                        f"Downloading PDF for arXiv: {path_id}...",
+                                        on_pdf_complete,
+                                    )
+                                else:
+                                    self.app.notify(
+                                        f"Failed to add arXiv paper: {path_id} - No paper created",
+                                        severity="error",
+                                    )
+                            except Exception as e:
                                 self.app.notify(
-                                    f"Failed to add arXiv paper: {path_id} - No paper created",
+                                    f"Error processing arXiv paper {path_id}: {str(e)}",
                                     severity="error",
                                 )
                         elif source.lower() == "dblp":
@@ -70,13 +167,109 @@ class PaperCommandHandler(CommandHandler):
                                 severity="information",
                             )
                         elif source.lower() == "openreview":
-                            result = self.add_paper_service.add_openreview_paper(
-                                path_id
-                            )
-                            self.app.notify(
-                                f"Successfully added OpenReview paper: {path_id}",
-                                severity="information",
-                            )
+                            # Use async approach: add paper first, then download PDF in background
+                            try:
+                                result = (
+                                    self.add_paper_service.add_openreview_paper_async(
+                                        path_id
+                                    )
+                                )
+                                if result and result.get("paper"):
+                                    paper = result["paper"]
+                                    self.app.notify(
+                                        f"Added OpenReview paper: {path_id}",
+                                        severity="information",
+                                    )
+                                    self.app.load_papers()  # Reload papers to show new entry
+
+                                    # Start background PDF download
+                                    def pdf_download_task():
+                                        return self.add_paper_service.download_and_update_pdf(
+                                            paper.id,
+                                            "openreview",
+                                            path_id,
+                                            result["paper_data"],
+                                        )
+
+                                    def on_pdf_complete(download_result, error):
+                                        if error:
+                                            self.app.notify(
+                                                f"PDF download failed for {path_id}: {error}",
+                                                severity="error",
+                                            )
+                                        elif download_result and download_result.get(
+                                            "success"
+                                        ):
+                                            # Use PDFService to create detailed download summary for OpenReview
+                                            try:
+                                                from ng.services.pdf import PDFService
+
+                                                pdf_service = PDFService(app=self.app)
+                                                pdf_path = download_result.get(
+                                                    "pdf_path", ""
+                                                )
+                                                download_duration = download_result.get(
+                                                    "download_duration", 0.0
+                                                )
+                                                if pdf_path and download_duration > 0:
+                                                    import os
+
+                                                    from ng.db.database import (
+                                                        get_pdf_directory,
+                                                    )
+
+                                                    pdf_dir = get_pdf_directory()
+                                                    abs_pdf_path = os.path.join(
+                                                        pdf_dir, pdf_path
+                                                    )
+                                                    summary = pdf_service.create_download_summary(
+                                                        abs_pdf_path,
+                                                        download_duration,
+                                                    )
+                                                    self.app.notify(
+                                                        f"OpenReview PDF {path_id}: {summary}",
+                                                        severity="information",
+                                                    )
+                                                else:
+                                                    self.app.notify(
+                                                        f"PDF downloaded for OpenReview: {path_id}",
+                                                        severity="information",
+                                                    )
+                                            except Exception:
+                                                self.app.notify(
+                                                    f"PDF downloaded for OpenReview: {path_id}",
+                                                    severity="information",
+                                                )
+                                            self.app.load_papers()  # Reload to show PDF indicator
+                                        else:
+                                            error_msg = (
+                                                download_result.get(
+                                                    "error", "Unknown error"
+                                                )
+                                                if download_result
+                                                else "Unknown error"
+                                            )
+                                            self.app.notify(
+                                                f"PDF download failed for {path_id}: {error_msg}",
+                                                severity="warning",
+                                            )
+
+                                    self.background_service.run_operation(
+                                        pdf_download_task,
+                                        f"openreview_pdf_download_{path_id}",
+                                        f"Downloading PDF for OpenReview: {path_id}...",
+                                        on_pdf_complete,
+                                    )
+                                else:
+                                    self.app.notify(
+                                        f"Failed to add OpenReview paper: {path_id} - No paper created",
+                                        severity="error",
+                                    )
+                            except Exception as e:
+                                self.app.notify(
+                                    f"Error processing OpenReview paper {path_id}: {str(e)}",
+                                    severity="error",
+                                )
                         elif source.lower() == "doi":
                             result = self.add_paper_service.add_doi_paper(path_id)
                             self.app.notify(
@@ -116,7 +309,6 @@ class PaperCommandHandler(CommandHandler):
                             )
                             return
 
-                        self.app.load_papers()  # Reload papers after adding
                     except Exception as e:
                         self.app.notify(
                             f"Error adding paper: {str(e)}", severity="error"
@@ -130,7 +322,7 @@ class PaperCommandHandler(CommandHandler):
                     # Dialog was cancelled
                     self.app.notify("Closed add dialog", severity="information")
 
-            add_dialog = AddDialog(add_dialog_callback)
+            add_dialog = AddDialog(add_dialog_callback, self.app)
             await self.app.push_screen(add_dialog)
         else:
             # Handle direct add command: /add <source> [path_id]
@@ -138,12 +330,61 @@ class PaperCommandHandler(CommandHandler):
             path_id = args[1] if len(args) > 1 else None
 
             try:
+                # Validate input first
+                if not self._validate_input_for_source(source, path_id):
+                    return
+
                 if source == "arxiv":
-                    result = self.add_paper_service.add_arxiv_paper(path_id)
-                    self.app.notify(
-                        f"Successfully added arXiv paper: {path_id}",
-                        severity="information",
-                    )
+                    # Use async approach: add paper first, then download PDF in background
+                    result = self.add_paper_service.add_arxiv_paper_async(path_id)
+                    if result and result.get("paper"):
+                        paper = result["paper"]
+                        self.app.notify(
+                            f"Added arXiv paper: {path_id}",
+                            severity="information",
+                        )
+                        self.app.load_papers()  # Reload papers to show new entry
+
+                        # Start background PDF download
+                        def pdf_download_task():
+                            return self.add_paper_service.download_and_update_pdf(
+                                paper.id, "arxiv", path_id, result["paper_data"]
+                            )
+
+                        def on_pdf_complete(download_result, error):
+                            if error:
+                                self.app.notify(
+                                    f"PDF download failed for {path_id}: {error}",
+                                    severity="error",
+                                )
+                            elif download_result and download_result.get("success"):
+                                self.app.notify(
+                                    f"PDF downloaded for: {path_id}",
+                                    severity="information",
+                                )
+                                self.app.load_papers()  # Reload to show PDF indicator
+                            else:
+                                error_msg = (
+                                    download_result.get("error", "Unknown error")
+                                    if download_result
+                                    else "Unknown error"
+                                )
+                                self.app.notify(
+                                    f"PDF download failed for {path_id}: {error_msg}",
+                                    severity="warning",
+                                )
+
+                        self.background_service.run_operation(
+                            pdf_download_task,
+                            f"arxiv_pdf_download_{path_id}",
+                            f"Downloading PDF for arXiv: {path_id}...",
+                            on_pdf_complete,
+                        )
+                    else:
+                        self.app.notify(
+                            f"Failed to add arXiv paper: {path_id} - No paper created",
+                            severity="error",
+                        )
                 elif source == "dblp":
                     result = self.add_paper_service.add_dblp_paper(path_id)
                     self.app.notify(
@@ -151,11 +392,56 @@ class PaperCommandHandler(CommandHandler):
                         severity="information",
                     )
                 elif source == "openreview":
-                    result = self.add_paper_service.add_openreview_paper(path_id)
-                    self.app.notify(
-                        f"Successfully added OpenReview paper: {path_id}",
-                        severity="information",
-                    )
+                    # Use async approach: add paper first, then download PDF in background
+                    result = self.add_paper_service.add_openreview_paper_async(path_id)
+                    if result and result.get("paper"):
+                        paper = result["paper"]
+                        self.app.notify(
+                            f"Added OpenReview paper: {path_id}",
+                            severity="information",
+                        )
+                        self.app.load_papers()  # Reload papers to show new entry
+
+                        # Start background PDF download
+                        def pdf_download_task():
+                            return self.add_paper_service.download_and_update_pdf(
+                                paper.id, "openreview", path_id, result["paper_data"]
+                            )
+
+                        def on_pdf_complete(download_result, error):
+                            if error:
+                                self.app.notify(
+                                    f"PDF download failed for {path_id}: {error}",
+                                    severity="error",
+                                )
+                            elif download_result and download_result.get("success"):
+                                self.app.notify(
+                                    f"PDF downloaded for: {path_id}",
+                                    severity="information",
+                                )
+                                self.app.load_papers()  # Reload to show PDF indicator
+                            else:
+                                error_msg = (
+                                    download_result.get("error", "Unknown error")
+                                    if download_result
+                                    else "Unknown error"
+                                )
+                                self.app.notify(
+                                    f"PDF download failed for {path_id}: {error_msg}",
+                                    severity="warning",
+                                )
+
+                        self.background_service.run_operation(
+                            pdf_download_task,
+                            f"openreview_pdf_download_{path_id}",
+                            f"Downloading PDF for OpenReview: {path_id}...",
+                            on_pdf_complete,
+                        )
+                    else:
+                        self.app.notify(
+                            f"Failed to add OpenReview paper: {path_id} - No paper created",
+                            severity="error",
+                        )
                 elif source == "doi":
                     result = self.add_paper_service.add_doi_paper(path_id)
                     self.app.notify(
@@ -190,7 +476,6 @@ class PaperCommandHandler(CommandHandler):
                     self.app.notify(f"Unknown source: {source}", severity="error")
                     return
 
-                self.app.load_papers()  # Reload papers after adding
             except Exception as e:
                 self.app.notify(f"Error adding paper: {str(e)}", severity="error")
                 # Also log the error for debugging
@@ -210,7 +495,10 @@ class PaperCommandHandler(CommandHandler):
 
         if len(papers_to_edit) > 1:
             self.app.notify(
-                "Editing multiple papers is not yet supported. Please select only one paper",
+                (
+                    "Editing multiple papers is not yet supported. "
+                    "Please select only one paper"
+                ),
                 severity="warning",
             )
             return
@@ -221,7 +509,9 @@ class PaperCommandHandler(CommandHandler):
         paper_data = self.paper_service.prepare_paper_data_for_edit(paper)
 
         # Use PaperService edit callback method
-        edit_dialog_callback = self.paper_service.create_edit_callback(self.app, paper.id)
+        edit_dialog_callback = self.paper_service.create_edit_callback(
+            self.app, paper.id
+        )
 
         await self.app.push_screen(
             EditDialog(
@@ -242,9 +532,7 @@ class PaperCommandHandler(CommandHandler):
             return
 
         paper_titles = [p.title for p in papers_to_delete]
-        confirm_message = (
-            f"Are you sure you want to delete {len(papers_to_delete)} paper(s)?\n\n"
-        )
+        confirm_message = f"Are you sure you want to delete {format_count(len(papers_to_delete), 'paper')}?\n\n"
         confirm_message += "\n".join([f"- {title}" for title in paper_titles[:5]])
         if len(paper_titles) > 5:
             confirm_message += f"\n...and {len(paper_titles) - 5} more."
@@ -256,7 +544,7 @@ class PaperCommandHandler(CommandHandler):
                     deleted_count = self.paper_service.delete_papers(paper_ids)
                     self.app.load_papers()  # Reload papers to reflect changes
                     self.app.notify(
-                        f"Successfully deleted {deleted_count} paper(s)",
+                        f"Successfully deleted {format_count(deleted_count, 'paper')}",
                         severity="information",
                     )
                 except Exception as e:
@@ -288,7 +576,10 @@ class PaperCommandHandler(CommandHandler):
                     )
                 else:
                     self.app.notify(
-                        f"Failed to open PDF for '{paper.title}': {error_message}",
+                        (
+                            f"Failed to open PDF for '{paper.title}': "
+                            f"{error_message}"
+                        ),
                         severity="error",
                     )
             else:
@@ -306,7 +597,6 @@ class PaperCommandHandler(CommandHandler):
             )
             return
 
-        # Support both single and multiple paper details
-        from ng.dialogs import DetailDialog
-
-        await self.app.push_screen(DetailDialog(papers_to_detail, None))
+        # Show details for the first selected paper (or current paper under cursor)
+        paper_to_show = papers_to_detail[0]  # Take the first paper
+        await self.app.push_screen(DetailDialog(paper_to_show, None))

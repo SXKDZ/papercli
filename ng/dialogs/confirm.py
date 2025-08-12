@@ -16,9 +16,8 @@ class ConfirmDialog(ModalScreen):
     }
     
     ConfirmDialog > Container {
-        width: 80;
+        width: 70%;
         height: auto;
-        max-width: 80;
         min-height: 15;
         border: solid $accent;
         background: $panel;

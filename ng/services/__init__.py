@@ -1,14 +1,15 @@
 # Import basic utilities and services with no dependencies first
 from .http_utils import HTTPClient
-from .utils import fix_broken_lines, normalize_paper_data
+from .utils import fix_broken_lines, normalize_paper_data, format_count
 
 # Import database related services
 from .database import DatabaseHealthService
 from .db_utils import DatabaseHelper, PaperQueries, AuthorQueries, CollectionQueries
 
 # Import services with minimal dependencies
-from .pdf import PDFManager
+from .pdf import PDFManager, PDFService
 from .background import BackgroundOperationService
+from .validation import ValidationService
 from .author import AuthorService
 from .collection import CollectionService
 from .search import SearchService
@@ -45,6 +46,7 @@ __all__ = [
     "CollectionQueries",
     "ExportService",
     "HTTPClient",
+    "format_count",
     "LLMSummaryService",
     "MetadataExtractor",
     "PaperService",
@@ -58,4 +60,6 @@ __all__ = [
     "SyncService",
     "SystemService",
     "ThemeService",
+    "ValidationService",
+    "PDFService",
 ]

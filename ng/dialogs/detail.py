@@ -5,14 +5,13 @@ from textual.screen import ModalScreen
 from typing import Callable, Dict, Any
 from rich.text import Text
 from ng.db.models import Paper
-import subprocess
-import platform
 import os
 import webbrowser
 
-from ng.services import PDFManager, ThemeService
-from ng.dialogs.edit_dialog import EditDialog
-from ng.dialogs.confirm_dialog import ConfirmDialog
+from ng.services import PDFManager, PDFService, ThemeService, format_count, SystemService
+from ng.dialogs.edit import EditDialog
+from ng.dialogs.confirm import ConfirmDialog
+from ng.dialogs.chat import ChatDialog
 
 
 class DetailDialog(ModalScreen):
@@ -82,17 +81,16 @@ class DetailDialog(ModalScreen):
             with VerticalScroll(id="detail-content"):
                 yield Static("", id="detail-text")
             with Horizontal(id="button-bar"):
+                yield Button("Open PDF", id="pdf-button", disabled=True)
+                yield Button("Open Folder", id="folder-button", disabled=True)
                 yield Button(
                     "Open Website",
                     id="website-button",
-                    variant="primary",
                     disabled=True,
                 )
-                yield Button(
-                    "Open PDF", id="pdf-button", variant="success", disabled=True
-                )
+                yield Button("Chat", id="chat-button", variant="default")
                 yield Button("Edit", id="edit-button", variant="default")
-                yield Button("Delete", id="delete-button", variant="error")
+                yield Button("Delete", id="delete-button", variant="default")
                 yield Button("Close", id="close-button", variant="default")
 
     def on_mount(self) -> None:
@@ -110,14 +108,19 @@ class DetailDialog(ModalScreen):
         # Enable/disable buttons based on availability
         website_button = self.query_one("#website-button", Button)
         pdf_button = self.query_one("#pdf-button", Button)
+        folder_button = self.query_one("#folder-button", Button)
 
         # Enable website button if URL is available
         if self.paper.url:
             website_button.disabled = False
 
-        # Enable PDF button if PDF path is available
+        # Enable PDF and folder buttons if PDF path is available
         if self.paper.pdf_path:
-            pdf_button.disabled = False
+            pdf_manager = PDFManager(app=self.app)
+            pdf_path = pdf_manager.get_absolute_path(self.paper.pdf_path)
+            if os.path.exists(pdf_path):
+                pdf_button.disabled = False
+                folder_button.disabled = False
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "close-button":
@@ -126,6 +129,10 @@ class DetailDialog(ModalScreen):
             self._open_website()
         elif event.button.id == "pdf-button":
             self._open_pdf()
+        elif event.button.id == "folder-button":
+            self._show_in_folder()
+        elif event.button.id == "chat-button":
+            self._handle_chat()
         elif event.button.id == "edit-button":
             self._handle_edit_paper()
         elif event.button.id == "delete-button":
@@ -143,33 +150,55 @@ class DetailDialog(ModalScreen):
                 self.app.notify(f"Failed to open website: {str(e)}", severity="error")
 
     def _open_pdf(self) -> None:
-        """Open the paper's PDF file."""
+        """Open the paper's PDF file using SystemService."""
         if not self.paper.pdf_path:
             return
 
         try:
-            pdf_manager = PDFManager()
+            pdf_manager = PDFManager(app=self.app)
             pdf_path = pdf_manager.get_absolute_path(self.paper.pdf_path)
 
-            if os.path.exists(pdf_path):
-                system = platform.system()
-                if system == "Darwin":  # macOS
-                    subprocess.run(["open", pdf_path])
-                elif system == "Windows":
-                    os.startfile(pdf_path)
-                else:  # Linux
-                    subprocess.run(["xdg-open", pdf_path])
-
+            # Use SystemService for cross-platform PDF opening
+            system_service = SystemService(pdf_manager=pdf_manager, app=self.app)
+            success, error_msg = system_service.open_pdf(pdf_path)
+            
+            if success:
                 self.app.notify(
                     f"Opened PDF for '{self.paper.title}'", severity="information"
                 )
             else:
-                self.app.notify(f"PDF file not found: {pdf_path}", severity="error")
+                self.app.notify(f"Failed to open PDF: {error_msg}", severity="error")
         except Exception as e:
             self.app.notify(f"Failed to open PDF: {str(e)}", severity="error")
 
+    def _show_in_folder(self) -> None:
+        """Show the PDF file in Finder/File Explorer using SystemService."""
+        if not self.paper.pdf_path:
+            return
+
+        try:
+            pdf_manager = PDFManager(app=self.app)
+            pdf_path = pdf_manager.get_absolute_path(self.paper.pdf_path)
+
+            # Use SystemService for cross-platform file location opening
+            system_service = SystemService(pdf_manager=pdf_manager, app=self.app)
+            success, error_msg = system_service.open_file_location(pdf_path)
+            
+            if success:
+                self.app.notify(
+                    f"Revealed PDF location for '{self.paper.title}'", severity="information"
+                )
+            else:
+                self.app.notify(f"Failed to show file location: {error_msg}", severity="error")
+        except Exception as e:
+            self.app.notify(f"Failed to show file location: {str(e)}", severity="error")
+
     def action_cancel(self) -> None:
         self.dismiss(None)
+
+    def _handle_chat(self) -> None:
+        """Open the chat dialog for the current paper."""
+        self.app.push_screen(ChatDialog(papers=[self.paper], callback=None))
 
     def _format_paper_details_rich(self, paper: Paper) -> Text:
         """Format paper details with rich formatting."""
@@ -211,13 +240,39 @@ class DetailDialog(ModalScreen):
             content.append("Preprint ID:\n", style=colors["header"])
             content.append(f"{paper.preprint_id}\n\n", style=colors["text"])
 
-        # PDF Path
+        # PDF Path and Info
         if paper.pdf_path:
             content.append("PDF:\n", style=colors["header"])
             # Display absolute path for user convenience
-            pdf_manager = PDFManager()
+            pdf_manager = PDFManager(app=self.app)
+            pdf_service = PDFService(app=self.app)
             absolute_path = pdf_manager.get_absolute_path(paper.pdf_path)
-            content.append(f"{absolute_path}\n\n", style=colors["success"])
+            content.append(f"{absolute_path}\n", style=colors["success"])
+            
+            # Get and display enhanced PDF info using both services
+            pdf_info = pdf_manager.get_pdf_info(paper.pdf_path)
+            if pdf_info["exists"]:
+                info_parts = []
+                
+                # Use PDFService for better formatting
+                if pdf_info["size_bytes"] > 0:
+                    formatted_size = pdf_service.calculate_file_size_formatted(pdf_info["size_bytes"])
+                    info_parts.append(f"Size: {formatted_size}")
+                
+                # Get page count using PDFService
+                page_count = pdf_service.get_pdf_page_count(absolute_path)
+                if page_count > 0:
+                    page_text = "page" if page_count == 1 else "pages"
+                    info_parts.append(f"{page_count} {page_text}")
+                
+                if info_parts:
+                    content.append(f"({', '.join(info_parts)})\n\n", style=colors["text"])
+                else:
+                    content.append("\n", style=colors["text"])
+            elif pdf_info["error"]:
+                content.append(f"({pdf_info['error']})\n\n", style=colors["warning"])
+            else:
+                content.append("\n", style=colors["text"])
         else:
             content.append("PDF:\n", style=colors["header"])
             content.append("No PDF available\n\n", style=colors["error"])
@@ -310,12 +365,12 @@ class DetailDialog(ModalScreen):
                     )
                     self.app.load_papers()  # Reload papers to reflect changes
                     self.app.notify(
-                        f"Successfully deleted {deleted_count} paper(s)",
+                        f"Successfully deleted {format_count(deleted_count, 'paper')}",
                         severity="information",
                     )
                     if self.callback:
                         self.callback({"action": "deleted", "paper": self.paper})
-                    
+
                     # Use call_later to dismiss after the confirm dialog is closed
                     self.app.call_later(lambda: self.dismiss(None))
                 except Exception as e:

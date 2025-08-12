@@ -93,30 +93,40 @@ class PaperService:
 
             try:
                 if "pdf_path" in paper_data and paper_data["pdf_path"]:
-                    from .pdf import PDFManager
-
-                    pdf_manager = PDFManager()
-
-                    current_paper_data = {
-                        "title": paper_data.get("title", paper.title),
-                        "authors": (
-                            [author.full_name for author in paper.get_ordered_authors()]
-                            if paper.paper_authors
-                            else []
-                        ),
-                        "year": paper_data.get("year", paper.year),
-                    }
-
-                    new_pdf_path, error = pdf_manager.process_pdf_path(
-                        paper_data["pdf_path"], current_paper_data, paper.pdf_path
-                    )
-
-                    if error:
-                        pdf_error = f"PDF processing failed: {error}"
-                        paper_data.pop("pdf_path")
-                        return None, pdf_error
+                    # Check if this is a direct path update (relative path from background download)
+                    # or needs processing (URL/local file from user input)
+                    pdf_path_value = paper_data["pdf_path"]
+                    
+                    # If it's a relative path (no slashes or protocol), assume it's already processed
+                    if not ('/' in pdf_path_value or '\\' in pdf_path_value or pdf_path_value.startswith(('http://', 'https://'))):
+                        # Direct relative path update - no processing needed
+                        pass
                     else:
-                        paper_data["pdf_path"] = new_pdf_path
+                        # Process the PDF path (URL or local file)
+                        from .pdf import PDFManager
+
+                        pdf_manager = PDFManager()
+
+                        current_paper_data = {
+                            "title": paper_data.get("title", paper.title),
+                            "authors": (
+                                [author.full_name for author in paper.get_ordered_authors()]
+                                if paper.paper_authors
+                                else []
+                            ),
+                            "year": paper_data.get("year", paper.year),
+                        }
+
+                        new_pdf_path, error = pdf_manager.process_pdf_path(
+                            paper_data["pdf_path"], current_paper_data, paper.pdf_path
+                        )
+
+                        if error:
+                            pdf_error = f"PDF processing failed: {error}"
+                            paper_data.pop("pdf_path")
+                            return None, pdf_error
+                        else:
+                            paper_data["pdf_path"] = new_pdf_path
 
                 if "authors" in paper_data:
                     authors = paper_data.pop("authors")

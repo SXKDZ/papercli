@@ -1,16 +1,18 @@
 from __future__ import annotations
 import os
 import threading
+from functools import partial
 from typing import Callable, Any, Dict, List, TYPE_CHECKING
 
-from ng.services import (
-    PaperService,
-    BackgroundOperationService,
-    MetadataExtractor,
-    PDFManager,
-)
+# Runtime imports for classes used directly
+from ng.services.pdf import PDFManager
+from ng.services.metadata import MetadataExtractor
 
 if TYPE_CHECKING:
+    from ng.services import (
+        PaperService,
+        BackgroundOperationService,
+    )
     from ng.db.models import Paper
 
 
@@ -164,6 +166,18 @@ class LLMSummaryService:
 
             self._check_completion(tracking)
 
+        # Execute the summary generation in background
+        def on_operation_complete(result, error):
+            """Adapter to match BackgroundOperationService callback signature."""
+            on_summary_complete(paper, tracking, result, error)
+        
+        self.background_service.run_operation(
+            operation_func=partial(generate_summary, paper),
+            operation_name=f"{tracking['operation_prefix']}_{paper.id}",
+            initial_message=None,  # Don't override the main status
+            on_complete=on_operation_complete,
+        )
+
     def _check_completion(self, tracking: Dict[str, Any]):
         """Check if all summaries are complete and process the queue."""
         if tracking["completed"] < tracking["total"]:
@@ -195,14 +209,27 @@ class LLMSummaryService:
         def process_queue():
             for paper_id, summary, paper_title in tracking["queue"]:
                 try:
+                    if self.app:
+                        self.app._add_log(
+                            f"{tracking['operation_prefix']}_save_attempt_{paper_id}",
+                            f"Attempting to save summary for paper ID {paper_id}: {paper_title[:50]}...",
+                        )
+                    
                     updated_paper, error_msg = self.paper_service.update_paper(
                         paper_id, {"notes": summary}
                     )
+                    
                     if error_msg:
                         if self.app:
                             self.app._add_log(
                                 f"{tracking['operation_prefix']}_save_error_{paper_id}",
                                 f"Failed to save summary for {paper_title[:50]}...: {error_msg}",
+                            )
+                    else:
+                        if self.app:
+                            self.app._add_log(
+                                f"{tracking['operation_prefix']}_save_success_{paper_id}",
+                                f"Successfully saved summary for {paper_title[:50]}...",
                             )
                 except Exception as e:
                     if self.app:
@@ -212,9 +239,10 @@ class LLMSummaryService:
                         )
 
             # Schedule UI update after processing the whole queue
-            self.background_service.app.call_from_thread(
-                lambda: self._finalize_status(tracking)
-            )
+            if self.background_service.app:
+                self.background_service.app.call_from_thread(
+                    lambda: self._finalize_status(tracking)
+                )
 
         # Process in background
         threading.Thread(target=process_queue, daemon=True).start()
@@ -262,3 +290,4 @@ class LLMSummaryService:
                         "Summary generation finished with no results",
                         severity="information",
                     )
+

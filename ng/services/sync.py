@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List
 
-from ng.services import DatabaseHealthService
+from ng.services import DatabaseHealthService, format_count
 
 
 class SyncOperation:
@@ -693,7 +693,7 @@ class SyncService:
                 paper_count = len(local_papers)
                 self.app._add_log(
                     "sync_collections",
-                    f"Added collection to remote: '{name}' with {paper_count} paper(s)",
+                    f"Added collection to remote: '{name}' with {format_count(paper_count, 'paper')}",
                 )
 
         # Collections only in remote - copy to local
@@ -709,7 +709,7 @@ class SyncService:
                 paper_count = len(remote_papers)
                 self.app._add_log(
                     "sync_collections",
-                    f"Added collection from remote: '{name}' with {paper_count} paper(s)",
+                    f"Added collection from remote: '{name}' with {format_count(paper_count, 'paper')}",
                 )
 
         # Collections in both - use latest timestamp
@@ -759,7 +759,14 @@ class SyncService:
                     keep_both_count = len(keep_both_papers)
                     self.app._add_log(
                         "sync_collections",
-                        f"Merged collection '{name}': local ({local_count}) + remote ({remote_count}) + keep_both ({keep_both_count}) = {merged_count} papers total",
+                        (
+                            "Merged collection '" + name + "': "
+                            + "local (" + str(local_count) + ") + "
+                            + "remote (" + str(remote_count) + ") + "
+                            + "keep_both (" + str(keep_both_count) + ") = "
+                            + str(merged_count)
+                            + " papers total"
+                        ),
                     )
 
     # Helper methods
@@ -817,11 +824,11 @@ class SyncService:
         try:
             cursor.execute(
                 """
-                SELECT p.title 
-                FROM papers p 
-                JOIN paper_collections pc ON p.id = pc.paper_id 
+                SELECT p.title
+                FROM papers p
+                JOIN paper_collections pc ON p.id = pc.paper_id
                 WHERE pc.collection_id = ?
-            """,
+                """,
                 (collection_id,),
             )
             return set(row[0] for row in cursor.fetchall())

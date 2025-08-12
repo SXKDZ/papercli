@@ -1,27 +1,30 @@
+import os
+import sys
+from datetime import datetime
+from pathlib import Path
+
+from dotenv import load_dotenv
 from textual.app import App
-from ng.screens.main_screen import MainScreen
+
 from ng.commands import (
-    SystemCommandHandler,
-    SearchCommandHandler,
-    PaperCommandHandler,
     CollectionCommandHandler,
     ExportCommandHandler,
+    PaperCommandHandler,
+    SearchCommandHandler,
+    SystemCommandHandler,
+)
+from ng.db.database import init_database
+from ng.screens.main_screen import MainScreen
+from ng.services import (
+    BackgroundOperationService,
+    MetadataExtractor,
+    PaperService,
+    PDFManager,
+    PDFService,
+    SystemService,
 )
 from ng.widgets.command_input import CommandInput
 from ng.widgets.log_panel import LogPanel
-from ng.db.database import init_database
-from ng.services import (
-    PaperService,
-    BackgroundOperationService,
-    MetadataExtractor,
-    SystemService,
-    PDFManager,
-)
-from datetime import datetime
-import os
-import sys
-from pathlib import Path
-from dotenv import load_dotenv
 
 
 class PaperCLIApp(App):
@@ -41,11 +44,12 @@ class PaperCLIApp(App):
         # System
         ("question_mark", "show_help", "Help"),
         # Function keys
-        ("f1", "show_add_dialog", "Add Paper"),
-        ("f2", "open_paper", "Open Paper"),
+        ("f1", "show_add_dialog", "Add"),
+        ("f2", "open_paper", "PDF"),
+        ("f3", "show_details", "Details"),
         ("f4", "chat_paper", "Chat"),
-        ("f5", "edit_paper", "Edit Paper"),
-        ("f6", "delete_paper", "Delete Paper"),
+        ("f5", "edit_paper", "Edit"),
+        ("f6", "delete_paper", "Delete"),
         ("f7", "manage_collections", "Collections"),
         ("f8", "show_filter_dialog", "Filter"),
         ("f9", "show_all_papers", "Show All"),
@@ -79,11 +83,12 @@ class PaperCLIApp(App):
 
         # Initialize core services
         self.background_service = BackgroundOperationService(app=self)
-        self.pdf_manager = PDFManager()
+        self.pdf_manager = PDFManager(app=self)
+        self.pdf_service = PDFService(app=self)
         self.metadata_extractor = MetadataExtractor(
             pdf_manager=self.pdf_manager, app=self
         )
-        self.system_service = SystemService(pdf_manager=self.pdf_manager)
+        self.system_service = SystemService(pdf_manager=self.pdf_manager, app=self)
 
         # Initialize CommandHandlers after MainScreen is pushed
         self.system_commands = SystemCommandHandler(self)
@@ -97,7 +102,7 @@ class PaperCLIApp(App):
         self.logs.append(
             {"timestamp": datetime.now(), "action": action, "details": details}
         )
-        
+
         # Directly update log panel if it's visible
         try:
             if self.main_screen:
