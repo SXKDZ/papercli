@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from ng.papercli import PaperCLIApp
 
+
 class CommandHandler:
     """Base class for command handlers."""
 

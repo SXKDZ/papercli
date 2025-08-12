@@ -1,22 +1,19 @@
 from __future__ import annotations
 import os
-import traceback
 from pathlib import Path
 from typing import List, TYPE_CHECKING
 
 import requests
 from openai import OpenAI
 
-from ng.commands.base import CommandHandler
-from ng.version import VersionManager # Reusing existing VersionManager
-from ng.dialogs.message_dialog import MessageDialog # Import the new MessageDialog
-from ng.dialogs.doctor_dialog import DoctorDialog # Import the new DoctorDialog
-from ng.services.database import DatabaseHealthService # Import the new DatabaseHealthService
-from ng.services.sync import SyncService # Import the sync service
-from ng.screens.log_screen import LogScreen # Import the new LogScreen
+from ng.commands import CommandHandler
+from ng.version import VersionManager
+from ng.dialogs import MessageDialog, DoctorDialog
+from ng.services import DatabaseHealthService, SyncService
 
 if TYPE_CHECKING:
     from ng.papercli import PaperCLIApp
+
 
 class SystemCommandHandler(CommandHandler):
     """Handler for system commands like log, doctor, version, exit."""
@@ -24,14 +21,16 @@ class SystemCommandHandler(CommandHandler):
     def __init__(self, app: PaperCLIApp):
         super().__init__(app)
         self.version_manager = VersionManager()
-        self.db_health_service = DatabaseHealthService(db_path=self.app.db_path) # Initialize with db_path
+        self.db_health_service = DatabaseHealthService(
+            db_path=self.app.db_path
+        )  # Initialize with db_path
 
     def handle_log_command(self):
         """Handle /log command - toggle log panel."""
-        if hasattr(self.app.screen, 'action_toggle_log'):
+        if hasattr(self.app.screen, "action_toggle_log"):
             self.app.screen.action_toggle_log()
         else:
-            self.app.screen.query_one("#status-bar").set_error("Log panel not available on this screen")
+            self.app.notify("Log panel not available on this screen", severity="error")
 
     def handle_doctor_command(self, args: List[str]):
         """Handle /doctor command for database diagnostics and cleanup."""
@@ -39,15 +38,14 @@ class SystemCommandHandler(CommandHandler):
             action = args[0] if args else None
 
             if not args:
-                self.app.screen.query_one("#status-bar").set_status(
-                    "Running diagnostic checks...", "diagnose"
-                )
+                self.app.notify("Running diagnostic checks...", severity="information")
                 report = self.db_health_service.run_full_diagnostic()
                 self._show_doctor_report(report)
 
             elif action == "clean":
-                self.app.screen.query_one("#status-bar").set_status(
-                    "Cleaning orphaned records, files, and PDF filenames...", "clean"
+                self.app.notify(
+                    "Cleaning orphaned records, files, and PDF filenames...",
+                    severity="information",
                 )
                 cleaned_records = self.db_health_service.clean_orphaned_records()
                 cleaned_pdfs = self.db_health_service.clean_orphaned_pdfs()
@@ -86,14 +84,17 @@ class SystemCommandHandler(CommandHandler):
                         cleanup_summary.append(f"{total_renamed} filenames")
 
                     if cleanup_summary:
-                        self.app.screen.query_one("#status-bar").set_success(
-                            f"Database cleanup complete - fixed {' and '.join(cleanup_summary)}"
+                        self.app.notify(
+                            f"Database cleanup complete - fixed {' and '.join(cleanup_summary)}",
+                            severity="information",
                         )
                     else:
-                        self.app.screen.query_one("#status-bar").set_success("Database cleanup complete")
+                        self.app.notify(
+                            "Database cleanup complete", severity="information"
+                        )
                 else:
-                    self.app.screen.query_one("#status-bar").set_success(
-                        "No issues found - database is clean"
+                    self.app.notify(
+                        "No issues found - database is clean", severity="information"
                     )
 
             elif action == "help":
@@ -121,14 +122,13 @@ PDF Filename Convention:
                 self.app.push_screen(MessageDialog("Database Doctor Help", help_text))
 
             else:
-                self.app.screen.query_one("#status-bar").set_error(
-                    f"Unknown doctor action: {action}. Use 'diagnose', 'clean', or 'help'"
+                self.app.notify(
+                    f"Unknown doctor action: {action}. Use 'diagnose', 'clean', or 'help'",
+                    severity="error",
                 )
 
         except Exception as e:
-            self.app.screen.query_one("#status-bar").set_error(
-                f"Failed to run doctor command: {str(e)}"
-            )
+            self.app.notify(f"Failed to run doctor command: {str(e)}", severity="error")
 
     def _show_doctor_report(self, report: dict):
         """Display the doctor diagnostic report."""
@@ -229,7 +229,6 @@ PDF Filename Convention:
 
     def handle_version_command(self, args: List[str]):
         """Handle /version command for version management."""
-        status_bar = self.app.screen.query_one("#status-bar")
 
         if not args:
             # Show basic version info
@@ -241,7 +240,9 @@ PDF Filename Convention:
 
             # Check for updates in background
             try:
-                update_available, latest_version = self.version_manager.is_update_available()
+                update_available, latest_version = (
+                    self.version_manager.is_update_available()
+                )
                 if update_available:
                     version_info += f"Update available: v{latest_version}\n"
                     version_info += f"Run '/version update' to upgrade"
@@ -256,9 +257,11 @@ PDF Filename Convention:
         action = args[0].lower()
 
         if action == "check":
-            status_bar.set_status("Checking for updates...")
+            self.app.notify("Checking for updates...", severity="information")
             try:
-                update_available, latest_version = self.version_manager.is_update_available()
+                update_available, latest_version = (
+                    self.version_manager.is_update_available()
+                )
                 current_version = self.version_manager.get_current_version()
 
                 if update_available:
@@ -287,17 +290,19 @@ PDF Filename Convention:
 
                     self.app.push_screen(MessageDialog("Update Available", update_info))
                 else:
-                    status_bar.set_success(
-                        f"You're running the latest version (v{current_version})"
+                    self.app.notify(
+                        f"You're running the latest version (v{current_version})",
+                        severity="success",
                     )
             except Exception as e:
-                status_bar.set_error(f"Could not check for updates: {e}")
+                self.app.notify(f"Could not check for updates: {e}", severity="error")
 
         elif action == "update":
             if not self.version_manager.can_auto_update():
                 install_method = self.version_manager.get_installation_method()
-                status_bar.set_error(
-                    f"Auto-update not supported for {install_method} installations"
+                self.app.notify(
+                    f"Auto-update not supported for {install_method} installations",
+                    severity="error",
                 )
 
                 manual_info = f"Manual Update Required\n\n"
@@ -305,25 +310,33 @@ PDF Filename Convention:
                 manual_info += f"To update manually, run:\n"
                 manual_info += f"{self.version_manager.get_update_instructions()}"
 
-                self.app.push_screen(MessageDialog("Manual Update Required", manual_info))
+                self.app.push_screen(
+                    MessageDialog("Manual Update Required", manual_info)
+                )
                 return
 
             # Check if update is available first
             try:
-                update_available, latest_version = self.version_manager.is_update_available()
+                update_available, latest_version = (
+                    self.version_manager.is_update_available()
+                )
                 if not update_available:
                     current_version = self.version_manager.get_current_version()
-                    status_bar.set_success(
-                        f"Already running latest version (v{current_version})"
+                    self.app.notify(
+                        f"Already running latest version (v{current_version})",
+                        severity="success",
                     )
                     return
 
-                status_bar.set_status(f"Updating to v{latest_version}...")
+                self.app.notify(
+                    f"Updating to v{latest_version}...", severity="information"
+                )
 
                 # Perform the update
                 if self.version_manager.perform_update():
-                    status_bar.set_success(
-                        "Update successful! Please restart PaperCLI."
+                    self.app.notify(
+                        "Update successful! Please restart PaperCLI.",
+                        severity="success",
                     )
                     # Show restart dialog
                     restart_info = f"Update Successful!\n\n"
@@ -335,14 +348,16 @@ PDF Filename Convention:
                     )
                     restart_info += f"Press ESC to close this dialog and exit."
 
-                    self.app.push_screen(MessageDialog("Restart Required", restart_info))
+                    self.app.push_screen(
+                        MessageDialog("Restart Required", restart_info)
+                    )
                 else:
-                    status_bar.set_error(
-                        "Update failed. Please update manually."
+                    self.app.notify(
+                        "Update failed. Please update manually.", severity="error"
                     )
 
             except Exception as e:
-                status_bar.set_error(f"Update failed: {e}")
+                self.app.notify(f"Update failed: {e}", severity="error")
 
         elif action == "info":
             current_version = self.version_manager.get_current_version()
@@ -377,12 +392,13 @@ PDF Filename Convention:
             self.app.push_screen(MessageDialog("Version Information", info))
 
         else:
-            status_bar.set_error(f"Unknown version command: {action}")
-            status_bar.set_status("Usage: /version [check|update|info]")
+            self.app.notify(f"Unknown version command: {action}", severity="error")
+            self.app.notify(
+                "Usage: /version [check|update|info]", severity="information"
+            )
 
     def handle_config_command(self, args: List[str]):
         """Handle /config command for configuration management."""
-        status_bar = self.app.screen.query_one("#status-bar")
         if not args:
             self._show_config_help()
             return
@@ -420,8 +436,8 @@ PDF Filename Convention:
                 elif setting in ["disable", "off", "false"]:
                     self._set_auto_sync(False)
                 else:
-                    status_bar.set_error(
-                        "Use 'enable' or 'disable' for auto-sync"
+                    self.app.notify(
+                        "Use 'enable' or 'disable' for auto-sync", severity="error"
                     )
 
         elif action == "pdf-pages":
@@ -433,22 +449,29 @@ PDF Filename Convention:
                     if pages > 0:
                         self._set_pdf_pages(pages)
                     else:
-                        status_bar.set_error(
-                            "PDF pages must be a positive number"
+                        self.app.notify(
+                            "PDF pages must be a positive number", severity="error"
                         )
                 except ValueError:
-                    status_bar.set_error(
-                        "PDF pages must be a valid number"
+                    self.app.notify(
+                        "PDF pages must be a valid number", severity="error"
                     )
 
         elif action == "show":
             self._show_all_config()
 
+        elif action == "theme":
+            if len(args) < 2:
+                self._show_current_theme()
+            else:
+                theme_name = args[1].lower()
+                self._set_theme(theme_name)
+
         elif action == "help":
             self._show_config_help()
 
         else:
-            status_bar.set_error(f"Unknown config option: {action}")
+            self.app.notify(f"Unknown config option: {action}", severity="error")
             self._show_config_help()
 
     def _show_config_help(self):
@@ -472,6 +495,8 @@ Available Commands:
 /config auto-sync disable       - Disable auto-sync
 /config pdf-pages               - Show current PDF pages limit for chat/summarize
 /config pdf-pages <number>      - Set PDF pages limit (e.g., 15, 20)
+/config theme                   - Show current theme
+/config theme <theme_name>      - Set theme (dark, light, textual-dark, textual-light)
 
 {available_models_text}
 
@@ -484,6 +509,8 @@ Examples:
 /config remote ~/OneDrive/papercli-sync  - Set OneDrive sync path
 /config auto-sync enable        - Enable automatic sync after edits
 /config pdf-pages 15            - Set PDF pages limit to 15 for chat/summarize
+/config theme dark              - Set to dark theme
+/config theme light             - Set to light theme
 
 Configuration Storage:
 ----------------------
@@ -607,7 +634,7 @@ gpt-3.5-turbo                   - GPT-3.5 Turbo model (faster, cheaper)"""
                             value = value.strip("\"'")
                             env_vars[key.strip()] = value
             except Exception as e:
-                self.app.screen.query_one("#status-bar").set_error(f"Error reading .env file: {e}")
+                self.app.notify(f"Error reading .env file: {e}", severity="error")
 
         return env_vars
 
@@ -626,14 +653,16 @@ gpt-3.5-turbo                   - GPT-3.5 Turbo model (faster, cheaper)"""
 
             return True
         except Exception as e:
-            self.app.screen.query_one("#status-bar").set_error(f"Error writing .env file: {e}")
+            self.app.notify(f"Error writing .env file: {e}", severity="error")
             return False
 
     def _show_current_model(self):
         """Show the current OpenAI model."""
         current_model = os.getenv("OPENAI_MODEL", "gpt-4o")
         try:
-            self.app.query_one("#status-bar").set_status(f"Current OpenAI model: {current_model}")
+            self.app.notify(
+                f"Current OpenAI model: {current_model}", severity="information"
+            )
         except:
             pass
 
@@ -647,10 +676,14 @@ gpt-3.5-turbo                   - GPT-3.5 Turbo model (faster, cheaper)"""
         env_vars["OPENAI_MODEL"] = model_name
 
         if self._write_env_file(env_vars):
-            self.app.screen.query_one("#status-bar").set_success(f"OpenAI model set to: {model_name}")
+            self.app.notify(
+                f"OpenAI model set to: {model_name}", severity="information"
+            )
             # self._add_log("config_model", f"OpenAI model changed to: {model_name}") # Need to implement logging
         else:
-            self.app.screen.query_one("#status-bar").set_error("Failed to save model setting to .env file")
+            self.app.notify(
+                "Failed to save model setting to .env file", severity="error"
+            )
 
     def _show_current_api_key(self):
         """Show the current API key (masked)."""
@@ -661,16 +694,19 @@ gpt-3.5-turbo                   - GPT-3.5 Turbo model (faster, cheaper)"""
                 if len(api_key) > 12
                 else "****"
             )
-            self.app.screen.query_one("#status-bar").set_status(f"Current OpenAI API key: {masked_key}")
+            self.app.notify(
+                f"Current OpenAI API key: {masked_key}", severity="information"
+            )
         else:
-            self.app.screen.query_one("#status-bar").set_status("No OpenAI API key set")
+            self.app.notify("No OpenAI API key set", severity="information")
 
     def _set_api_key(self, api_key):
         """Set the OpenAI API key."""
         # Basic validation
         if not api_key.startswith("sk-"):
-            self.app.screen.query_one("#status-bar").set_error(
-                "Invalid API key format. OpenAI keys should start with 'sk-'"
+            self.app.notify(
+                "Invalid API key format. OpenAI keys should start with 'sk-'",
+                severity="error",
             )
             return
 
@@ -687,18 +723,20 @@ gpt-3.5-turbo                   - GPT-3.5 Turbo model (faster, cheaper)"""
                 if len(api_key) > 12
                 else "****"
             )
-            self.app.screen.query_one("#status-bar").set_success(f"OpenAI API key set: {masked_key}")
+            self.app.notify(f"OpenAI API key set: {masked_key}", severity="information")
             # self._add_log("config_api_key", f"OpenAI API key updated: {masked_key}") # Need to implement logging
         else:
-            self.app.screen.query_one("#status-bar").set_error("Failed to save API key to .env file")
+            self.app.notify("Failed to save API key to .env file", severity="error")
 
     def _show_current_remote_path(self):
         """Show the current remote sync path."""
         remote_path = os.getenv("PAPERCLI_REMOTE_PATH", "")
         if remote_path:
-            self.app.screen.query_one("#status-bar").set_status(f"Current remote sync path: {remote_path}")
+            self.app.notify(
+                f"Current remote sync path: {remote_path}", severity="information"
+            )
         else:
-            self.app.screen.query_one("#status-bar").set_status("No remote sync path set")
+            self.app.notify("No remote sync path set", severity="information")
 
     def _set_remote_path(self, remote_path):
         """Set the remote sync path."""
@@ -713,16 +751,18 @@ gpt-3.5-turbo                   - GPT-3.5 Turbo model (faster, cheaper)"""
         env_vars["PAPERCLI_REMOTE_PATH"] = expanded_path
 
         if self._write_env_file(env_vars):
-            self.app.screen.query_one("#status-bar").set_success(f"Remote sync path set to: {expanded_path}")
+            self.app.notify(
+                f"Remote sync path set to: {expanded_path}", severity="information"
+            )
             # self._add_log("config_remote", f"Remote sync path changed to: {expanded_path}") # Need to implement logging
         else:
-            self.app.screen.query_one("#status-bar").set_error("Failed to save remote path to .env file")
+            self.app.notify("Failed to save remote path to .env file", severity="error")
 
     def _show_current_auto_sync(self):
         """Show the current auto-sync setting."""
         auto_sync = os.getenv("PAPERCLI_AUTO_SYNC", "false").lower() == "true"
         status = "enabled" if auto_sync else "disabled"
-        self.app.query_one("#status-bar").set_status(f"Auto-sync is currently: {status}")
+        self.app.notify(f"Auto-sync is currently: {status}", severity="information")
 
     def _set_auto_sync(self, enabled):
         """Set the auto-sync setting."""
@@ -737,17 +777,17 @@ gpt-3.5-turbo                   - GPT-3.5 Turbo model (faster, cheaper)"""
 
         if self._write_env_file(env_vars):
             status = "enabled" if enabled else "disabled"
-            self.app.screen.query_one("#status-bar").set_success(f"Auto-sync {status}")
+            self.app.notify(f"Auto-sync {status}", severity="information")
             # self._add_log("config_auto_sync", f"Auto-sync {status}") # Need to implement logging
         else:
-            self.app.screen.query_one("#status-bar").set_error(
-                "Failed to save auto-sync setting to .env file"
+            self.app.notify(
+                "Failed to save auto-sync setting to .env file", severity="error"
             )
 
     def _show_current_pdf_pages(self):
         """Show the current PDF pages limit."""
         pdf_pages = int(os.getenv("PAPERCLI_PDF_PAGES", "10"))
-        self.app.query_one("#status-bar").set_status(f"Current PDF pages limit: {pdf_pages}")
+        self.app.notify(f"Current PDF pages limit: {pdf_pages}", severity="information")
 
     def _set_pdf_pages(self, pages):
         """Set the PDF pages limit."""
@@ -761,10 +801,12 @@ gpt-3.5-turbo                   - GPT-3.5 Turbo model (faster, cheaper)"""
         env_vars["PAPERCLI_PDF_PAGES"] = value
 
         if self._write_env_file(env_vars):
-            self.app.screen.query_one("#status-bar").set_success(f"PDF pages limit set to: {pages}")
+            self.app.notify(f"PDF pages limit set to: {pages}", severity="information")
             # self._add_log("config_pdf_pages", f"PDF pages limit set to: {pages}") # Need to implement logging
         else:
-            self.app.screen.query_one("#status-bar").set_error("Failed to save PDF pages setting to .env file")
+            self.app.notify(
+                "Failed to save PDF pages setting to .env file", severity="error"
+            )
 
     def _show_all_config(self):
         """Show all current configuration."""
@@ -773,6 +815,7 @@ gpt-3.5-turbo                   - GPT-3.5 Turbo model (faster, cheaper)"""
         remote_path = os.getenv("PAPERCLI_REMOTE_PATH", "Not set")
         auto_sync = os.getenv("PAPERCLI_AUTO_SYNC", "false").lower() == "true"
         pdf_pages = int(os.getenv("PAPERCLI_PDF_PAGES", "10"))
+        theme = os.getenv("PAPERCLI_THEME", getattr(self.app, "theme", "textual-dark"))
 
         if api_key:
             masked_key = (
@@ -793,6 +836,7 @@ OpenAI API Key: {masked_key}
 Remote Sync Path: {remote_path}
 Auto-sync: {auto_sync_status}
 PDF Pages Limit: {pdf_pages}
+Theme: {theme}
 
 Configuration file: {env_file}
 File exists: {'Yes' if env_file.exists() else 'No'}
@@ -802,16 +846,57 @@ To change settings:
 /config openai_api_key <key>
 /config remote <path>
 /config auto-sync enable|disable
-/config pdf-pages <number>"""
+/config pdf-pages <number>
+/config theme <theme_name>"""
 
         self.app.push_screen(MessageDialog("Current Configuration", config_text))
+
+    def _show_current_theme(self):
+        """Show the current theme."""
+        current_theme = getattr(self.app, "theme", "textual-dark")
+        self.app.notify(f"Current theme: {current_theme}", severity="information")
+
+    def _set_theme(self, theme_name):
+        """Set the application theme."""
+        available_themes = ["textual-dark", "textual-light", "dark", "light"]
+
+        # Normalize theme name
+        theme_map = {
+            "dark": "textual-dark",
+            "light": "textual-light",
+            "textual-dark": "textual-dark",
+            "textual-light": "textual-light",
+        }
+
+        normalized_theme = theme_map.get(theme_name)
+        if not normalized_theme:
+            available = ", ".join(available_themes)
+            self.app.notify(
+                f"Unknown theme: {theme_name}. Available: {available}", severity="error"
+            )
+            return
+
+        # Set the theme
+        self.app.theme = normalized_theme
+
+        # Save to environment and .env file
+        os.environ["PAPERCLI_THEME"] = normalized_theme
+        env_vars = self._read_env_file()
+        env_vars["PAPERCLI_THEME"] = normalized_theme
+
+        if self._write_env_file(env_vars):
+            self.app.notify(f"Theme set to: {normalized_theme}", severity="information")
+        else:
+            self.app.notify(
+                "Failed to save theme setting to .env file", severity="error"
+            )
 
     def handle_sync_command(self, args: List[str]):
         """Handle /sync command for synchronizing with remote storage."""
         try:
-            # Get data directory path 
+            # Get data directory path
             local_data_dir = Path(self.app.db_path).parent
-            
+
             # Default remote path - typically OneDrive or cloud storage
             remote_data_dir = None
             if args:
@@ -821,64 +906,66 @@ To change settings:
                 home = Path.home()
                 possible_paths = [
                     home / "OneDrive" / "PaperCLI",
-                    home / "OneDrive - Personal" / "PaperCLI", 
+                    home / "OneDrive - Personal" / "PaperCLI",
                     home / "Dropbox" / "PaperCLI",
-                    home / "Google Drive" / "PaperCLI"
+                    home / "Google Drive" / "PaperCLI",
                 ]
                 for path in possible_paths:
                     if path.exists():
                         remote_data_dir = path
                         break
-                        
+
             if not remote_data_dir:
                 try:
-                    self.app.query_one("#status-bar").set_error("No remote path specified. Use: /sync <remote_path>")
+                    self.app.notify(
+                        "No remote path specified. Use: /sync <remote_path>",
+                        severity="error",
+                    )
                 except:
                     pass
                 return
-                
+
             # Create sync service
             def progress_callback(message):
                 try:
-                    self.app.query_one("#status-bar").set_status(message)
+                    self.app.notify(message, severity="information")
                 except:
                     pass
-                    
-            def log_callback(action, details):
-                self.app._add_log(action, details)
-            
+
             sync_service = SyncService(
                 str(local_data_dir),
                 str(remote_data_dir),
                 progress_callback=progress_callback,
-                log_callback=log_callback
+                app=self.app,
             )
-            
+
             try:
-                self.app.query_one("#status-bar").set_status("Starting sync...", "info")
+                self.app.notify("Starting sync...", severity="information")
             except:
                 pass
-                
+
             # Run sync
             result = sync_service.sync()
-            
+
             # Display result
             summary = result.get_summary()
             try:
                 if result.has_conflicts():
-                    self.app.query_one("#status-bar").set_warning(summary)
+                    self.app.notify(summary, severity="warning")
                 elif result.errors:
-                    self.app.query_one("#status-bar").set_error(f"Sync failed: {result.errors[0]}")
+                    self.app.notify(
+                        f"Sync failed: {result.errors[0]}", severity="error"
+                    )
                 else:
-                    self.app.query_one("#status-bar").set_success(summary)
+                    self.app.notify(summary, severity="information")
                     # Refresh papers after sync
                     self.app.load_papers()
             except:
                 pass
-            
+
         except Exception as e:
             try:
-                self.app.query_one("#status-bar").set_error(f"Sync error: {str(e)}")
+                self.app.notify(f"Sync error: {str(e)}", severity="error")
             except:
                 pass
 

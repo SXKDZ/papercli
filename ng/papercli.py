@@ -1,34 +1,48 @@
-from textual.app import App, ComposeResult
-from textual.widgets import Header, Footer, Input, Static
-from textual.containers import Container, VerticalScroll
+from textual.app import App
 from ng.screens.main_screen import MainScreen
-from ng.commands.system import SystemCommandHandler
-from ng.commands.search import SearchCommandHandler
-from ng.commands.paper import PaperCommandHandler
-from ng.commands.collection import CollectionCommandHandler
-from ng.commands.export import ExportCommandHandler
+from ng.commands import (
+    SystemCommandHandler,
+    SearchCommandHandler,
+    PaperCommandHandler,
+    CollectionCommandHandler,
+    ExportCommandHandler,
+)
 from ng.widgets.command_input import CommandInput
-from ng.db.database import init_database # Import database initialization
-from ng.services.paper import PaperService # Import PaperService
-from ng.services.background import BackgroundOperationService # Import BackgroundOperationService
-from ng.services.metadata import MetadataExtractor # Import MetadataExtractor
-from ng.services.system import SystemService # Import SystemService
-from ng.services.pdf import PDFManager # Import PDFManager
+from ng.widgets.log_panel import LogPanel
+from ng.db.database import init_database
+from ng.services import (
+    PaperService,
+    BackgroundOperationService,
+    MetadataExtractor,
+    SystemService,
+    PDFManager,
+)
 from datetime import datetime
 import os
+import sys
+from pathlib import Path
+from dotenv import load_dotenv
+
 
 class PaperCLIApp(App):
     """PaperCLI Textual application."""
-    
+
     # Enable mouse support
     ENABLE_COMMAND_PALETTE = False  # Disable command palette to avoid conflicts
-    
+
     BINDINGS = [
-        ("d", "toggle_dark", "Toggle dark mode"),
-        ("escape", "quit", "Quit"),
+        # Navigation
+        ("up", "cursor_up", "Cursor Up"),
+        ("down", "cursor_down", "Cursor Down"),
+        ("pageup", "page_up", "Page Up"),
+        ("pagedown", "page_down", "Page Down"),
+        ("home", "cursor_home", "Cursor Home"),
+        ("end", "cursor_end", "Cursor End"),
+        # System
+        ("question_mark", "show_help", "Help"),
+        # Function keys
         ("f1", "show_add_dialog", "Add Paper"),
         ("f2", "open_paper", "Open Paper"),
-        ("f3", "show_detail", "Paper Details"),
         ("f4", "chat_paper", "Chat"),
         ("f5", "edit_paper", "Edit Paper"),
         ("f6", "delete_paper", "Delete Paper"),
@@ -38,30 +52,37 @@ class PaperCLIApp(App):
         ("f10", "show_sort_dialog", "Sort"),
         ("f11", "toggle_select_mode", "Toggle Select"),
         ("f12", "clear_selection", "Clear Selection"),
-        ("question_mark", "show_help", "Help"),
     ]
 
     def __init__(self, db_path: str = "./papercli.db", *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.db_path = db_path # Database path
-        self.logs = [] # List to store log entries
-        self.paper_service = PaperService() # Initialize PaperService
-        self.current_papers = [] # Initialize current_papers
+        self.db_path = db_path  # Database path
+        self.logs = []  # List to store log entries
+        self.paper_service = PaperService()  # Initialize PaperService
+        self.current_papers = []  # Initialize current_papers
+        self.main_screen = None  # Reference to the main screen
 
     def on_mount(self) -> None:
         # Initialize database
         init_database(self.db_path)
 
+        # Load theme from environment
+        saved_theme = os.getenv("PAPERCLI_THEME", "textual-dark")
+        self.theme = saved_theme
+
         # Load papers from the database
         self.load_papers()
 
-        # Push MainScreen with initial papers
-        self.push_screen(MainScreen(papers=self.current_papers))
+        # Push MainScreen with initial papers and store reference
+        self.main_screen = MainScreen(papers=self.current_papers)
+        self.push_screen(self.main_screen)
 
         # Initialize core services
-        self.background_service = BackgroundOperationService(app=self, log_callback=self._add_log)
-        self.pdf_manager = PDFManager(pdf_dir=os.path.join(os.path.dirname(self.db_path), "pdfs"))
-        self.metadata_extractor = MetadataExtractor(pdf_manager=self.pdf_manager, log_callback=self._add_log)
+        self.background_service = BackgroundOperationService(app=self)
+        self.pdf_manager = PDFManager()
+        self.metadata_extractor = MetadataExtractor(
+            pdf_manager=self.pdf_manager, app=self
+        )
         self.system_service = SystemService(pdf_manager=self.pdf_manager)
 
         # Initialize CommandHandlers after MainScreen is pushed
@@ -72,10 +93,19 @@ class PaperCLIApp(App):
         self.export_commands = ExportCommandHandler(self)
 
     def _add_log(self, action: str, details: str):
-        """Add a log entry."""
+        """Add a log entry and update log panel if visible."""
         self.logs.append(
             {"timestamp": datetime.now(), "action": action, "details": details}
         )
+        
+        # Directly update log panel if it's visible
+        try:
+            if self.main_screen:
+                log_panel = self.main_screen.query_one(LogPanel)
+                log_panel.refresh_if_visible()
+        except Exception:
+            # Ignore errors if log panel doesn't exist or isn't available
+            pass
 
     def load_papers(self):
         """Load papers from database and update the PaperList widget."""
@@ -83,26 +113,92 @@ class PaperCLIApp(App):
             papers = self.paper_service.get_all_papers()
             self.current_papers = papers
             self._add_log("load_papers", f"Loaded {len(papers)} papers from database.")
-            # Update the PaperList widget if MainScreen is already mounted
-            if self.is_mounted and isinstance(self.screen, MainScreen):
-                self.screen.update_paper_list(papers)
+            # Update the PaperList widget - try stored reference first, then find it
+            main_screen_to_update = self.main_screen
+
+            if not main_screen_to_update:
+                # If stored reference is None, try to find MainScreen in screen stack
+                from ng.screens.main_screen import MainScreen
+
+                for screen in reversed(self._screen_stack):
+                    if isinstance(screen, MainScreen):
+                        main_screen_to_update = screen
+                        self.main_screen = screen  # Update the reference
+                        self._add_log(
+                            "load_papers_found_screen",
+                            f"Found MainScreen in stack, updating reference",
+                        )
+                        break
+
+            if main_screen_to_update:
+                self._add_log(
+                    "load_papers_calling_update",
+                    f"About to call update_paper_list with {len(papers)} papers",
+                )
+                main_screen_to_update.update_paper_list(papers)
+                self._add_log(
+                    "load_papers_called_update", "update_paper_list completed"
+                )
+            else:
+                self._add_log(
+                    "load_papers_no_main_screen",
+                    f"No MainScreen found, current screen: {type(self.screen).__name__}, stack: {[type(s).__name__ for s in self._screen_stack]}",
+                )
         except Exception as e:
             self._add_log("load_papers_error", f"Error loading papers: {e}")
-            # self.query_one("#status-bar").set_error(f"Error loading papers: {e}") # Cannot query before mount
+            # Error will be logged but not displayed during startup
 
-    def action_toggle_dark(self) -> None:
-        """An action to toggle dark mode."""
-        self.theme = "textual-light" if getattr(self, 'theme', 'textual-dark') == 'textual-dark' else "textual-dark"
+    def action_cursor_up(self) -> None:
+        """Move cursor up in paper list."""
+        if hasattr(self.screen, "action_cursor_up"):
+            self.screen.action_cursor_up()
+
+    def action_cursor_down(self) -> None:
+        """Move cursor down in paper list."""
+        if hasattr(self.screen, "action_cursor_down"):
+            self.screen.action_cursor_down()
+
+    def action_page_up(self) -> None:
+        """Move page up in paper list."""
+        if hasattr(self.screen, "action_page_up"):
+            self.screen.action_page_up()
+
+    def action_page_down(self) -> None:
+        """Move page down in paper list."""
+        if hasattr(self.screen, "action_page_down"):
+            self.screen.action_page_down()
+
+    def action_cursor_home(self) -> None:
+        """Move to top of paper list."""
+        if hasattr(self.screen, "action_cursor_home"):
+            self.screen.action_cursor_home()
+
+    def action_cursor_end(self) -> None:
+        """Move to bottom of paper list."""
+        if hasattr(self.screen, "action_cursor_end"):
+            self.screen.action_cursor_end()
+
+    def action_toggle_selection(self) -> None:
+        """Toggle selection in paper list."""
+        if hasattr(self.screen, "action_toggle_selection"):
+            self.screen.action_toggle_selection()
+
+    def action_show_details(self) -> None:
+        """Show paper details."""
+        if hasattr(self.screen, "action_show_details"):
+            self.screen.action_show_details()
 
     def action_quit(self) -> None:
         """An action to quit the application."""
         self.exit()
 
-    async def on_command_input_command_entered(self, message: CommandInput.CommandEntered) -> None:
+    async def on_command_input_command_entered(
+        self, message: CommandInput.CommandEntered
+    ) -> None:
         command = message.command.strip()
         if not command.startswith("/"):
-            self.query_one("#status-bar").set_error(
-                f"Invalid input. All commands must start with '/'."
+            self.notify(
+                "Invalid input. All commands must start with '/'.", severity="error"
             )
             return
 
@@ -150,29 +246,27 @@ class PaperCLIApp(App):
         elif cmd == "/export":
             await self.export_commands.handle_export_command(parts[1:])
         elif cmd == "/chat":
-            await self.export_commands.handle_chat_command(parts[1:] if len(parts) > 1 else None)
+            await self.export_commands.handle_chat_command(
+                parts[1:] if len(parts) > 1 else None
+            )
         elif cmd == "/copy-prompt":
             await self.export_commands.handle_copy_prompt_command()
         else:
-            self.query_one("#status-bar").set_error(f"Unknown command: {cmd}")
+            self.notify(f"Unknown command: {cmd}", severity="error")
 
     def action_show_help(self) -> None:
         """Show help (F1 or ?)."""
-        if hasattr(self.screen, 'show_help'):
+        if hasattr(self.screen, "show_help"):
             self.screen.show_help()
 
     def action_show_add_dialog(self) -> None:
         """Show add dialog (F1)."""
-        if hasattr(self.screen, 'action_show_add_dialog'):
+        if hasattr(self.screen, "action_show_add_dialog"):
             self.screen.action_show_add_dialog()
 
     def action_open_paper(self) -> None:
         """Open paper (F2)."""
         self.run_worker(self.paper_commands.handle_open_command(), exclusive=False)
-
-    def action_show_detail(self) -> None:
-        """Show paper details (F3)."""
-        self.run_worker(self.paper_commands.handle_detail_command(), exclusive=False)
 
     def action_chat_paper(self) -> None:
         """Chat with paper (F4)."""
@@ -188,11 +282,13 @@ class PaperCLIApp(App):
 
     def action_manage_collections(self) -> None:
         """Manage collections (F7)."""
-        self.run_worker(self.collection_commands.handle_collect_command([]), exclusive=False)
+        self.run_worker(
+            self.collection_commands.handle_collect_command([]), exclusive=False
+        )
 
     def action_show_filter_dialog(self) -> None:
         """Show filter dialog (F8)."""
-        if hasattr(self.screen, 'action_show_filter_dialog'):
+        if hasattr(self.screen, "action_show_filter_dialog"):
             self.screen.action_show_filter_dialog()
 
     def action_show_all_papers(self) -> None:
@@ -201,7 +297,7 @@ class PaperCLIApp(App):
 
     def action_show_sort_dialog(self) -> None:
         """Show sort dialog (F10)."""
-        if hasattr(self.screen, 'action_show_sort_dialog'):
+        if hasattr(self.screen, "action_show_sort_dialog"):
             self.screen.action_show_sort_dialog()
 
     def action_toggle_select_mode(self) -> None:
@@ -215,11 +311,74 @@ class PaperCLIApp(App):
     def action_refresh_papers(self) -> None:
         """Refresh papers (F5)."""
         self.load_papers()
-        if hasattr(self.screen, 'query_one'):
-            self.screen.query_one("#status-bar").set_status("Papers refreshed")
+        self.notify("Papers refreshed", severity="information")
+
+
+def setup_environment():
+    """Set up environment variables and data directory."""
+    # Get data directory from environment or use default
+    data_dir_env = os.getenv("PAPERCLI_DATA_DIR")
+    if data_dir_env:
+        data_dir = Path(data_dir_env).expanduser().resolve()
+    else:
+        data_dir = Path.home() / ".papercli"
+
+    # Ensure data directory exists
+    data_dir.mkdir(exist_ok=True, parents=True)
+
+    # Skip OpenAI setup if API key is already set via environment
+    if os.getenv("OPENAI_API_KEY"):
+        return data_dir
+
+    # Try to load from .env files in order of preference
+    env_locations = [Path.cwd() / ".env", data_dir / ".env"]
+
+    for env_file in env_locations:
+        if env_file.exists():
+            load_dotenv(env_file)
+            break
+
+    # If still no API key, prompt user
+    if not os.getenv("OPENAI_API_KEY"):
+        current_dir = Path.cwd()
+        print(
+            f"""
+🔧 Configuration Setup Required
+
+PaperCLI requires OpenAI API configuration. You can set it up in two ways:
+
+1. Using environment variables:
+   export OPENAI_API_KEY=your_openai_api_key_here
+   export OPENAI_MODEL=gpt-4o  # optional, defaults to gpt-4o
+   export PAPERCLI_DATA_DIR=/path/to/data  # optional, defaults to ~/.papercli
+
+2. Using a .env file in either location:
+   - Current directory: {current_dir}
+   - Data directory: {data_dir}
+
+You can get an API key from: https://platform.openai.com/api-keys
+"""
+        )
+
+        try:
+            response = input(
+                "Would you like to continue without OpenAI configuration? (y/N): "
+            )
+            if response.lower() not in ["y", "yes"]:
+                print("Please set up OpenAI configuration and run papercli again.")
+                sys.exit(0)
+        except KeyboardInterrupt:
+            print("\nGoodbye!")
+            sys.exit(0)
+
+    return data_dir
+
 
 if __name__ == "__main__":
+    # Set up environment and get data directory
+    data_dir = setup_environment()
+
     # Default database path - use existing papers.db with all user's papers
-    db_path = os.path.join(os.path.expanduser("~/.papercli"), "papers.db")
-    app = PaperCLIApp(db_path=db_path)
+    db_path = data_dir / "papers.db"
+    app = PaperCLIApp(db_path=str(db_path))
     app.run()

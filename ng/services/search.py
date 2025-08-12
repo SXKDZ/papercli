@@ -4,8 +4,13 @@ from fuzzywuzzy import fuzz
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import joinedload
 
-from ng.db.database import get_db_session # Reusing existing database session manager
-from ng.db.models import Author, Collection, Paper, PaperAuthor # Reusing existing models
+from ng.db.database import get_db_session  # Reusing existing database session manager
+from ng.db.models import (
+    Author,
+    Collection,
+    Paper,
+    PaperAuthor,
+)  # Reusing existing models
 
 
 class SearchService:

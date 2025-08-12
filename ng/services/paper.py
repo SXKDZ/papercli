@@ -6,8 +6,13 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import text
 from sqlalchemy.orm import joinedload
 
-from ng.db.database import get_db_session # Reusing existing database session manager
-from ng.db.models import Author, Collection, Paper, PaperAuthor # Reusing existing models
+from ng.db.database import get_db_session
+from ng.db.models import (
+    Author,
+    Collection,
+    Paper,
+    PaperAuthor,
+)
 
 
 class PaperService:
@@ -88,32 +93,30 @@ class PaperService:
 
             try:
                 if "pdf_path" in paper_data and paper_data["pdf_path"]:
-                    # Assuming PDFManager will be migrated or a new one created in ng.services
-                    # For now, commenting out to avoid import errors
-                    # from .pdf import PDFManager
-                    # pdf_manager = PDFManager()
+                    from .pdf import PDFManager
 
-                    # current_paper_data = {
-                    #     "title": paper_data.get("title", paper.title),
-                    #     "authors": (
-                    #         [author.full_name for author in paper.get_ordered_authors()]
-                    #         if paper.paper_authors
-                    #         else []
-                    #     ),
-                    #     "year": paper_data.get("year", paper.year),
-                    # }
+                    pdf_manager = PDFManager()
 
-                    # new_pdf_path, error = pdf_manager.process_pdf_path(
-                    #     paper_data["pdf_path"], current_paper_data, paper.pdf_path
-                    # )
+                    current_paper_data = {
+                        "title": paper_data.get("title", paper.title),
+                        "authors": (
+                            [author.full_name for author in paper.get_ordered_authors()]
+                            if paper.paper_authors
+                            else []
+                        ),
+                        "year": paper_data.get("year", paper.year),
+                    }
 
-                    # if error:
-                    #     pdf_error = f"PDF processing failed: {error}"
-                    #     paper_data.pop("pdf_path")
-                    #     return None, pdf_error
-                    # else:
-                    #     paper_data["pdf_path"] = new_pdf_path
-                    pass # Placeholder for PDF handling
+                    new_pdf_path, error = pdf_manager.process_pdf_path(
+                        paper_data["pdf_path"], current_paper_data, paper.pdf_path
+                    )
+
+                    if error:
+                        pdf_error = f"PDF processing failed: {error}"
+                        paper_data.pop("pdf_path")
+                        return None, pdf_error
+                    else:
+                        paper_data["pdf_path"] = new_pdf_path
 
                 if "authors" in paper_data:
                     authors = paper_data.pop("authors")
@@ -163,15 +166,14 @@ class PaperService:
             paper = session.query(Paper).filter(Paper.id == paper_id).first()
             if paper:
                 # Delete associated PDF file if it exists
-                if paper.pdf_path and os.path.exists(paper.pdf_path):
+                if paper.pdf_path:
                     try:
-                        # Assuming get_pdf_directory will be migrated or a new one created in ng.services
-                        # from ng.db.database import get_pdf_directory
-                        # pdf_dir = get_pdf_directory()
-                        # full_pdf_path = os.path.join(pdf_dir, paper.pdf_path)
-                        # if os.path.exists(full_pdf_path):
-                        #     os.remove(full_pdf_path)
-                        pass # Placeholder for PDF deletion
+                        from ng.services.pdf import PDFManager
+
+                        pdf_manager = PDFManager()
+                        full_pdf_path = pdf_manager.get_absolute_path(paper.pdf_path)
+                        if os.path.exists(full_pdf_path):
+                            os.remove(full_pdf_path)
                     except Exception:
                         pass
 
@@ -190,15 +192,14 @@ class PaperService:
                 return 0
 
             for paper in papers_to_delete:
-                if paper.pdf_path and os.path.exists(paper.pdf_path):
+                if paper.pdf_path:
                     try:
-                        # Assuming get_pdf_directory will be migrated or a new one created in ng.services
-                        # from ng.db.database import get_pdf_directory
-                        # pdf_dir = get_pdf_directory()
-                        # full_pdf_path = os.path.join(pdf_dir, paper.pdf_path)
-                        # if os.path.exists(full_pdf_path):
-                        #     os.remove(full_pdf_path)
-                        pass # Placeholder for PDF deletion
+                        from ng.services.pdf import PDFManager
+
+                        pdf_manager = PDFManager()
+                        full_pdf_path = pdf_manager.get_absolute_path(paper.pdf_path)
+                        if os.path.exists(full_pdf_path):
+                            os.remove(full_pdf_path)
                     except Exception:
                         pass
                 session.delete(paper)
@@ -302,3 +303,77 @@ class PaperService:
             session.expunge_all()
 
             return paper_with_relationships
+
+    def prepare_paper_data_for_edit(self, paper) -> dict:
+        """Prepare paper data dictionary for EditDialog from a Paper model instance.
+
+        This method extracts all relevant fields from a Paper model
+        and formats them for use with EditDialog.
+
+        Args:
+            paper: Paper model instance
+
+        Returns:
+            dict: Paper data formatted for EditDialog
+        """
+        return {
+            "id": paper.id,
+            "title": paper.title,
+            "abstract": paper.abstract,
+            "venue_full": paper.venue_full,
+            "venue_acronym": paper.venue_acronym,
+            "year": paper.year,
+            "volume": getattr(paper, "volume", None),
+            "issue": getattr(paper, "issue", None),
+            "pages": paper.pages,
+            "paper_type": paper.paper_type,
+            "doi": paper.doi,
+            "preprint_id": paper.preprint_id,
+            "category": paper.category,
+            "url": paper.url,
+            "pdf_path": paper.pdf_path,
+            "notes": paper.notes,
+            "added_date": paper.added_date,
+            "modified_date": paper.modified_date,
+            "authors": (
+                paper.get_ordered_authors()
+                if hasattr(paper, "get_ordered_authors")
+                else []
+            ),
+            "collections": (paper.collections if hasattr(paper, "collections") else []),
+        }
+
+    def create_edit_callback(self, app, paper_id):
+        """Create a standardized edit callback for handling EditDialog results.
+
+        This method creates a callback that handles paper updates,
+        notifications, and error handling consistently across the application.
+
+        Args:
+            app: The main application instance for notifications and paper reloading
+            paper_id: ID of the paper being edited
+
+        Returns:
+            callable: Callback function for EditDialog results
+        """
+
+        def callback(result):
+            if result:
+                try:
+                    updated_paper, error_message = self.update_paper(paper_id, result)
+                    if updated_paper:
+                        app.load_papers()  # Reload papers to reflect changes
+                        app.notify(
+                            f"Paper '{updated_paper.title}' updated successfully",
+                            severity="information",
+                        )
+                        return updated_paper  # Return for caller to use
+                    else:
+                        app.notify(
+                            f"Failed to update paper: {error_message}", severity="error"
+                        )
+                except Exception as e:
+                    app.notify(f"Error updating paper: {e}", severity="error")
+            return None
+
+        return callback

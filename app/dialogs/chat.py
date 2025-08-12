@@ -880,9 +880,7 @@ class ChatDialog:
                             absolute_path, max_pages=max_pages
                         )
                         if pdf_text:
-                            paper_context += (
-                                f"First {max_pages} pages attached to this chat:\n{pdf_text}\n"
-                            )
+                            paper_context += f"First {max_pages} pages attached to this chat:\n{pdf_text}\n"
                             pdf_content_added = True
                     except Exception as e:
                         if self.log_callback:

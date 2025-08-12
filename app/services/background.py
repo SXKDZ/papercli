@@ -35,14 +35,20 @@ class BackgroundOperationService:
         def background_worker():
             try:
                 if self.log_callback:
-                    self.log_callback("background_ops_start", f"Started background operation: {operation_name}")
+                    self.log_callback(
+                        "background_ops_start",
+                        f"Started background operation: {operation_name}",
+                    )
 
                 # Run the operation
                 result = operation_func()
 
                 def schedule_success():
                     if self.log_callback:
-                        self.log_callback("background_ops_complete", f"Completed background operation: {operation_name}")
+                        self.log_callback(
+                            "background_ops_complete",
+                            f"Completed background operation: {operation_name}",
+                        )
 
                     # Call completion callback with result
                     if on_complete:

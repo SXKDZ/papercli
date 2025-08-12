@@ -481,9 +481,7 @@ PDF Filename Convention:
                             "PDF pages must be a positive number"
                         )
                 except ValueError:
-                    self.cli.status_bar.set_error(
-                        "PDF pages must be a valid number"
-                    )
+                    self.cli.status_bar.set_error("PDF pages must be a valid number")
 
         elif action == "show":
             self._show_all_config()
@@ -807,7 +805,9 @@ gpt-3.5-turbo                   - GPT-3.5 Turbo model (faster, cheaper)"""
             self.cli.status_bar.set_success(f"PDF pages limit set to: {pages}")
             self._add_log("config_pdf_pages", f"PDF pages limit set to: {pages}")
         else:
-            self.cli.status_bar.set_error("Failed to save PDF pages setting to .env file")
+            self.cli.status_bar.set_error(
+                "Failed to save PDF pages setting to .env file"
+            )
 
     def _show_all_config(self):
         """Show all current configuration."""
@@ -923,24 +923,33 @@ To change settings:
                     error_details = []
                     for error in result.errors:
                         error_details.append(f"  • {error}")
-                    error_summary = f"Sync finished with errors: {len(result.errors)} error(s)\n" + "\n".join(error_details)
+                    error_summary = (
+                        f"Sync finished with errors: {len(result.errors)} error(s)\n"
+                        + "\n".join(error_details)
+                    )
                     self._add_log("sync_finished", error_summary)
                 else:
                     # Build comprehensive success log with details
                     log_parts = [f"Sync finished successfully: {result.get_summary()}"]
-                    
+
                     # Add detailed breakdown if available
-                    if hasattr(result, 'detailed_changes') and any(result.detailed_changes.values()):
+                    if hasattr(result, "detailed_changes") and any(
+                        result.detailed_changes.values()
+                    ):
                         for change_type, items in result.detailed_changes.items():
                             if items:
                                 category = change_type.replace("_", " ").title()
                                 # Fix PDF capitalization
                                 if "Pdfs" in category:
                                     category = category.replace("Pdfs", "PDFs")
-                                log_parts.append(f"  {category}: {', '.join(items[:5])}")
+                                log_parts.append(
+                                    f"  {category}: {', '.join(items[:5])}"
+                                )
                                 if len(items) > 5:
-                                    log_parts.append(f"    ... and {len(items) - 5} more")
-                    
+                                    log_parts.append(
+                                        f"    ... and {len(items) - 5} more"
+                                    )
+
                     self._add_log("sync_finished", "\n".join(log_parts))
             else:
                 self.cli.status_bar.set_status("Sync cancelled", "cancelled")

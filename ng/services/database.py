@@ -8,24 +8,23 @@ from datetime import datetime
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker
 
-from ng.db import models # Reusing models
-from ng.db.models import Base, Paper, Author, Collection, PaperAuthor # Reusing models
+from ng.db import models  # Reusing models
+from ng.db.models import Base, Paper, Author, Collection, PaperAuthor  # Reusing models
+
 
 class DatabaseHealthService:
     """Service for diagnosing and fixing database issues."""
 
-    def __init__(self, db_path: str, log_callback: Optional[Callable[[str, str], None]] = None):
-        self.db_path = db_path
-        self.engine = create_engine(f"sqlite:///{db_path}")
+    def __init__(self, db_path: str = None, app=None):
+        # If db_path is not provided, get it from app
+        self.db_path = db_path if db_path else (app.db_path if app else None)
+        self.engine = create_engine(f"sqlite:///{self.db_path}")
         self.Session = sessionmaker(bind=self.engine)
-        self.log_callback = log_callback if log_callback else self._default_log_callback
-
-    def _default_log_callback(self, action: str, details: str):
-        print(f"LOG: {action} - {details}")
+        self.app = app
 
     def _add_log(self, action: str, details: str):
-        if self.log_callback:
-            self.log_callback(action, details)
+        if self.app:
+            self.app._add_log(action, details)
 
     def run_full_diagnostic(self) -> Dict[str, Any]:
         """Runs a comprehensive diagnostic check on the database and system."""
@@ -48,29 +47,41 @@ class DatabaseHealthService:
             report["recommendations"].append("Run PaperCLI to initialize the database.")
         if not report["database_checks"]["tables_exist"]:
             report["issues_found"].append("Database tables are missing.")
-            report["recommendations"].append("Run database migrations (e.g., alembic upgrade head).")
+            report["recommendations"].append(
+                "Run database migrations (e.g., alembic upgrade head)."
+            )
         if not report["database_checks"]["foreign_key_constraints"]:
             report["issues_found"].append("Foreign key constraints are not enforced.")
-            report["recommendations"].append("Ensure SQLite foreign_keys pragma is enabled.")
+            report["recommendations"].append(
+                "Ensure SQLite foreign_keys pragma is enabled."
+            )
 
         if report["orphaned_records"]["summary"]["orphaned_paper_collections"] > 0:
-            report["issues_found"].append("Orphaned paper-collection associations found.")
+            report["issues_found"].append(
+                "Orphaned paper-collection associations found."
+            )
             report["recommendations"].append("Run '/doctor clean' to remove them.")
         if report["orphaned_records"]["summary"]["orphaned_paper_authors"] > 0:
             report["issues_found"].append("Orphaned paper-author associations found.")
             report["recommendations"].append("Run '/doctor clean' to remove them.")
 
         if report["orphaned_pdfs"]["summary"]["orphaned_pdf_files"] > 0:
-            report["issues_found"].append("Orphaned PDF files found (not linked to any paper).")
+            report["issues_found"].append(
+                "Orphaned PDF files found (not linked to any paper)."
+            )
             report["recommendations"].append("Run '/doctor clean' to remove them.")
 
         if report["absolute_pdf_paths"]["summary"]["absolute_path_count"] > 0:
-            report["issues_found"].append("Papers with absolute PDF paths found (should be relative).")
+            report["issues_found"].append(
+                "Papers with absolute PDF paths found (should be relative)."
+            )
             report["recommendations"].append("Run '/doctor clean' to fix them.")
 
         if report["missing_pdfs"]["summary"]["missing_pdf_count"] > 0:
             report["issues_found"].append("Papers with missing PDF files found.")
-            report["recommendations"].append("Verify PDF file locations or remove missing papers.")
+            report["recommendations"].append(
+                "Verify PDF file locations or remove missing papers."
+            )
 
         return report
 
@@ -91,13 +102,17 @@ class DatabaseHealthService:
                     if existing_tables:
                         tables_exist = True
                         for table_name in existing_tables:
-                            result = connection.execute(text(f"SELECT COUNT(*) FROM {table_name}"))
+                            result = connection.execute(
+                                text(f"SELECT COUNT(*) FROM {table_name}")
+                            )
                             count = result.scalar_one()
                             table_counts[table_name] = count
 
                     # Check foreign key pragma
-                    fk_check = connection.execute(text("PRAGMA foreign_keys")).scalar_one()
-                    foreign_key_constraints = (fk_check == 1)
+                    fk_check = connection.execute(
+                        text("PRAGMA foreign_keys")
+                    ).scalar_one()
+                    foreign_key_constraints = fk_check == 1
 
             except Exception as e:
                 self._add_log("db_integrity_error", f"Error checking DB integrity: {e}")
@@ -117,19 +132,29 @@ class DatabaseHealthService:
         orphaned_paper_authors = 0
         try:
             # Orphaned PaperCollection entries (paper_id or collection_id does not exist)
-            orphaned_paper_collections = session.query(PaperCollection).filter(
-                ~PaperCollection.paper_id.in_(session.query(Paper.id)),
-                ~PaperCollection.collection_id.in_(session.query(Collection.id))
-            ).count()
+            orphaned_paper_collections = (
+                session.query(PaperCollection)
+                .filter(
+                    ~PaperCollection.paper_id.in_(session.query(Paper.id)),
+                    ~PaperCollection.collection_id.in_(session.query(Collection.id)),
+                )
+                .count()
+            )
 
             # Orphaned PaperAuthor entries (paper_id or author_id does not exist)
-            orphaned_paper_authors = session.query(PaperAuthor).filter(
-                ~PaperAuthor.paper_id.in_(session.query(Paper.id)),
-                ~PaperAuthor.author_id.in_(session.query(Author.id))
-            ).count()
+            orphaned_paper_authors = (
+                session.query(PaperAuthor)
+                .filter(
+                    ~PaperAuthor.paper_id.in_(session.query(Paper.id)),
+                    ~PaperAuthor.author_id.in_(session.query(Author.id)),
+                )
+                .count()
+            )
 
         except Exception as e:
-            self._add_log("orphaned_records_error", f"Error finding orphaned records: {e}")
+            self._add_log(
+                "orphaned_records_error", f"Error finding orphaned records: {e}"
+            )
         finally:
             session.close()
 
@@ -147,25 +172,39 @@ class DatabaseHealthService:
         if pdf_dir.is_dir():
             session = self.Session()
             try:
-                db_pdf_paths = {Path(p.file_path).name for p in session.query(Paper).filter(Paper.file_path.isnot(None)).all()}
+                db_pdf_paths = {
+                    Path(p.file_path).name
+                    for p in session.query(Paper)
+                    .filter(Paper.file_path.isnot(None))
+                    .all()
+                }
                 for pdf_file in pdf_dir.glob("*.pdf"):
                     if pdf_file.name not in db_pdf_paths:
                         orphaned_pdf_files.append(str(pdf_file))
             except Exception as e:
-                self._add_log("orphaned_pdfs_error", f"Error finding orphaned PDFs: {e}")
+                self._add_log(
+                    "orphaned_pdfs_error", f"Error finding orphaned PDFs: {e}"
+                )
             finally:
                 session.close()
-        return {"summary": {"orphaned_pdf_files": len(orphaned_pdf_files)}, "details": orphaned_pdf_files}
+        return {
+            "summary": {"orphaned_pdf_files": len(orphaned_pdf_files)},
+            "details": orphaned_pdf_files,
+        }
 
     def _find_absolute_pdf_paths(self) -> Dict[str, Any]:
         """Finds papers with absolute PDF paths instead of relative ones."""
         session = self.Session()
         absolute_paths = []
         try:
-            papers_with_abs_paths = session.query(Paper).filter(
-                Paper.file_path.isnot(None),
-                # This is a placeholder, actual check needs to be more robust
-            ).all()
+            papers_with_abs_paths = (
+                session.query(Paper)
+                .filter(
+                    Paper.file_path.isnot(None),
+                    # This is a placeholder, actual check needs to be more robust
+                )
+                .all()
+            )
 
             # Manual check for absolute paths
             for paper in papers_with_abs_paths:
@@ -173,10 +212,15 @@ class DatabaseHealthService:
                     absolute_paths.append(paper.id)
 
         except Exception as e:
-            self._add_log("absolute_paths_error", f"Error finding absolute PDF paths: {e}")
+            self._add_log(
+                "absolute_paths_error", f"Error finding absolute PDF paths: {e}"
+            )
         finally:
             session.close()
-        return {"summary": {"absolute_path_count": len(absolute_paths)}, "details": absolute_paths}
+        return {
+            "summary": {"absolute_path_count": len(absolute_paths)},
+            "details": absolute_paths,
+        }
 
     def _find_missing_pdfs(self) -> Dict[str, Any]:
         """Finds papers whose linked PDF files are missing from disk."""
@@ -184,7 +228,9 @@ class DatabaseHealthService:
         missing_pdfs = []
         pdf_dir = Path(self.db_path).parent / "pdfs"
         try:
-            papers_with_files = session.query(Paper).filter(Paper.file_path.isnot(None)).all()
+            papers_with_files = (
+                session.query(Paper).filter(Paper.file_path.isnot(None)).all()
+            )
             for paper in papers_with_files:
                 if paper.file_path:
                     full_path = pdf_dir / Path(paper.file_path).name
@@ -194,7 +240,10 @@ class DatabaseHealthService:
             self._add_log("missing_pdfs_error", f"Error finding missing PDFs: {e}")
         finally:
             session.close()
-        return {"summary": {"missing_pdf_count": len(missing_pdfs)}, "details": missing_pdfs}
+        return {
+            "summary": {"missing_pdf_count": len(missing_pdfs)},
+            "details": missing_pdfs,
+        }
 
     def _check_system_health(self) -> Dict[str, Any]:
         """Checks system-level health (Python version, dependencies)."""
@@ -206,7 +255,8 @@ class DatabaseHealthService:
             "sqlalchemy": importlib.util.find_spec("sqlalchemy") is not None,
             "rich": importlib.util.find_spec("rich") is not None,
             "textual": importlib.util.find_spec("textual") is not None,
-            "prompt_toolkit": importlib.util.find_spec("prompt_toolkit") is not None, # Keep for now as it's still in app
+            "prompt_toolkit": importlib.util.find_spec("prompt_toolkit")
+            is not None,  # Keep for now as it's still in app
             "requests": importlib.util.find_spec("requests") is not None,
             "openai": importlib.util.find_spec("openai") is not None,
         }
@@ -217,7 +267,10 @@ class DatabaseHealthService:
             statvfs = os.statvfs(Path(self.db_path).parent)
             total_bytes = statvfs.f_blocks * statvfs.f_bsize
             free_bytes = statvfs.f_bavail * statvfs.f_bsize
-            disk_space = {"total_mb": total_bytes // (1024*1024), "free_mb": free_bytes // (1024*1024)}
+            disk_space = {
+                "total_mb": total_bytes // (1024 * 1024),
+                "free_mb": free_bytes // (1024 * 1024),
+            }
         except Exception as e:
             self._add_log("disk_space_error", f"Error checking disk space: {e}")
 
@@ -231,11 +284,12 @@ class DatabaseHealthService:
         """Checks terminal capabilities (unicode, color, size)."""
         # These checks are more relevant for prompt_toolkit, but we can keep placeholders
         # for general terminal info.
+        import sys
         import shutil
 
         terminal_type = os.getenv("TERM", "unknown")
         unicode_support = sys.stdout.encoding == "UTF-8"
-        color_support = os.getenv("TERM") not in ("dumb", "xterm-mono") # Basic check
+        color_support = os.getenv("TERM") not in ("dumb", "xterm-mono")  # Basic check
 
         terminal_size = shutil.get_terminal_size(fallback=(80, 24))
 
@@ -243,7 +297,10 @@ class DatabaseHealthService:
             "terminal_type": terminal_type,
             "unicode_support": unicode_support,
             "color_support": color_support,
-            "terminal_size": {"columns": terminal_size.columns, "lines": terminal_size.lines},
+            "terminal_size": {
+                "columns": terminal_size.columns,
+                "lines": terminal_size.lines,
+            },
         }
 
     def clean_orphaned_records(self) -> Dict[str, int]:
@@ -255,28 +312,41 @@ class DatabaseHealthService:
         }
         try:
             # Delete orphaned PaperCollection entries
-            orphaned_pcs = session.query(PaperCollection).filter(
-                ~PaperCollection.paper_id.in_(session.query(Paper.id)),
-                ~PaperCollection.collection_id.in_(session.query(Collection.id))
-            ).all()
+            orphaned_pcs = (
+                session.query(PaperCollection)
+                .filter(
+                    ~PaperCollection.paper_id.in_(session.query(Paper.id)),
+                    ~PaperCollection.collection_id.in_(session.query(Collection.id)),
+                )
+                .all()
+            )
             for pc in orphaned_pcs:
                 session.delete(pc)
                 cleaned_counts["paper_collections"] += 1
 
             # Delete orphaned PaperAuthor entries
-            orphaned_pas = session.query(PaperAuthor).filter(
-                ~PaperAuthor.paper_id.in_(session.query(Paper.id)),
-                ~PaperAuthor.author_id.in_(session.query(Author.id))
-            ).all()
+            orphaned_pas = (
+                session.query(PaperAuthor)
+                .filter(
+                    ~PaperAuthor.paper_id.in_(session.query(Paper.id)),
+                    ~PaperAuthor.author_id.in_(session.query(Author.id)),
+                )
+                .all()
+            )
             for pa in orphaned_pas:
                 session.delete(pa)
                 cleaned_counts["paper_authors"] += 1
 
             session.commit()
-            self._add_log("clean_records", f"Cleaned {cleaned_counts['paper_collections']} paper-collections and {cleaned_counts['paper_authors']} paper-authors.")
+            self._add_log(
+                "clean_records",
+                f"Cleaned {cleaned_counts['paper_collections']} paper-collections and {cleaned_counts['paper_authors']} paper-authors.",
+            )
         except Exception as e:
             session.rollback()
-            self._add_log("clean_records_error", f"Error cleaning orphaned records: {e}")
+            self._add_log(
+                "clean_records_error", f"Error cleaning orphaned records: {e}"
+            )
         finally:
             session.close()
         return cleaned_counts
@@ -288,15 +358,25 @@ class DatabaseHealthService:
         if pdf_dir.is_dir():
             session = self.Session()
             try:
-                db_pdf_paths = {Path(p.file_path).name for p in session.query(Paper).filter(Paper.file_path.isnot(None)).all()}
+                db_pdf_paths = {
+                    Path(p.file_path).name
+                    for p in session.query(Paper)
+                    .filter(Paper.file_path.isnot(None))
+                    .all()
+                }
                 for pdf_file in pdf_dir.glob("*.pdf"):
                     if pdf_file.name not in db_pdf_paths:
                         try:
                             os.remove(pdf_file)
                             cleaned_count += 1
-                            self._add_log("clean_pdf", f"Deleted orphaned PDF: {pdf_file.name}")
+                            self._add_log(
+                                "clean_pdf", f"Deleted orphaned PDF: {pdf_file.name}"
+                            )
                         except OSError as e:
-                            self._add_log("clean_pdf_error", f"Error deleting {pdf_file.name}: {e}")
+                            self._add_log(
+                                "clean_pdf_error",
+                                f"Error deleting {pdf_file.name}: {e}",
+                            )
             except Exception as e:
                 self._add_log("clean_pdf_error", f"Error finding PDFs to clean: {e}")
             finally:
@@ -309,10 +389,14 @@ class DatabaseHealthService:
         fixed_count = 0
         pdf_dir = Path(self.db_path).parent / "pdfs"
         try:
-            papers_with_abs_paths = session.query(Paper).filter(
-                Paper.file_path.isnot(None),
-                # This filter is still problematic for SQLite, will rely on manual check
-            ).all()
+            papers_with_abs_paths = (
+                session.query(Paper)
+                .filter(
+                    Paper.file_path.isnot(None),
+                    # This filter is still problematic for SQLite, will rely on manual check
+                )
+                .all()
+            )
 
             for paper in papers_with_abs_paths:
                 if paper.file_path and Path(paper.file_path).is_absolute():
@@ -322,9 +406,15 @@ class DatabaseHealthService:
                         paper.file_path = str(relative_path)
                         session.add(paper)
                         fixed_count += 1
-                        self._add_log("fix_path", f"Fixed absolute path for paper {paper.id}: {paper.file_path}")
-                    except ValueError: # Path is not relative to pdf_dir
-                        self._add_log("fix_path_warning", f"Could not make path relative for paper {paper.id}: {paper.file_path}")
+                        self._add_log(
+                            "fix_path",
+                            f"Fixed absolute path for paper {paper.id}: {paper.file_path}",
+                        )
+                    except ValueError:  # Path is not relative to pdf_dir
+                        self._add_log(
+                            "fix_path_warning",
+                            f"Could not make path relative for paper {paper.id}: {paper.file_path}",
+                        )
 
             session.commit()
         except Exception as e:
@@ -352,12 +442,18 @@ class DatabaseHealthService:
                         if old_path != new_path:
                             try:
                                 os.rename(old_path, new_path)
-                                paper.file_path = new_filename # Update DB record
+                                paper.file_path = new_filename  # Update DB record
                                 session.add(paper)
                                 renamed_count += 1
-                                self._add_log("rename_pdf", f"Renamed PDF for paper {paper.id} from {old_path.name} to {new_filename}")
+                                self._add_log(
+                                    "rename_pdf",
+                                    f"Renamed PDF for paper {paper.id} from {old_path.name} to {new_filename}",
+                                )
                             except OSError as e:
-                                self._add_log("rename_pdf_error", f"Error renaming {old_path.name} to {new_filename}: {e}")
+                                self._add_log(
+                                    "rename_pdf_error",
+                                    f"Error renaming {old_path.name} to {new_filename}: {e}",
+                                )
             session.commit()
         except Exception as e:
             session.rollback()
@@ -389,8 +485,9 @@ class DatabaseHealthService:
             full_path = Path(self.db_path).parent / "pdfs" / Path(paper.file_path).name
             if full_path.exists():
                 import hashlib
+
                 hasher = hashlib.sha1()
-                with open(full_path, 'rb') as f:
+                with open(full_path, "rb") as f:
                     buf = f.read()
                     hasher.update(buf)
                 file_hash = hasher.hexdigest()[:6]

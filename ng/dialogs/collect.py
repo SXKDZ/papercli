@@ -6,6 +6,7 @@ from textual.reactive import reactive
 from typing import Callable, Dict, Any, List, Optional
 from ng.db.models import Paper, Collection
 
+
 class CollectDialog(ModalScreen):
     """A modal dialog for managing collections with 3-column layout."""
 
@@ -19,7 +20,7 @@ class CollectDialog(ModalScreen):
         height: 30;
         max-width: 120;
         max-height: 35;
-        border: thick $accent;
+        border: solid $accent;
         background: $panel;
     }
     CollectDialog .dialog-title {
@@ -39,7 +40,7 @@ class CollectDialog(ModalScreen):
     CollectDialog .column-title {
         text-style: bold;
         text-align: center;
-        height: 1;
+        height: 3;
         background: $accent-darken-1;
         color: $text;
     }
@@ -53,7 +54,16 @@ class CollectDialog(ModalScreen):
     }
     CollectDialog .action-buttons Button {
         width: 12;
-        margin: 1 0;
+        margin: 0;
+        height: 3;
+        content-align: center middle;
+        text-align: center;
+    }
+    CollectDialog .column Button {
+        height: 3;
+        content-align: center middle;
+        text-align: center;
+        margin: 0 1;
     }
     CollectDialog .paper-details {
         height: 8;
@@ -63,17 +73,20 @@ class CollectDialog(ModalScreen):
     CollectDialog .paper-details-title {
         text-style: bold;
         text-align: center;
-        height: 1;
+        height: 3;
         background: $accent-darken-1;
         color: $text;
     }
     CollectDialog .bottom-buttons {
-        height: 3;
+        height: 5;
         align: center middle;
     }
     CollectDialog .bottom-buttons Button {
         margin: 0 1;
         min-width: 8;
+        height: 3;
+        content-align: center middle;
+        text-align: center;
     }
     """
 
@@ -86,12 +99,19 @@ class CollectDialog(ModalScreen):
     selected_collection_paper = reactive(None)
     selected_all_paper = reactive(None)
 
-    def __init__(self, collections: List[Collection], papers: List[Paper], callback: Callable[[Dict[str, Any] | None], None] = None, *args, **kwargs):
+    def __init__(
+        self,
+        collections: List[Collection],
+        papers: List[Paper],
+        callback: Callable[[Dict[str, Any] | None], None] = None,
+        *args,
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
         self.collections = collections or []
         self.papers = papers or []
         self.callback = callback
-        
+
         # Track changes
         self.collection_changes = {}  # {old_name: new_name}
         self.paper_moves = []  # [(paper_id, collection_name, action)]
@@ -101,7 +121,7 @@ class CollectDialog(ModalScreen):
     def compose(self) -> ComposeResult:
         with Container():
             yield Static("Manage Collections", classes="dialog-title")
-            
+
             # Main 3-column layout
             with Horizontal():
                 # Column 1: Collections List
@@ -109,21 +129,33 @@ class CollectDialog(ModalScreen):
                     yield Static("Collections", classes="column-title")
                     with VerticalScroll(classes="list-container"):
                         yield ListView(id="collections-list")
-                    yield Input(placeholder="New collection name", id="new-collection-input")
+                    yield Input(
+                        placeholder="New collection name", id="new-collection-input"
+                    )
                     with Horizontal():
-                        yield Button("Add", id="add-collection-button", variant="success")
-                        yield Button("Delete", id="delete-collection-button", variant="error")
+                        yield Button(
+                            "Add", id="add-collection-button", variant="success"
+                        )
+                        yield Button(
+                            "Delete", id="delete-collection-button", variant="error"
+                        )
 
                 # Column 2: Papers in Selected Collection
                 with Vertical(classes="column"):
-                    yield Static("Papers in Collection", classes="column-title", id="collection-papers-title")
+                    yield Static(
+                        "Papers in Collection",
+                        classes="column-title",
+                        id="collection-papers-title",
+                    )
                     with VerticalScroll(classes="list-container"):
                         yield ListView(id="collection-papers-list")
 
                 # Action buttons between columns 2 and 3
                 with Vertical(classes="action-buttons"):
                     yield Button("← Add", id="add-paper-button", variant="primary")
-                    yield Button("Remove →", id="remove-paper-button", variant="warning")
+                    yield Button(
+                        "Remove →", id="remove-paper-button", variant="warning"
+                    )
 
                 # Column 3: All Papers
                 with Vertical(classes="column"):
@@ -134,9 +166,11 @@ class CollectDialog(ModalScreen):
             # Paper Details Panel
             with Vertical(classes="paper-details"):
                 yield Static("Paper Details", classes="paper-details-title")
-                yield TextArea(text="Select a paper to view details", 
-                             read_only=True, 
-                             id="paper-details-area")
+                yield TextArea(
+                    text="Select a paper to view details",
+                    read_only=True,
+                    id="paper-details-area",
+                )
 
             # Bottom buttons
             with Horizontal(classes="bottom-buttons"):
@@ -153,7 +187,7 @@ class CollectDialog(ModalScreen):
         """Populate the collections list."""
         collections_list = self.query_one("#collections-list", ListView)
         collections_list.clear()
-        
+
         for collection in self.collections:
             item = ListItem(Label(collection.name), id=f"collection-{collection.id}")
             collections_list.append(item)
@@ -162,7 +196,7 @@ class CollectDialog(ModalScreen):
         """Populate the all papers list."""
         all_papers_list = self.query_one("#all-papers-list", ListView)
         all_papers_list.clear()
-        
+
         for paper in self.papers:
             title = paper.title[:50] + "..." if len(paper.title) > 50 else paper.title
             item = ListItem(Label(title), id=f"paper-{paper.id}")
@@ -172,14 +206,16 @@ class CollectDialog(ModalScreen):
         """Populate papers in the selected collection."""
         collection_papers_list = self.query_one("#collection-papers-list", ListView)
         collection_papers_list.clear()
-        
+
         # Update title
         title_widget = self.query_one("#collection-papers-title", Static)
         title_widget.update(f"Papers in '{collection.name}'")
-        
+
         for idx, paper in enumerate(collection.papers):
             title = paper.title[:50] + "..." if len(paper.title) > 50 else paper.title
-            item = ListItem(Label(title), id=f"collection-paper-{collection.id}-{paper.id}-{idx}")
+            item = ListItem(
+                Label(title), id=f"collection-paper-{collection.id}-{paper.id}-{idx}"
+            )
             collection_papers_list.append(item)
 
     def select_collection(self, index: int) -> None:
@@ -188,7 +224,7 @@ class CollectDialog(ModalScreen):
             collection = self.collections[index]
             self.selected_collection = collection
             self.populate_collection_papers_list(collection)
-            
+
             # Highlight the selected collection
             collections_list = self.query_one("#collections-list", ListView)
             collections_list.index = index
@@ -224,20 +260,22 @@ class CollectDialog(ModalScreen):
         """Add a new collection."""
         input_widget = self.query_one("#new-collection-input", Input)
         name = input_widget.value.strip()
-        
+
         if not name:
             return
-            
+
         if name in [c.name for c in self.collections] + self.new_collections:
             return  # Collection already exists
-            
+
         self.new_collections.append(name)
-        
+
         # Add to UI
         collections_list = self.query_one("#collections-list", ListView)
-        item = ListItem(Label(f"{name} (new)"), id=f"new-collection-{len(self.new_collections)-1}")
+        item = ListItem(
+            Label(f"{name} (new)"), id=f"new-collection-{len(self.new_collections)-1}"
+        )
         collections_list.append(item)
-        
+
         # Clear input
         input_widget.value = ""
 
@@ -245,14 +283,14 @@ class CollectDialog(ModalScreen):
         """Delete the selected collection."""
         collections_list = self.query_one("#collections-list", ListView)
         index = collections_list.index
-        
+
         if index is not None and 0 <= index < len(self.collections):
             collection = self.collections[index]
             self.deleted_collections.append(collection.name)
-            
+
             # Remove from UI
             collections_list.remove_items([collections_list.highlighted_child])
-            
+
             # Clear collection papers
             self.query_one("#collection-papers-list", ListView).clear()
 
@@ -260,37 +298,42 @@ class CollectDialog(ModalScreen):
         """Add selected paper from all papers to the current collection."""
         if not self.selected_collection or not self.selected_all_paper:
             return
-            
+
         # Extract paper ID from the item ID
         paper_id = int(self.selected_all_paper.id.replace("paper-", ""))
         paper = next((p for p in self.papers if p.id == paper_id), None)
-        
+
         if paper and paper not in self.selected_collection.papers:
             # Track the change
             self.paper_moves.append((paper_id, self.selected_collection.name, "add"))
-            
+
             # Add to UI
             title = paper.title[:50] + "..." if len(paper.title) > 50 else paper.title
             collection_papers_list = self.query_one("#collection-papers-list", ListView)
-            idx = len(collection_papers_list.children)  # Get current count for unique index
-            item = ListItem(Label(title), id=f"collection-paper-{self.selected_collection.id}-{paper.id}-{idx}")
+            idx = len(
+                collection_papers_list.children
+            )  # Get current count for unique index
+            item = ListItem(
+                Label(title),
+                id=f"collection-paper-{self.selected_collection.id}-{paper.id}-{idx}",
+            )
             collection_papers_list.append(item)
 
     def remove_paper_from_collection(self) -> None:
         """Remove selected paper from the current collection."""
         if not self.selected_collection or not self.selected_collection_paper:
             return
-            
+
         # Extract paper ID from the item ID (format: collection-paper-{collection_id}-{paper_id}-{idx})
         id_parts = self.selected_collection_paper.id.split("-")
         if len(id_parts) >= 4:
             paper_id = int(id_parts[3])  # Get the paper_id part
         else:
             return  # Invalid ID format
-        
+
         # Track the change
         self.paper_moves.append((paper_id, self.selected_collection.name, "remove"))
-        
+
         # Remove from UI
         collection_papers_list = self.query_one("#collection-papers-list", ListView)
         collection_papers_list.remove_items([self.selected_collection_paper])
@@ -303,7 +346,7 @@ class CollectDialog(ModalScreen):
             "new_collections": self.new_collections,
             "deleted_collections": self.deleted_collections,
         }
-        
+
         if self.callback:
             self.callback(result)
         self.dismiss(result)
@@ -319,7 +362,7 @@ class CollectDialog(ModalScreen):
         if not item:
             self.clear_paper_details()
             return
-            
+
         # Extract paper ID from the item ID (format: collection-paper-{collection_id}-{paper_id}-{idx})
         id_parts = item.id.split("-")
         if len(id_parts) >= 4:
@@ -340,7 +383,7 @@ class CollectDialog(ModalScreen):
         if not item:
             self.clear_paper_details()
             return
-            
+
         # Extract paper ID from the item ID (format: paper-{paper_id})
         try:
             paper_id = int(item.id.replace("paper-", ""))
@@ -355,26 +398,26 @@ class CollectDialog(ModalScreen):
     def show_paper_details(self, paper: Paper) -> None:
         """Display paper details in the details panel."""
         details_area = self.query_one("#paper-details-area", TextArea)
-        
+
         # Format paper details as one-liner like the original app
         authors = paper.author_names or "Unknown Authors"
         title = paper.title or "Unknown Title"
         venue = ""
-        if hasattr(paper, 'venue_display'):
+        if hasattr(paper, "venue_display"):
             venue = paper.venue_display or ""
         elif paper.venue_full:
             venue = paper.venue_full
         elif paper.venue_acronym:
             venue = paper.venue_acronym
-        
+
         year = paper.year or "Unknown Year"
-        
+
         # Format as citation: authors, "title," venue (year)
         if venue:
             details_text = f'{authors}, "{title}," {venue} ({year})'
         else:
             details_text = f'{authors}, "{title}" ({year})'
-            
+
         details_area.text = details_text
 
     def clear_paper_details(self) -> None:

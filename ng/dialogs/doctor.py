@@ -3,8 +3,27 @@ from textual.containers import VerticalScroll
 from textual.widgets import Header, Footer, Button, Static
 from textual.screen import ModalScreen
 
+
 class DoctorDialog(ModalScreen):
     """A modal dialog for displaying the doctor report."""
+
+    DEFAULT_CSS = """
+    DoctorDialog .dialog-title {
+        text-align: center;
+        text-style: bold;
+        background: $accent;
+        color: $text;
+        height: 1;
+        width: 100%;
+    }
+    DoctorDialog Button {
+        height: 3;
+        content-align: center middle;
+        text-align: center;
+        margin: 0 1;
+        min-width: 8;
+    }
+    """
 
     def __init__(self, report_text: str, *args, **kwargs):
         super().__init__(*args, **kwargs)

@@ -13,18 +13,18 @@ import rispy
 from openai import OpenAI
 from titlecase import titlecase
 
-from ng.prompts import MetadataPrompts, SummaryPrompts # Reusing prompts
-from ng.services.http_utils import HTTPClient # Use new HTTPClient
-from ng.services.utils import fix_broken_lines, normalize_paper_data # Use new utils
+from ng.prompts import MetadataPrompts, SummaryPrompts
+from ng.services import HTTPClient, fix_broken_lines, normalize_paper_data
 
 if TYPE_CHECKING:
-    from ng.services.pdf import PDFManager # For type hinting
+    from ng.services import PDFManager
+
 
 class MetadataExtractor:
     """Service for extracting metadata from various sources."""
 
-    def __init__(self, pdf_manager: PDFManager, log_callback=None):
-        self.log_callback = log_callback
+    def __init__(self, pdf_manager: PDFManager, app=None):
+        self.app = app
         self.pdf_manager = pdf_manager
 
     def extract_from_arxiv(self, arxiv_id: str) -> Dict[str, Any]:
@@ -180,12 +180,12 @@ class MetadataExtractor:
             prompt = f"""Given this conference/journal venue field from a DBLP BibTeX entry: "{venue_field}"\n\nPlease extract:\n1. venue_full: The full venue name following these guidelines:\n   - For journals: Use full journal name (e.g., \"Journal of Chemical Information and Modeling\")\n   - For conferences: Use full name without \"Proceedings of\" or ordinal numbers (e.g., \"International Conference on Machine Learning\" for Proceedings of the 41st International Conference on Machine Learning)\n2. venue_acronym: The abbreviation following these guidelines:\n   - For journals: Use ISO 4 abbreviated format with periods (e.g., \"J. Chem. Inf. Model.\" for Journal of Chemical Information and Modeling)\n   - For conferences: Use common name (e.g., \"NeurIPS\" for Conference on Neural Information Processing Systems, not \"NIPS\")\n\nRespond in this exact JSON format:\n{{\"venue_full\": \"...\", \"venue_acronym\": \"...\"}} """
 
             # Log the LLM request
-            if hasattr(self, "log_callback") and self.log_callback:
-                self.log_callback(
+            if self.app:
+                self.app._add_log(
                     "llm_venue_request",
                     f"Requesting venue extraction for: {venue_field}",
                 )
-                self.log_callback(
+                self.app._add_log(
                     "llm_venue_prompt",
                     f"Full prompt sent to gpt-4o:\n{prompt}",
                 )
@@ -206,12 +206,12 @@ class MetadataExtractor:
             response_text = response.choices[0].message.content.strip()
 
             # Log the LLM response
-            if hasattr(self, "log_callback") and self.log_callback:
-                self.log_callback(
+            if self.app:
+                self.app._add_log(
                     "llm_venue_response",
                     f"GPT-4o response received ({len(response_text)} chars)",
                 )
-                self.log_callback(
+                self.app._add_log(
                     "llm_venue_content",
                     f"Raw response:\n{response_text}",
                 )
@@ -517,12 +517,12 @@ class MetadataExtractor:
             prompt = MetadataPrompts.extraction_prompt(text_content)
 
             # Log the LLM request
-            if self.log_callback:
-                self.log_callback(
+            if self.app:
+                self.app._add_log(
                     "llm_metadata_request",
                     f"Requesting metadata extraction for PDF: {pdf_path}",
                 )
-                self.log_callback(
+                self.app._add_log(
                     "llm_metadata_prompt",
                     f"Full prompt sent to gpt-4o-mini:\n{prompt}",
                 )
@@ -542,12 +542,12 @@ class MetadataExtractor:
             response_content = response.choices[0].message.content.strip()
 
             # Log the LLM response
-            if self.log_callback:
-                self.log_callback(
+            if self.app:
+                self.app._add_log(
                     "llm_metadata_response",
                     f"GPT-4o-mini response received ({len(response_content)} chars)",
                 )
-                self.log_callback(
+                self.app._add_log(
                     "llm_metadata_content",
                     f"Raw response:\n{response_content}",
                 )
@@ -567,8 +567,8 @@ class MetadataExtractor:
                 metadata = json.loads(response_content)
             except json.JSONDecodeError as e:
                 # Fallback: create basic metadata from extracted text
-                if self.log_callback:
-                    self.log_callback(
+                if self.app:
+                    self.app._add_log(
                         "pdf_extraction_warning",
                         f"LLM JSON parsing failed: {e}. Response: {response_content[:500]}...",
                     )
@@ -637,12 +637,12 @@ class MetadataExtractor:
             prompt = SummaryPrompts.academic_summary(full_text)
 
             # Log the LLM request
-            if self.log_callback:
-                self.log_callback(
+            if self.app:
+                self.app._add_log(
                     "llm_summarization_request",
                     f"Requesting paper summary for PDF: {pdf_path}",
                 )
-                self.log_callback(
+                self.app._add_log(
                     "llm_summarization_prompt",
                     f"Full prompt sent to gpt-4o:\n{prompt}",
                 )
@@ -663,12 +663,12 @@ class MetadataExtractor:
             summary_response = response.choices[0].message.content.strip()
 
             # Log the LLM response
-            if self.log_callback:
-                self.log_callback(
+            if self.app:
+                self.app._add_log(
                     "llm_summarization_response",
                     f"GPT-4o response received ({len(summary_response)} chars)",
                 )
-                self.log_callback(
+                self.app._add_log(
                     "llm_summarization_content",
                     f"Generated summary:\n{summary_response}",
                 )
@@ -676,8 +676,8 @@ class MetadataExtractor:
             return summary_response
 
         except Exception as e:
-            if self.log_callback:
-                self.log_callback(
+            if self.app:
+                self.app._add_log(
                     "paper_summary_error", f"Failed to generate paper summary: {e}"
                 )
             return ""  # Return empty string if summarization fails, don't break the workflow
@@ -839,7 +839,9 @@ class MetadataExtractor:
                 elif family:
                     authors.append(family)
             metadata["authors"] = (
-                " and ".join(authors) if authors else "" # Convert to string format for consistency
+                " and ".join(authors)
+                if authors
+                else ""  # Convert to string format for consistency
             )
 
             if "abstract" in work:

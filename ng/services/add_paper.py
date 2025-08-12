@@ -2,14 +2,18 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, List, Tuple, TYPE_CHECKING
 
-from ng.db.database import get_pdf_directory # Reusing existing get_pdf_directory
-from ng.services.metadata import MetadataExtractor # Use new MetadataExtractor
-from ng.services.paper import PaperService # Use new PaperService
-from ng.services.system import SystemService # Use new SystemService
-from ng.services.utils import normalize_paper_data # Use new utils
+from ng.db.database import get_pdf_directory
+from ng.services import (
+    MetadataExtractor,
+    PaperService,
+    SystemService,
+    normalize_paper_data,
+)
+from datetime import datetime
 
 if TYPE_CHECKING:
     from ng.db.models import Paper
+
 
 class AddPaperService:
     """Service for adding papers from various sources."""
@@ -145,6 +149,26 @@ class AddPaperService:
         # Extract metadata from PDF
         metadata = self.metadata_extractor.extract_from_pdf(pdf_path)
 
+        # Process PDF file - copy to pdfs directory and get relative path
+        from ng.services.pdf import PDFManager
+
+        pdf_manager = PDFManager()
+
+        # Create paper data first for PDF filename generation
+        temp_paper_data = {
+            "title": metadata.get("title", "Unknown Title"),
+            "authors": metadata.get("authors", ""),
+            "year": metadata.get("year"),
+        }
+
+        # Process PDF path - copy to pdfs directory and get relative path
+        relative_pdf_path, pdf_error = pdf_manager.process_pdf_path(
+            pdf_path, temp_paper_data
+        )
+
+        if pdf_error:
+            raise Exception(f"Failed to process PDF: {pdf_error}")
+
         # Prepare paper data
         paper_data = {
             "title": metadata.get("title", "Unknown Title"),
@@ -156,7 +180,7 @@ class AddPaperService:
             "paper_type": metadata.get("paper_type", "unknown"),
             "doi": metadata.get("doi"),
             "url": metadata.get("url"),
-            "pdf_path": pdf_path,
+            "pdf_path": relative_pdf_path,
         }
 
         paper_data = normalize_paper_data(paper_data)
@@ -169,7 +193,7 @@ class AddPaperService:
             paper_data, authors, collections
         )
 
-        return {"paper": paper, "pdf_path": pdf_path, "pdf_error": None}
+        return {"paper": paper, "pdf_path": relative_pdf_path, "pdf_error": None}
 
     def add_bib_papers(self, bib_path: str) -> Tuple[List[Paper], List[str]]:
         """Add papers from .bib file."""
@@ -314,3 +338,33 @@ class AddPaperService:
         )
 
         return {"paper": paper, "pdf_path": None, "pdf_error": None}
+
+    def add_manual_paper(self, title: str = "") -> Dict[str, Any]:
+        """Add a paper manually with basic defaults."""
+        try:
+            # Create basic manual paper based on original implementation
+            current_year = datetime.now().year
+            paper_data = {
+                "title": title if title.strip() else "Manually Added Paper",
+                "abstract": "This paper was added manually via PaperCLI.",
+                "year": current_year,
+                "venue_full": "User Input",
+                "venue_acronym": "UI",
+                "paper_type": "journal",
+                "notes": "Added manually - please update metadata using /edit",
+            }
+
+            # Normalize paper data for database storage
+            paper_data = normalize_paper_data(paper_data)
+
+            authors = ["Manual User"]
+            collections = []
+
+            paper = self.paper_service.add_paper_from_metadata(
+                paper_data, authors, collections
+            )
+
+            return {"paper": paper, "pdf_path": None, "pdf_error": None}
+
+        except Exception as e:
+            raise Exception(f"Failed to add manual paper: {str(e)}")

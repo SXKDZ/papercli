@@ -91,7 +91,9 @@ class CustomScrollbarMargin(Margin):
                 # Get the actual scroll position from window render info
                 scroll_top = window_render_info.vertical_scroll
                 max_scroll = content_height - actual_window_height
-                fraction_above = scroll_top / float(max_scroll) if max_scroll > 0 else 0.0
+                fraction_above = (
+                    scroll_top / float(max_scroll) if max_scroll > 0 else 0.0
+                )
 
             scrollbar_height = int(
                 min(scrollbar_space, max(1, scrollbar_space * fraction_visible))
@@ -281,7 +283,8 @@ class UISetupMixin:
                 self.paper_list_control.toggle_selection()
                 selected_count = len(self.paper_list_control.selected_paper_ids)
                 self.status_bar.set_status(
-                    f"Toggled selection. Selected: {selected_count} {'paper' if selected_count == 1 else 'papers'}", "success"
+                    f"Toggled selection. Selected: {selected_count} {'paper' if selected_count == 1 else 'papers'}",
+                    "success",
                 )
                 event.app.invalidate()  # Force refresh of UI
             else:

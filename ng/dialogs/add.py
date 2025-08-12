@@ -1,9 +1,10 @@
 from textual.app import ComposeResult
 from textual.containers import VerticalScroll, HorizontalScroll, Container
-from textual.widgets import Header, Footer, Button, Static, Input, RadioSet, RadioButton
+from textual.widgets import Button, Static, Input, RadioSet, RadioButton
 from textual.screen import ModalScreen
 from textual.reactive import reactive
 from typing import Callable, Dict, Any
+
 
 class AddDialog(ModalScreen):
     """A modal dialog for adding new papers with source and path/ID fields."""
@@ -14,12 +15,16 @@ class AddDialog(ModalScreen):
         layer: dialog;
     }
     AddDialog > Container {
-        width: 60;
-        height: 25;
-        max-width: 70;
+        width: 80;
+        height: 28;
+        max-width: 90;
         max-height: 30;
-        border: thick $accent;
+        border: solid $accent;
         background: $panel;
+    }
+    AddDialog > Container.compact {
+        height: 22;
+        max-height: 24;
     }
     AddDialog .dialog-title {
         text-align: center;
@@ -32,20 +37,22 @@ class AddDialog(ModalScreen):
     AddDialog .dialog-label {
         text-style: bold;
         height: 1;
-        margin: 1 0;
+        margin: 1 1;
     }
     AddDialog #add-dialog-content {
-        padding: 1;
+        padding: 0;
         height: 1fr;
     }
     AddDialog #add-dialog-buttons {
         height: 3;
         align: center middle;
-        padding: 1;
+        padding: 0;
     }
     AddDialog Button {
-        margin: 0 1;
-        min-width: 8;
+        margin: 0 5;
+        min-width: 10;
+        content-align: center middle;
+        text-align: center;
     }
     """
 
@@ -67,12 +74,14 @@ class AddDialog(ModalScreen):
 
     selected_source = reactive("arxiv")
 
-    def __init__(self, callback: Callable[[Dict[str, Any] | None], None] = None, *args, **kwargs):
+    def __init__(
+        self, callback: Callable[[Dict[str, Any] | None], None] = None, *args, **kwargs
+    ):
         super().__init__(*args, **kwargs)
         self.callback = callback
 
     def compose(self) -> ComposeResult:
-        with Container():
+        with Container(id="dialog-container"):
             yield Static("Add New Paper", classes="dialog-title")
             with VerticalScroll(id="add-dialog-content"):
                 yield Static("Source Type:", classes="dialog-label")
@@ -104,7 +113,9 @@ class AddDialog(ModalScreen):
             self.query_one("#path-input", Input).value = ""
         else:
             self.query_one("#path-input", Input).value = ""
-            self.query_one("#path-input", Input).placeholder = "Enter title for manual entry"
+            self.query_one("#path-input", Input).placeholder = (
+                "Enter title for manual entry"
+            )
 
     def update_input_label(self) -> None:
         label_map = {
@@ -117,28 +128,35 @@ class AddDialog(ModalScreen):
             "ris": "RIS Path:",
             "manual": "Title (for manual entry):",
         }
-        self.query_one("#input-label", Static).update(label_map.get(self.selected_source, "Path/ID/URL:"))
+        self.query_one("#input-label", Static).update(
+            label_map.get(self.selected_source, "Path/ID/URL:")
+        )
 
         # Hide/show path input based on manual selection
         path_input = self.query_one("#path-input", Input)
+        path_label = self.query_one("#input-label", Static)
+        container = self.query_one("#dialog-container")
         if self.selected_source == "manual":
             path_input.display = False
+            path_label.display = False
+            container.set_class(True, "compact")
         else:
             path_input.display = True
+            path_label.display = True
+            container.set_class(False, "compact")
+
+        self.refresh(layout=True)
 
     def action_add_paper(self) -> None:
         source = self.selected_source
         path_id = self.query_one("#path-input", Input).value.strip()
 
-        
         result = {"source": source, "path_id": path_id}
         if self.callback:
             self.callback(result)
         self.dismiss(result)
 
     def action_cancel(self) -> None:
-        if self.callback:
-            self.callback(None)
         self.dismiss(None)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:

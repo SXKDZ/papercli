@@ -5,14 +5,14 @@ Database initialization and connection management.
 import os
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Generator
+from typing import Generator, Optional
 
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from ng.db.models import Base # Changed import
+from ng.db.models import Base
 
 
 class DatabaseManager:
@@ -25,7 +25,7 @@ class DatabaseManager:
             autocommit=False, autoflush=True, bind=self.engine
         )
 
-    def create_tables(self):
+    def create_tables(self) -> None:
         """Create all database tables using Alembic or fallback to direct creation."""
         # First try to use Alembic if available
         if self._try_alembic_upgrade():
@@ -35,14 +35,14 @@ class DatabaseManager:
         print("Alembic not available, creating tables directly...")
         Base.metadata.create_all(bind=self.engine)
 
-    def _try_alembic_upgrade(self):
+    def _try_alembic_upgrade(self) -> bool:
         """Try to upgrade using Alembic. Returns True if successful."""
         try:
             # Try to find alembic.ini in the current directory first (for development)
-            alembic_ini_path = "alembic.ini"
-            alembic_dir = "alembic"
+            alembic_ini_path: Optional[str | Path] = "alembic.ini"
+            alembic_dir: Optional[str | Path] = "alembic"
 
-            if not os.path.exists(alembic_ini_path):
+            if not os.path.exists(str(alembic_ini_path)):
                 # Look for it relative to the ng package (installed package)
                 import ng
 
@@ -53,12 +53,9 @@ class DatabaseManager:
                 if not alembic_ini_path.exists():
                     return False
 
-                alembic_ini_path = str(alembic_ini_path)
-                alembic_dir = str(alembic_dir)
-
-            alembic_cfg = Config(alembic_ini_path)
+            alembic_cfg = Config(str(alembic_ini_path))
             alembic_cfg.set_main_option("sqlalchemy.url", f"sqlite:///{self.db_path}")
-            alembic_cfg.set_main_option("script_location", alembic_dir)
+            alembic_cfg.set_main_option("script_location", str(alembic_dir))
 
             command.upgrade(alembic_cfg, "head")
             return True
@@ -80,7 +77,7 @@ class DatabaseManager:
 
 
 # Global database manager instance
-_db_manager = None
+_db_manager: Optional[DatabaseManager] = None
 
 
 def init_database(db_path: str) -> DatabaseManager:

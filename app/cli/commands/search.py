@@ -34,7 +34,9 @@ class SearchCommandHandler(BaseCommandHandler):
 
         count = len(self.cli.paper_list_control.selected_paper_ids)
         self.cli.paper_list_control.selected_paper_ids.clear()
-        self.cli.status_bar.set_success(f"Cleared {count} selected {'paper' if count == 1 else 'papers'}.")
+        self.cli.status_bar.set_success(
+            f"Cleared {count} selected {'paper' if count == 1 else 'papers'}."
+        )
 
     def handle_filter_command(self, args: List[str]):
         """Handle /filter command."""

@@ -8,20 +8,19 @@ from typing import Any, Dict, List, TYPE_CHECKING
 
 import pyperclip
 
-from ng.prompts import ChatPrompts # Reusing prompts
-from ng.services.pdf import PDFManager # Use new PDFManager
+from ng.prompts import ChatPrompts
+from ng.services import PDFManager
 
 if TYPE_CHECKING:
     from ng.db.models import Paper
 
+
 class ChatService:
     """Service for chat functionality."""
 
-    def __init__(self, log_callback=None, pdf_dir=None):
-        self.log_callback = log_callback
-        if pdf_dir is None:
-            pdf_dir = os.path.join(os.path.expanduser("~/.papercli"), "pdfs")
-        self.pdf_manager = PDFManager(pdf_dir=pdf_dir)
+    def __init__(self, app=None, pdf_dir=None):
+        self.app = app
+        self.pdf_manager = PDFManager()
 
     def copy_prompt_to_clipboard(self, papers: List[Paper]) -> Dict[str, Any]:
         """Generate and copy paper prompt to clipboard for external LLM use."""
@@ -106,8 +105,8 @@ class ChatService:
                         except Exception as e:
                             error_msg = f"{paper.title}: {str(e)}"
                             failed_files.append(error_msg)
-                            if self.log_callback:
-                                self.log_callback(
+                            if self.app:
+                                self.app._add_log(
                                     "chat_pdf_error",
                                     f"Failed to open PDF for {paper.title}: {traceback.format_exc()}",
                                 )

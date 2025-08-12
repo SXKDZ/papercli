@@ -45,7 +45,7 @@ __all__ = [
     "CollectionService",
     "SearchService",
     "SyncService",
-    "SyncConflict", 
+    "SyncConflict",
     "SyncResult",
     "ExportService",
     "ChatService",

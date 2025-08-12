@@ -1,9 +1,10 @@
 from textual.app import ComposeResult
 from textual.containers import VerticalScroll, HorizontalScroll, Container
-from textual.widgets import Header, Footer, Button, Static, Input, RadioSet, RadioButton
+from textual.widgets import Button, Static, Input, RadioSet, RadioButton
 from textual.screen import ModalScreen
 from textual.reactive import reactive
-from typing import Callable, Dict, Any, List
+from typing import Callable, Dict, Any
+
 
 class FilterDialog(ModalScreen):
     """A modal dialog for filtering papers by various criteria."""
@@ -15,10 +16,10 @@ class FilterDialog(ModalScreen):
     }
     FilterDialog > Container {
         width: 65;
-        height: 20;
+        height: 25;
         max-width: 75;
-        max-height: 25;
-        border: thick $accent;
+        max-height: 30;
+        border: solid $accent;
         background: $panel;
     }
     FilterDialog .dialog-title {
@@ -31,21 +32,25 @@ class FilterDialog(ModalScreen):
     }
     FilterDialog .dialog-label {
         text-style: bold;
-        height: 1;
-        margin: 1 0;
+        height: 3;
+        margin: 0;
     }
     FilterDialog #filter-dialog-content {
         padding: 1;
         height: 1fr;
     }
     FilterDialog #filter-dialog-buttons {
-        height: 3;
+        height: 5;
         align: center middle;
-        padding: 1;
+        padding: 0;
     }
     FilterDialog Button {
         margin: 0 1;
         min-width: 8;
+        max-width: 12;
+        height: 3;
+        content-align: center middle;
+        text-align: center;
     }
     """
 
@@ -65,7 +70,9 @@ class FilterDialog(ModalScreen):
 
     selected_field = reactive("all")
 
-    def __init__(self, callback: Callable[[Dict[str, Any] | None], None], *args, **kwargs):
+    def __init__(
+        self, callback: Callable[[Dict[str, Any] | None], None], *args, **kwargs
+    ):
         super().__init__(*args, **kwargs)
         self.callback = callback
 
@@ -99,19 +106,16 @@ class FilterDialog(ModalScreen):
 
         if not value:
             # In a real app, you might show a validation message to the user
-            try:
-                self.app.query_one("#status-bar").set_error("Filter value cannot be empty.")
-            except:
-                pass  # Status bar not available in dialog
+            self.app.notify("Filter value cannot be empty", severity="warning")
             return
 
         result = {"field": field, "value": value}
-        if hasattr(self, 'callback') and self.callback:
+        if hasattr(self, "callback") and self.callback:
             self.callback(result)
         self.dismiss(result)
 
     def action_cancel(self) -> None:
-        if hasattr(self, 'callback') and self.callback:
+        if hasattr(self, "callback") and self.callback:
             self.callback(None)
         self.dismiss(None)
 

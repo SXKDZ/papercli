@@ -4,19 +4,18 @@ import os
 import re
 import secrets
 import shutil
-from typing import Any, Dict, Tuple, TYPE_CHECKING
+from typing import Any, Dict, Tuple
 
-# from ng.db.database import get_pdf_directory # Reusing existing get_pdf_directory
-from ng.services.http_utils import HTTPClient # Use new HTTPClient
+from ng.db.database import get_pdf_directory
+from ng.services import HTTPClient
 
-if TYPE_CHECKING:
-    from ng.db.models import Paper
 
 class PDFManager:
     """Service for managing PDF files with smart naming and handling."""
 
-    def __init__(self, pdf_dir: str):
-        self.pdf_dir = pdf_dir
+    def __init__(self):
+        self.pdf_dir = None
+        self.pdf_dir = get_pdf_directory()
 
     def get_absolute_path(self, relative_path: str) -> str:
         """Convert a relative PDF path to absolute path."""

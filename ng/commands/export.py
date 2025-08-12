@@ -1,23 +1,17 @@
 from __future__ import annotations
 import os
-import re
-import unicodedata
-import json
 from typing import List, TYPE_CHECKING, Any, Dict
 
-import bibtexparser
-from bibtexparser.customization import string_to_latex
 import pyperclip
 
-from ng.commands.base import CommandHandler
-from ng.services.export import ExportService
-from ng.services.chat import ChatService
-from ng.services.llm import LLMSummaryService
-from ng.dialogs.chat_dialog import ChatDialog
+from ng.commands import CommandHandler
+from ng.services import ExportService, ChatService, LLMSummaryService
+from ng.dialogs import ChatDialog
 
 if TYPE_CHECKING:
     from ng.papercli import PaperCLIApp
     from ng.db.models import Paper
+
 
 class ExportCommandHandler(CommandHandler):
     """Handler for export and share commands like export, chat, copy-prompt."""
@@ -26,8 +20,13 @@ class ExportCommandHandler(CommandHandler):
         super().__init__(app)
         self.export_service = ExportService()
         pdf_dir = os.path.join(os.path.dirname(self.app.db_path), "pdfs")
-        self.chat_service = ChatService(log_callback=self.app._add_log, pdf_dir=pdf_dir)
-        self.llm_summary_service = LLMSummaryService(paper_service=self.app.paper_service, background_service=self.app.background_service, log_callback=self.app._add_log, pdf_dir=pdf_dir)
+        self.chat_service = ChatService(app=self.app, pdf_dir=pdf_dir)
+        self.llm_summary_service = LLMSummaryService(
+            paper_service=self.app.paper_service,
+            background_service=self.app.background_service,
+            app=self.app,
+            pdf_dir=pdf_dir,
+        )
 
     def _get_target_papers(self) -> List[Paper]:
         """Helper to get selected papers from the main app's paper list."""
@@ -42,7 +41,7 @@ class ExportCommandHandler(CommandHandler):
         """Handle /export command."""
         papers_to_export = self._get_target_papers()
         if not papers_to_export:
-            self.app.screen.query_one("#status-bar").set_warning("No papers selected or under cursor.")
+            self.app.notify("No papers selected or under cursor", severity="warning")
             return
 
         try:
@@ -52,9 +51,9 @@ class ExportCommandHandler(CommandHandler):
                 export_format = args[0].lower()
 
                 if export_format not in ["bibtex", "ieee", "markdown", "html", "json"]:
-                    self.app.screen.query_one("#status-bar").set_status(
+                    self.app.notify(
                         "Usage: /export <format> [filename]. Formats: bibtex, ieee, markdown, html, json",
-                        "info",
+                        severity="information",
                     )
                     return
 
@@ -73,13 +72,13 @@ class ExportCommandHandler(CommandHandler):
                 }
             else:
                 # Show usage instead of interactive dialog
-                self.app.screen.query_one("#status-bar").set_status(
+                self.app.notify(
                     "Usage: /export <format> [filename]. Formats: bibtex, ieee, markdown, html, json",
-                    "info",
+                    severity="information",
                 )
                 return
 
-            self.app.screen.query_one("#status-bar").set_status("Exporting papers...", "export")
+            self.app.notify("Exporting papers...", severity="information")
 
             # Export papers
             export_format = export_params["format"]
@@ -96,88 +95,94 @@ class ExportCommandHandler(CommandHandler):
             elif export_format == "json":
                 content = self.export_service.export_to_json(papers_to_export)
             else:
-                self.app.screen.query_one("#status-bar").set_status("Unknown export format")
+                self.app.notify("Unknown export format", severity="error")
                 return
 
             if destination == "file":
                 if filename:
                     with open(filename, "w", encoding="utf-8") as f:
                         f.write(content)
-                    self.app.screen.query_one("#status-bar").set_success(
-                        f"Exported {len(papers_to_export)} papers to {filename}"
+                    self.app.notify(
+                        f"Exported {len(papers_to_export)} papers to {filename}",
+                        severity="information",
                     )
                 else:
-                    self.app.screen.query_one("#status-bar").set_error("Filename not provided for file export.")
+                    self.app.notify(
+                        "Filename not provided for file export", severity="error"
+                    )
 
             elif destination == "clipboard":
                 try:
                     pyperclip.copy(content)
-                    self.app.screen.query_one("#status-bar").set_success(
-                        f"Copied {len(papers_to_export)} papers to clipboard."
+                    self.app.notify(
+                        f"Copied {len(papers_to_export)} papers to clipboard",
+                        severity="information",
                     )
                 except pyperclip.PyperclipException:
-                    self.app.screen.query_one("#status-bar").set_error("Failed to copy to clipboard. pyperclip might not be installed or configured correctly.")
+                    self.app.notify(
+                        "Failed to copy to clipboard. pyperclip might not be installed or configured correctly",
+                        severity="error",
+                    )
 
         except Exception as e:
-            self.app.screen.query_one("#status-bar").set_error(f"Error exporting papers: {e}")
+            self.app.notify(f"Error exporting papers: {e}", severity="error")
 
     async def handle_chat_command(self, provider: str = None):
         """Handle /chat command with optional provider."""
         papers_to_chat = self._get_target_papers()
         if not papers_to_chat:
-            self.app.screen.query_one("#status-bar").set_warning("No papers selected or under cursor.")
+            self.app.notify("No papers selected or under cursor", severity="warning")
             return
 
         if provider is None:
             # Show chat dialog with OpenAI
             def chat_dialog_callback(result: Dict[str, Any] | None):
                 if result:
-                    self.app.screen.query_one("#status-bar").set_status("Chat dialog closed.")
-                else:
-                    self.app.screen.query_one("#status-bar").set_status("Chat dialog cancelled.")
+                    self.app.notify("Chat dialog closed", severity="information")
 
-            await self.app.push_screen(ChatDialog(
-                papers=papers_to_chat,
-                callback=chat_dialog_callback,
-            ))
+            await self.app.push_screen(
+                ChatDialog(
+                    papers=papers_to_chat,
+                    callback=chat_dialog_callback,
+                )
+            )
         else:
             # /chat provider - open browser interface
             valid_providers = ["claude", "chatgpt", "gemini"]
             if provider not in valid_providers:
-                self.app.screen.query_one("#status-bar").set_error(
-                    f"Invalid chat provider: {provider}. Use: {', '.join(valid_providers)}"
+                self.app.notify(
+                    f"Invalid chat provider: {provider}. Use: {', '.join(valid_providers)}",
+                    severity="error",
                 )
                 return
 
-            self.app.screen.query_one("#status-bar").set_status(
+            self.app.notify(
                 f"Copying prompt to clipboard and opening {provider.title()}...",
-                "chat",
+                severity="information",
             )
 
-            result = self.chat_service.open_chat_interface(
-                papers_to_chat, provider
-            )
+            result = self.chat_service.open_chat_interface(papers_to_chat, provider)
 
             if result["success"]:
-                self.app.screen.query_one("#status-bar").set_success(result["message"])
+                self.app.notify(result["message"], severity="information")
             else:
-                self.app.screen.query_one("#status-bar").set_error(result["message"])
+                self.app.notify(result["message"], severity="error")
 
     async def handle_copy_prompt_command(self):
         """Handle /copy-prompt command - copy paper prompt to clipboard."""
         papers_to_copy = self._get_target_papers()
         if not papers_to_copy:
-            self.app.screen.query_one("#status-bar").set_warning("No papers selected or under cursor.")
+            self.app.notify("No papers selected or under cursor", severity="warning")
             return
 
         try:
-            self.app.screen.query_one("#status-bar").set_status("Copying prompt to clipboard...", "info")
+            self.app.notify("Copying prompt to clipboard...", severity="information")
 
             result = self.chat_service.copy_prompt_to_clipboard(papers_to_copy)
 
             if result["success"]:
-                self.app.screen.query_one("#status-bar").set_success(result["message"])
+                self.app.notify(result["message"], severity="information")
             else:
-                self.app.screen.query_one("#status-bar").set_error(result["message"])
+                self.app.notify(result["message"], severity="error")
         except Exception as e:
-            self.app.screen.query_one("#status-bar").set_error(f"Error copying prompt: {e}")
+            self.app.notify(f"Error copying prompt: {e}", severity="error")

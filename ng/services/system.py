@@ -8,7 +8,8 @@ from typing import Any, Dict, Optional, Tuple, TYPE_CHECKING
 import pyperclip
 
 if TYPE_CHECKING:
-    from ng.services.pdf import PDFManager # Use new PDFManager
+    from ng.services import PDFManager
+
 
 class SystemService:
     """Service for system integrations."""
@@ -78,7 +79,7 @@ class SystemService:
                 )
             return True
 
-        return False # Should not reach here if any method succeeds
+        return False  # Should not reach here if any method succeeds
 
     def download_pdf(
         self,
@@ -116,8 +117,10 @@ class SystemService:
             self.pdf_manager.pdf_dir = download_dir  # Set download directory
 
             # Download with proper temp->final naming
-            pdf_path, error_msg = self.pdf_manager.download_pdf_from_url_with_proper_naming(
-                pdf_url, paper_data
+            pdf_path, error_msg = (
+                self.pdf_manager.download_pdf_from_url_with_proper_naming(
+                    pdf_url, paper_data
+                )
             )
 
             if error_msg:

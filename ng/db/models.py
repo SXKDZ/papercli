@@ -6,8 +6,7 @@ from datetime import datetime
 from typing import List, Optional
 
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Table, Text
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, declarative_base
 
 Base = declarative_base()
 
@@ -75,7 +74,9 @@ class Collection(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     description: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    last_modified: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.utcnow)
+    last_modified: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, default=datetime.utcnow
+    )
 
     # Relationships
     papers: Mapped[List["Paper"]] = relationship(
@@ -154,7 +155,7 @@ class Paper(Base):
         ]
         return ", ".join([author.full_name for author in ordered_authors])
 
-    def get_ordered_authors(self) -> List[Author]:
+    def get_ordered_authors(self) -> List["Author"]:
         """Get authors in their correct order."""
         return [
             pa.author for pa in sorted(self.paper_authors, key=lambda x: x.position)
@@ -166,8 +167,3 @@ class Paper(Base):
         if self.venue_acronym and self.venue_full:
             return f"{self.venue_full} ({self.venue_acronym})"
         return self.venue_full or self.venue_acronym or "Unknown"
-
-    @property
-    def collection_names(self) -> str:
-        """Return formatted collection names."""
-        return ", ".join([collection.name for collection in self.collections])

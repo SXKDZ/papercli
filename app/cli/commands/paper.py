@@ -180,7 +180,7 @@ class PaperCommandHandler(BaseCommandHandler):
                 paper_titles = [paper.title for paper in papers_to_delete]
                 deleted_count = self.cli.paper_service.delete_papers(paper_ids)
                 self.load_papers()
-                
+
                 # Clear selection after deletion to prevent deleted papers from staying selected if they're restored
                 if self.cli.in_select_mode:
                     self.cli.paper_list_control.selected_paper_ids.clear()
@@ -188,7 +188,9 @@ class PaperCommandHandler(BaseCommandHandler):
                     "delete",
                     f"Deleted {deleted_count} {'paper' if deleted_count == 1 else 'papers'}: {', '.join(paper_titles)}",
                 )
-                self.cli.status_bar.set_success(f"Deleted {deleted_count} {'paper' if deleted_count == 1 else 'papers'}")
+                self.cli.status_bar.set_success(
+                    f"Deleted {deleted_count} {'paper' if deleted_count == 1 else 'papers'}"
+                )
             except Exception as e:
                 self.cli.status_bar.set_error(f"Error during deletion: {e}")
 
@@ -287,7 +289,9 @@ class PaperCommandHandler(BaseCommandHandler):
                     break
 
             if opened_count > 0:
-                self.cli.status_bar.set_success(f"Opened {opened_count} {'PDF' if opened_count == 1 else 'PDFs'}")
+                self.cli.status_bar.set_success(
+                    f"Opened {opened_count} {'PDF' if opened_count == 1 else 'PDFs'}"
+                )
             elif opened_count == 0 and len(papers_to_open) > 1:
                 self.cli.status_bar.set_error(
                     "No PDFs found to open for the selected papers"

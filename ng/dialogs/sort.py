@@ -1,9 +1,15 @@
 from textual.app import ComposeResult
-from textual.containers import VerticalScroll, HorizontalScroll, Container, Horizontal, Vertical
-from textual.widgets import Header, Footer, Button, Static, RadioSet, RadioButton
+from textual.containers import (
+    HorizontalScroll,
+    Container,
+    Horizontal,
+    Vertical,
+)
+from textual.widgets import Button, Static, RadioSet, RadioButton
 from textual.screen import ModalScreen
 from textual.reactive import reactive
 from typing import Callable, Dict, Any
+
 
 class SortDialog(ModalScreen):
     """A modal dialog for selecting sort field and order."""
@@ -15,10 +21,10 @@ class SortDialog(ModalScreen):
     }
     SortDialog > Container {
         width: 50;
-        height: 20;
+        height: 25;
         max-width: 60;
-        max-height: 25;
-        border: thick $accent;
+        max-height: 30;
+        border: solid $accent;
         background: $panel;
     }
     SortDialog .dialog-title {
@@ -31,8 +37,8 @@ class SortDialog(ModalScreen):
     }
     SortDialog .dialog-label {
         text-style: bold;
-        height: 1;
-        margin: 1 0;
+        height: 3;
+        margin: 0;
     }
     SortDialog #sort-dialog-content {
         padding: 1;
@@ -43,13 +49,17 @@ class SortDialog(ModalScreen):
         margin: 0 1;
     }
     SortDialog #sort-dialog-buttons {
-        height: 3;
+        height: 5;
         align: center middle;
-        padding: 1;
+        padding: 0;
     }
     SortDialog Button {
         margin: 0 1;
         min-width: 8;
+        max-width: 12;
+        height: 3;
+        content-align: center middle;
+        text-align: center;
     }
     """
 
@@ -76,7 +86,9 @@ class SortDialog(ModalScreen):
     selected_field = reactive("title")
     selected_order = reactive("asc")
 
-    def __init__(self, callback: Callable[[Dict[str, Any] | None], None], *args, **kwargs):
+    def __init__(
+        self, callback: Callable[[Dict[str, Any] | None], None], *args, **kwargs
+    ):
         super().__init__(*args, **kwargs)
         self.callback = callback
 
@@ -89,14 +101,18 @@ class SortDialog(ModalScreen):
                     yield Static("Sort Field:", classes="dialog-label")
                     with RadioSet(id="field-radio-set"):
                         for value, label in self.sort_fields:
-                            yield RadioButton(label, value=value, id=f"sort-field-{value}")
+                            yield RadioButton(
+                                label, value=value, id=f"sort-field-{value}"
+                            )
 
-                # Right column - Sort Order  
+                # Right column - Sort Order
                 with Vertical():
                     yield Static("Sort Order:", classes="dialog-label")
                     with RadioSet(id="order-radio-set"):
                         for value, label in self.sort_orders:
-                            yield RadioButton(label, value=value, id=f"sort-order-{value}")
+                            yield RadioButton(
+                                label, value=value, id=f"sort-order-{value}"
+                            )
 
             with HorizontalScroll(id="sort-dialog-buttons"):
                 yield Button("OK", id="ok-button", variant="primary")
@@ -117,12 +133,12 @@ class SortDialog(ModalScreen):
         field = self.selected_field
         reverse = self.selected_order == "desc"
         result = {"field": field, "reverse": reverse}
-        if hasattr(self, 'callback') and self.callback:
+        if hasattr(self, "callback") and self.callback:
             self.callback(result)
         self.dismiss(result)
 
     def action_cancel(self) -> None:
-        if hasattr(self, 'callback') and self.callback:
+        if hasattr(self, "callback") and self.callback:
             self.callback(None)
         self.dismiss(None)
 

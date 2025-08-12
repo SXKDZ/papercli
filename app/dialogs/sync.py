@@ -36,7 +36,9 @@ class ConflictDisplayControl(UIControl):
 
         local_words = local_str.split()
         remote_words = remote_str.split()
-        matcher = difflib.SequenceMatcher(None, local_words, remote_words, autojunk=False)
+        matcher = difflib.SequenceMatcher(
+            None, local_words, remote_words, autojunk=False
+        )
 
         local_text = Text(no_wrap=False, justify="left")
         remote_text = Text(no_wrap=False, justify="left")
@@ -47,22 +49,30 @@ class ConflictDisplayControl(UIControl):
                 context_start = max(0, min(i1, j1) - 5)
                 local_end = min(len(local_words), i2 + 5)
                 remote_end = min(len(remote_words), j2 + 5)
-                
+
                 local_snippet = local_words[context_start:local_end]
                 remote_snippet = remote_words[context_start:remote_end]
-                
+
                 # Truncate if too long
                 if len(local_snippet) > 25:
                     local_snippet = local_snippet[:25]
                 if len(remote_snippet) > 25:
                     remote_snippet = remote_snippet[:25]
 
-                self._add_diff_snippet(local_text, remote_text, local_snippet, remote_snippet, context_start > 0)
+                self._add_diff_snippet(
+                    local_text,
+                    remote_text,
+                    local_snippet,
+                    remote_snippet,
+                    context_start > 0,
+                )
                 break
 
         return local_text, remote_text
 
-    def _add_diff_snippet(self, local_text, remote_text, local_snippet, remote_snippet, has_prefix):
+    def _add_diff_snippet(
+        self, local_text, remote_text, local_snippet, remote_snippet, has_prefix
+    ):
         """Add diff snippet with highlighting to text objects."""
         if has_prefix:
             local_text.append("... ")
@@ -232,7 +242,6 @@ class SyncProgressDialog:
         self.status_updater = status_updater
         self.log_callback = log_callback
 
-
         self.auto_sync_mode = os.getenv("PAPERCLI_AUTO_SYNC", "false").lower() == "true"
 
         self.progress_text = "Checking remote database..."
@@ -309,8 +318,6 @@ class SyncProgressDialog:
             if self.show_conflicts:
                 self._resolve_all("keep_both")
 
-
-
         self.key_bindings = kb
 
     def _create_layout(self):
@@ -366,15 +373,41 @@ class SyncProgressDialog:
 
         # Create buttons with consistent width
         button_width = 13
-        self.cancel_button = Button(text="Close", handler=self._handle_close, width=button_width)
+        self.cancel_button = Button(
+            text="Close", handler=self._handle_close, width=button_width
+        )
 
         # Create conflict resolution buttons using a helper
-        self.local_button = Button(text="Local", handler=lambda: self._resolve_current("local"), width=button_width)
-        self.remote_button = Button(text="Remote", handler=lambda: self._resolve_current("remote"), width=button_width)
-        self.keep_both_button = Button(text="Both", handler=lambda: self._resolve_current("keep_both"), width=button_width)
-        self.all_local_button = Button(text="All Local", handler=lambda: self._resolve_all("local"), width=button_width)
-        self.all_remote_button = Button(text="All Remote", handler=lambda: self._resolve_all("remote"), width=button_width)
-        self.all_both_button = Button(text="Keep All", handler=lambda: self._resolve_all("keep_both"), width=button_width)
+        self.local_button = Button(
+            text="Local",
+            handler=lambda: self._resolve_current("local"),
+            width=button_width,
+        )
+        self.remote_button = Button(
+            text="Remote",
+            handler=lambda: self._resolve_current("remote"),
+            width=button_width,
+        )
+        self.keep_both_button = Button(
+            text="Both",
+            handler=lambda: self._resolve_current("keep_both"),
+            width=button_width,
+        )
+        self.all_local_button = Button(
+            text="All Local",
+            handler=lambda: self._resolve_all("local"),
+            width=button_width,
+        )
+        self.all_remote_button = Button(
+            text="All Remote",
+            handler=lambda: self._resolve_all("remote"),
+            width=button_width,
+        )
+        self.all_both_button = Button(
+            text="Keep All",
+            handler=lambda: self._resolve_all("keep_both"),
+            width=button_width,
+        )
 
         # Use all buttons with conditional visibility - simpler approach
         all_buttons = [
@@ -411,7 +444,6 @@ class SyncProgressDialog:
         # Apply key bindings to dialog
 
         self.dialog.key_bindings = self.key_bindings
-
 
     def _get_dynamic_title(self):
         if self.sync_cancelled:
@@ -475,7 +507,7 @@ class SyncProgressDialog:
 
     def _get_progress_and_status(self):
         lines = []
-        
+
         # Handle focus change request if needed
         if self.should_focus_close and self.sync_complete and self.show_summary:
             self.should_focus_close = False
@@ -484,7 +516,9 @@ class SyncProgressDialog:
                 get_app().layout.focus(self.cancel_button)
             except Exception as e:
                 if self.log_callback:
-                    self.log_callback("focus_error", f"Failed to focus Close button: {e}")
+                    self.log_callback(
+                        "focus_error", f"Failed to focus Close button: {e}"
+                    )
 
         # Progress bar
         bar_width = 122
@@ -533,7 +567,7 @@ class SyncProgressDialog:
 
         lines = []
         # Don't show summary here - it's now shown in progress status
-        
+
         # Show errors if any
         if self.sync_result.errors:
             lines.append(("class:error bold", "ERRORS:"))
@@ -610,7 +644,6 @@ class SyncProgressDialog:
                     if len(items) > 8:
                         lines.append(("", f"\n    ... and {len(items) - 8} more"))
 
-
         return lines
 
     def _has_detailed_changes(self):
@@ -618,11 +651,9 @@ class SyncProgressDialog:
         if not self.sync_result:
             return False
         # Show summary if there are errors or detailed changes
-        return (
-            (self.sync_result.errors and len(self.sync_result.errors) > 0) or
-            (hasattr(self.sync_result, "detailed_changes") and any(
-                self.sync_result.detailed_changes.values()
-            ))
+        return (self.sync_result.errors and len(self.sync_result.errors) > 0) or (
+            hasattr(self.sync_result, "detailed_changes")
+            and any(self.sync_result.detailed_changes.values())
         )
 
     def _get_instructions(self):

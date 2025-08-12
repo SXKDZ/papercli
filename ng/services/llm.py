@@ -1,29 +1,36 @@
 from __future__ import annotations
 import os
 import threading
-from functools import partial
 from typing import Callable, Any, Dict, List, TYPE_CHECKING
 
-from ng.prompts import SummaryPrompts # Reusing prompts
-from ng.services.paper import PaperService # Use new PaperService
-from ng.services.background import BackgroundOperationService # Use new BackgroundOperationService
-from ng.services.metadata import MetadataExtractor # Use new MetadataExtractor
-from ng.services.pdf import PDFManager # Use new PDFManager
+from ng.services import (
+    PaperService,
+    BackgroundOperationService,
+    MetadataExtractor,
+    PDFManager,
+)
 
 if TYPE_CHECKING:
     from ng.db.models import Paper
 
+
 class LLMSummaryService:
     """Service for generating LLM summaries for multiple papers with queue-based database updates."""
 
-    def __init__(self, paper_service: PaperService, background_service: BackgroundOperationService, log_callback: Callable = None, pdf_dir: str = None):
+    def __init__(
+        self,
+        paper_service: PaperService,
+        background_service: BackgroundOperationService,
+        app=None,
+        pdf_dir: str = None,
+    ):
         self.paper_service = paper_service
         self.background_service = background_service
-        self.log_callback = log_callback
-        if pdf_dir is None:
-            pdf_dir = os.path.join(os.path.expanduser("~/.papercli"), "pdfs")
-        self.pdf_manager = PDFManager(pdf_dir=pdf_dir)
-        self.metadata_extractor = MetadataExtractor(pdf_manager=self.pdf_manager, log_callback=self.log_callback)
+        self.app = app
+        self.pdf_manager = PDFManager()
+        self.metadata_extractor = MetadataExtractor(
+            pdf_manager=self.pdf_manager, app=self.app
+        )
 
     def _filter_papers_with_pdfs(self, papers: List[Paper]) -> List[Paper]:
         """Filter papers that have accessible PDF files (resolving relative paths)."""
@@ -41,7 +48,10 @@ class LLMSummaryService:
         return papers_with_pdfs
 
     def generate_summaries(
-        self, papers: List[Paper], on_all_complete: Callable = None, operation_prefix: str = "summary"
+        self,
+        papers: List[Paper],
+        on_all_complete: Callable = None,
+        operation_prefix: str = "summary",
     ) -> Dict[str, Any] | None:
         """
         Generate summaries for one or more papers with batched database updates.
@@ -58,8 +68,8 @@ class LLMSummaryService:
         papers_with_pdfs = self._filter_papers_with_pdfs(papers)
 
         if not papers_with_pdfs:
-            if self.log_callback:
-                self.log_callback(
+            if self.app:
+                self.app._add_log(
                     f"{operation_prefix}_no_pdfs", "No papers with PDFs found"
                 )
             return None
@@ -76,15 +86,16 @@ class LLMSummaryService:
         }
 
         # Set initial status
-        if self.background_service.status_bar:
+        if self.background_service.app:
             if tracking["total"] == 1:
                 title = papers_with_pdfs[0].title[:50]
-                self.background_service.status_bar.set_status(
-                    f"Generating summary for '{title}'...", "loading"
+                self.background_service.app.notify(
+                    f"Generating summary for '{title}'...", severity="information"
                 )
             else:
-                self.background_service.status_bar.set_status(
-                    f"Generating summaries for {tracking['total']} papers...", "loading"
+                self.background_service.app.notify(
+                    f"Generating summaries for {tracking['total']} papers...",
+                    severity="information",
                 )
 
         # Start all summary operations
@@ -97,13 +108,15 @@ class LLMSummaryService:
         """Start summary generation for a single paper."""
 
         def generate_summary(current_paper: Paper):
-            if self.log_callback:
-                self.log_callback(
+            if self.app:
+                self.app._add_log(
                     f"{tracking['operation_prefix']}_starting_{current_paper.id}",
                     f"Starting summary for paper ID {current_paper.id}: '{current_paper.title[:50]}...'",
                 )
 
-            summary = self.metadata_extractor.generate_paper_summary(current_paper.pdf_path)
+            summary = self.metadata_extractor.generate_paper_summary(
+                current_paper.pdf_path
+            )
 
             if not summary:
                 return None
@@ -114,22 +127,27 @@ class LLMSummaryService:
                 "paper_title": current_paper.title,
             }
 
-        def on_summary_complete(current_paper: Paper, tracking: Dict[str, Any], result: Dict[str, Any] | None, error: Exception | None):
+        def on_summary_complete(
+            current_paper: Paper,
+            tracking: Dict[str, Any],
+            result: Dict[str, Any] | None,
+            error: Exception | None,
+        ):
             tracking["completed"] += 1
 
             if error:
                 # Add to failed queue for detailed error tracking
                 tracking["failed"].append((current_paper.id, str(error)))
-                if self.log_callback:
-                    self.log_callback(
+                if self.app:
+                    self.app._add_log(
                         f"{tracking['operation_prefix']}_error_{current_paper.id}",
                         f"Failed to generate summary for '{current_paper.title[:50]}...': {error}",
                     )
             elif result is None:
                 # Empty summary - treat as failed
                 tracking["failed"].append((current_paper.id, "Empty response"))
-                if self.log_callback:
-                    self.log_callback(
+                if self.app:
+                    self.app._add_log(
                         f"{tracking['operation_prefix']}_error_{current_paper.id}",
                         f"Failed to generate summary for '{current_paper.title[:50]}...': Empty response",
                     )
@@ -138,8 +156,8 @@ class LLMSummaryService:
                 tracking["queue"].append(
                     (result["paper_id"], result["summary"], result["paper_title"])
                 )
-                if self.log_callback:
-                    self.log_callback(
+                if self.app:
+                    self.app._add_log(
                         tracking["operation_prefix"],
                         f"Successfully generated summary for '{result['paper_title']}'",
                     )
@@ -150,9 +168,9 @@ class LLMSummaryService:
         """Check if all summaries are complete and process the queue."""
         if tracking["completed"] < tracking["total"]:
             # Still in progress
-            if self.background_service.status_bar:
+            if self.background_service.app:
                 status_msg = f"Generating summaries... ({tracking['completed']}/{tracking['total']} completed)"
-                self.background_service.status_bar.set_status(status_msg, "loading")
+                self.background_service.app.notify(status_msg, severity="information")
             return
 
         # All operations are complete, now process results
@@ -168,8 +186,8 @@ class LLMSummaryService:
 
     def _process_summary_queue(self, tracking: Dict[str, Any]):
         """Process the queue of successfully generated summaries."""
-        if self.log_callback:
-            self.log_callback(
+        if self.app:
+            self.app._add_log(
                 f"{tracking['operation_prefix']}_queue_processing",
                 f"Processing queue with {len(tracking['queue'])} summaries to save",
             )
@@ -181,20 +199,22 @@ class LLMSummaryService:
                         paper_id, {"notes": summary}
                     )
                     if error_msg:
-                        if self.log_callback:
-                            self.log_callback(
+                        if self.app:
+                            self.app._add_log(
                                 f"{tracking['operation_prefix']}_save_error_{paper_id}",
                                 f"Failed to save summary for {paper_title[:50]}...: {error_msg}",
                             )
                 except Exception as e:
-                    if self.log_callback:
-                        self.log_callback(
+                    if self.app:
+                        self.app._add_log(
                             f"{tracking['operation_prefix']}_save_exception_{paper_id}",
                             f"Exception saving summary for {paper_title[:50]}...: {e}",
                         )
 
             # Schedule UI update after processing the whole queue
-            self.background_service.app.call_from_thread(lambda: self._finalize_status(tracking))
+            self.background_service.app.call_from_thread(
+                lambda: self._finalize_status(tracking)
+            )
 
         # Process in background
         threading.Thread(target=process_queue, daemon=True).start()
@@ -209,31 +229,36 @@ class LLMSummaryService:
         if tracking["on_all_complete"]:
             tracking["on_all_complete"](tracking)
 
-        # Then set the status bar message
-        if self.background_service.status_bar:
+        # Then set the status message
+        if self.background_service.app:
             if total_count == 1:
                 if success_count == 1:
-                    self.background_service.status_bar.set_success(
-                        "Summary generated and saved successfully"
+                    self.background_service.app.notify(
+                        "Summary generated and saved successfully",
+                        severity="information",
                     )
                 else:
-                    self.background_service.status_bar.set_error(
-                        "Failed to generate summary"
+                    self.background_service.app.notify(
+                        "Failed to generate summary", severity="error"
                     )
             else:
                 if success_count > 0 and failed_count > 0:
-                    self.background_service.status_bar.set_warning(
-                        f"Completed: {success_count} succeeded, {failed_count} failed"
+                    self.background_service.app.notify(
+                        f"Completed: {success_count} succeeded, {failed_count} failed",
+                        severity="warning",
                     )
                 elif success_count > 0:
-                    self.background_service.status_bar.set_success(
-                        f"All {success_count} summaries generated and saved successfully"
+                    self.background_service.app.notify(
+                        f"All {success_count} summaries generated and saved successfully",
+                        severity="information",
                     )
                 elif failed_count > 0:
-                    self.background_service.status_bar.set_error(
-                        f"Failed to generate summaries for all {failed_count} papers"
+                    self.background_service.app.notify(
+                        f"Failed to generate summaries for all {failed_count} papers",
+                        severity="error",
                     )
                 else:
-                    self.background_service.status_bar.set_status(
-                        "Summary generation finished with no results"
+                    self.background_service.app.notify(
+                        "Summary generation finished with no results",
+                        severity="information",
                     )
