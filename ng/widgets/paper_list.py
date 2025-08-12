@@ -223,9 +223,24 @@ class PaperList(DataTable):
     def update_table(self) -> None:
         """Update the DataTable display to reflect current selection state."""
         current_cursor = self.cursor_row
+        
+        # Save scroll position before rebuilding
+        try:
+            scroll_x, scroll_y = self.scroll_offset
+        except:
+            scroll_x, scroll_y = 0, 0
+            
         self.populate_table()
+        
+        # Restore cursor position
         if 0 <= current_cursor < len(self.papers):
             self.move_cursor(row=current_cursor)
+            
+        # Try to restore scroll position
+        try:
+            self.scroll_to(scroll_x, scroll_y, animate=False)
+        except:
+            pass
 
 
     def get_current_paper(self) -> Optional[Paper]:
@@ -297,6 +312,9 @@ class PaperList(DataTable):
                     self.move_cursor(row=current_row)
                     if hasattr(self, "app") and self.app:
                         self.app._add_log("toggle_selection_end", f"restored cursor to row={current_row}, final_cursor={self.cursor_row}")
+                
+                # Notify that stats changed
+                self.post_message(self.StatsChanged())
 
     async def _async_toggle_update(self, current_row: int) -> None:
         """Async helper for toggle selection updates."""
@@ -331,6 +349,9 @@ class PaperList(DataTable):
                 self.current_paper_id = paper.id
                 if hasattr(self, "app") and self.app:
                     self.app._add_log("current_paper_set", f"current_paper_id={self.current_paper_id}")
+            
+            # Notify that stats changed for any cursor/selection change
+            self.post_message(self.StatsChanged())
 
 
     def on_click(self, event) -> None:
@@ -378,15 +399,18 @@ class PaperList(DataTable):
         if self.cursor_row > 0:
             self.move_cursor(row=self.cursor_row - 1)
             self._update_current_paper()
+            self.post_message(self.StatsChanged())
 
     def move_down(self) -> None:
         """Move cursor down."""
         if self.cursor_row < len(self.papers) - 1:
             self.move_cursor(row=self.cursor_row + 1)
             self._update_current_paper()
+            self.post_message(self.StatsChanged())
         elif self.papers and self.cursor_row == -1:
             self.move_cursor(row=0)
             self._update_current_paper()
+            self.post_message(self.StatsChanged())
 
     def move_page_up(self) -> None:
         """Move cursor up by a page (approximately 10 items)."""
@@ -394,6 +418,7 @@ class PaperList(DataTable):
         new_row = max(0, self.cursor_row - page_size)
         self.move_cursor(row=new_row)
         self._update_current_paper()
+        self.post_message(self.StatsChanged())
 
     def move_page_down(self) -> None:
         """Move cursor down by a page (approximately 10 items)."""
@@ -401,18 +426,21 @@ class PaperList(DataTable):
         new_row = min(len(self.papers) - 1, self.cursor_row + page_size)
         self.move_cursor(row=new_row)
         self._update_current_paper()
+        self.post_message(self.StatsChanged())
 
     def move_to_top(self) -> None:
         """Move cursor to the first item."""
         if self.papers:
             self.move_cursor(row=0)
             self._update_current_paper()
+            self.post_message(self.StatsChanged())
 
     def move_to_bottom(self) -> None:
         """Move cursor to the last item."""
         if self.papers:
             self.move_cursor(row=len(self.papers) - 1)
             self._update_current_paper()
+            self.post_message(self.StatsChanged())
 
     def _update_current_paper(self) -> None:
         """Update current paper based on cursor position (for keyboard navigation)."""
@@ -434,3 +462,9 @@ class PaperList(DataTable):
         def __init__(self, paper: "Paper") -> None:
             super().__init__()
             self.paper = paper
+
+    class StatsChanged(Message):
+        """Posted when paper list statistics change (cursor, selection, etc.)."""
+
+        def __init__(self) -> None:
+            super().__init__()

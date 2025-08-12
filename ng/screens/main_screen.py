@@ -2,12 +2,13 @@ from typing import List
 
 from textual.events import Key
 from textual.screen import Screen
-from textual.widgets import Footer, Header, Input
+from textual.widgets import Footer, Input
 
 from ng.db.models import Paper
 from ng.dialogs import AddDialog, DetailDialog, FilterDialog, MessageDialog
 from ng.services import CollectionService
 from ng.widgets.command_input import CommandInput
+from ng.widgets.custom_header import CustomHeader
 from ng.widgets.log_panel import LogPanel
 from ng.widgets.paper_list import PaperList
 
@@ -25,12 +26,16 @@ class MainScreen(Screen):
         margin: 0;
         padding: 0;
         content-align: left top;
+        border: solid $primary;
     }
     #command-input {
         height: auto;
         width: 100%;
         margin: 0;
         padding: 0;
+    }
+    #command-input Input {
+        border: solid $primary;
     }
     #log-panel {
         dock: right;
@@ -70,7 +75,8 @@ class MainScreen(Screen):
         self.papers = papers
 
     def compose(self):
-        yield Header()
+        custom_header = CustomHeader(app_ref=self.app, id="custom-header")
+        yield custom_header
         yield PaperList(self.papers, id="paper-list-view")
         yield CommandInput(
             app=self.app, placeholder="Enter command...", id="command-input"
@@ -79,6 +85,10 @@ class MainScreen(Screen):
         log_panel.set_app_reference(self.app)  # Set app reference for auto-refresh
         yield log_panel
         yield Footer()
+
+    def on_mount(self) -> None:
+        """Initialize header stats when screen is mounted."""
+        self.call_later(self.update_header_stats)
 
     def action_cursor_up(self) -> None:
         paper_list = self.query_one("#paper-list-view")
@@ -142,6 +152,10 @@ class MainScreen(Screen):
         """Handle detail dialog request from paper list."""
         self._show_detail_dialog(message.paper)
 
+    def on_paper_list_stats_changed(self, message: PaperList.StatsChanged) -> None:
+        """Handle stats change from paper list."""
+        self.update_header_stats()
+
     def update_paper_list(self, papers: List[Paper]) -> None:
         """Updates the paper list with new data."""
         self.app._add_log(
@@ -155,6 +169,28 @@ class MainScreen(Screen):
         )
         paper_list_widget.set_papers(papers)
         self.app._add_log("update_paper_list_done", "set_papers completed")
+        # Update header stats
+        self.update_header_stats()
+
+    def update_header_stats(self) -> None:
+        """Update the header with current paper statistics."""
+        try:
+            header = self.query_one("#custom-header")
+            paper_list = self.query_one("#paper-list-view")
+            
+            total_papers = len(paper_list.papers)
+            current_position = paper_list.cursor_row + 1 if paper_list.papers else 0
+            
+            if paper_list.in_select_mode:
+                # In select mode: show actual selected count
+                selected_count = len(paper_list.selected_paper_ids)
+            else:
+                # Not in select mode: always show 0 since no papers are selected
+                selected_count = 0
+            
+            header.update_stats(total_papers, current_position, selected_count)
+        except Exception:
+            pass  # Widgets might not be ready yet
 
     def show_help(self) -> None:
         """Show help dialog."""

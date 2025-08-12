@@ -119,14 +119,8 @@ class AddDialog(ModalScreen):
 
     def watch_selected_source(self, new_source: str) -> None:
         self.update_input_label()
-        # Clear input when source changes, unless it's manual
-        if new_source != "manual":
-            self.query_one("#path-input", Input).value = ""
-        else:
-            self.query_one("#path-input", Input).value = ""
-            self.query_one("#path-input", Input).placeholder = (
-                "Enter title for manual entry"
-            )
+        # Clear input when source changes
+        self.query_one("#path-input", Input).value = ""
 
     def update_input_label(self) -> None:
         label_map = {
@@ -139,8 +133,25 @@ class AddDialog(ModalScreen):
             "ris": "RIS Path:",
             "manual": "Title (for manual entry):",
         }
+        
+        placeholder_map = {
+            "pdf": "Enter path to PDF file",
+            "arxiv": "Enter arXiv ID (e.g., 2301.12345)",
+            "dblp": "Enter DBLP URL",
+            "openreview": "Enter OpenReview ID",
+            "doi": "Enter DOI (e.g., 10.1000/182)",
+            "bib": "Enter path to BibTeX file",
+            "ris": "Enter path to RIS file",
+            "manual": "Enter title for manual entry",
+        }
+        
         self.query_one("#input-label", Static).update(
             label_map.get(self.selected_source, "Path/ID/URL:")
+        )
+        
+        # Update placeholder based on selected source
+        self.query_one("#path-input", Input).placeholder = (
+            placeholder_map.get(self.selected_source, "Enter path, ID, or URL")
         )
 
         # Hide/show path input based on manual selection
