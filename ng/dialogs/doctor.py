@@ -43,3 +43,8 @@ class DoctorDialog(ModalScreen):
 
     def on_mount(self) -> None:
         self.query_one("#report-text").update(self.report_text)
+        # Focus OK by default
+        try:
+            self.query_one("#doctor-ok", Button).focus()
+        except Exception:
+            pass

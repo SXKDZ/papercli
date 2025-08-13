@@ -17,7 +17,7 @@ class FilterDialog(ModalScreen):
     }
     FilterDialog > Container {
         width: 80;
-        height: 24;
+        height: 26;
         max-width: 90;
         max-height: 28;
         border: solid $accent;

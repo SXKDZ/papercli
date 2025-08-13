@@ -367,10 +367,7 @@ class PaperList(DataTable):
             paper = self.papers[event.cursor_row]
             clicked_row = event.cursor_row
 
-            # Removed noisy row_selected log
-
             self.move_cursor(row=clicked_row)
-
             if self.in_select_mode:
                 # In select mode: toggle selection
                 if paper.id in self.selected_paper_ids:

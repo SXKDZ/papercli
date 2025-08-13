@@ -2,6 +2,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict
 
 from textual.app import ComposeResult
 from textual.containers import Container, HorizontalScroll, VerticalScroll
+from textual.events import Key
 from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, RadioButton, RadioSet, Static
@@ -133,7 +134,7 @@ class AddDialog(ModalScreen):
             "ris": "RIS Path:",
             "manual": "Title (for manual entry):",
         }
-        
+
         placeholder_map = {
             "pdf": "Enter path to PDF file",
             "arxiv": "Enter arXiv ID (e.g., 2301.12345)",
@@ -144,14 +145,14 @@ class AddDialog(ModalScreen):
             "ris": "Enter path to RIS file",
             "manual": "Enter title for manual entry",
         }
-        
+
         self.query_one("#input-label", Static).update(
             label_map.get(self.selected_source, "Path/ID/URL:")
         )
-        
+
         # Update placeholder based on selected source
-        self.query_one("#path-input", Input).placeholder = (
-            placeholder_map.get(self.selected_source, "Enter path, ID, or URL")
+        self.query_one("#path-input", Input).placeholder = placeholder_map.get(
+            self.selected_source, "Enter path, ID, or URL"
         )
 
         # Hide/show path input based on manual selection
@@ -197,3 +198,19 @@ class AddDialog(ModalScreen):
             self.action_add_paper()
         elif event.button.id == "cancel-button":
             self.action_cancel()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        # Pressing Enter in the input should trigger Add
+        self.action_add_paper()
+
+    def on_key(self, event: Key) -> None:
+        # Ensure Enter anywhere in dialog activates Add, except when typing in other inputs
+        if event.key == "enter":
+            focused = self.focused
+            try:
+                if focused and focused.id == "path-input":
+                    return  # let Input.Submitted handler fire
+            except Exception:
+                pass
+            self.action_add_paper()
+            event.prevent_default()

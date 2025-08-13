@@ -15,6 +15,31 @@ if TYPE_CHECKING:
     from ng.papercli import PaperCLIApp
 
 
+class CustomInput(Input):
+    """Custom Input widget that prevents automatic text selection on focus."""
+    
+    def on_focus(self, event) -> None:
+        """Override focus handling to prevent text selection."""
+        # Immediately position cursor at end to prevent text selection
+        if self.value:
+            self.cursor_position = len(self.value)
+        
+        # Use a delayed call to ensure the cursor position sticks
+        def ensure_no_selection(*args):
+            try:
+                # Force cursor to end and ensure no selection
+                if self.value:
+                    self.cursor_position = len(self.value)
+                # Force refresh to update visual state
+                self.refresh()
+            except Exception:
+                pass
+        
+        if hasattr(self, 'app') and self.app:
+            # Use call_later instead of async worker (callback first, then delay)
+            self.app.call_later(ensure_no_selection, 0.001)
+
+
 class CommandInput(Container):
     """A custom input widget with autocomplete dropdown for handling commands."""
 
@@ -182,8 +207,8 @@ class CommandInput(Container):
         }
 
     def compose(self) -> ComposeResult:
-        # Use modern autocomplete dropdown
-        self._input_widget = Input(placeholder=self.placeholder, id="input")
+        # Use modern autocomplete dropdown with custom focus handling
+        self._input_widget = CustomInput(placeholder=self.placeholder, id="input")
         yield self._input_widget
         # Use custom autocomplete with dynamic candidate building
         yield CommandAutoComplete(
@@ -323,6 +348,24 @@ class CommandInput(Container):
                 paper_list.add_class("retain-selection")
         except Exception:
             pass
+
+    def on_focus(self, event) -> None:
+        """Handle focus events for the input widget."""
+        if self._input_widget:
+            # Prevent automatic text selection by positioning cursor at end
+            async def fix_cursor_position():
+                try:
+                    # Small delay to allow focus to be established
+                    await self.app.sleep(0.001)
+                    # Position cursor at end of existing text to prevent selection
+                    current_value = self._input_widget.value
+                    self._input_widget.cursor_position = len(current_value)
+                    self._input_widget.refresh()
+                except Exception:
+                    pass
+
+            if hasattr(self, 'app') and self.app:
+                self.app.run_worker(fix_cursor_position(), exclusive=False)
 
     @property
     def value(self) -> str:

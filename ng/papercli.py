@@ -117,7 +117,7 @@ class PaperCLIApp(App):
         try:
             papers = self.paper_service.get_all_papers()
             self.current_papers = papers
-            self._add_log("load_papers", f"Loaded {len(papers)} papers from database.")
+            self._add_log("load_papers", f"Loaded {len(papers)} papers from database")
             # Update the PaperList widget - try stored reference first, then find it
             main_screen_to_update = self.main_screen
 

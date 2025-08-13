@@ -11,14 +11,14 @@ class MessageDialog(ModalScreen):
     MessageDialog {
         align: center middle;
     }
-    
+
     #message-container {
         width: 80;
         height: 30;
         border: solid $accent;
         background: $panel;
     }
-    
+
     #dialog-title {
         text-align: center;
         text-style: bold;
@@ -27,18 +27,18 @@ class MessageDialog(ModalScreen):
         height: 1;
         width: 100%;
     }
-    
+
     #message-content {
         padding: 1;
         height: 1fr;
     }
-    
+
     #message-buttons {
         height: 5;
         align: center middle;
         padding: 0;
     }
-    
+
     #message-ok {
         margin: 0 1;
         height: 3;
@@ -67,3 +67,8 @@ class MessageDialog(ModalScreen):
 
     def on_mount(self) -> None:
         self.query_one("#message-text", Markdown).update(self.message_text)
+        # Focus OK by default so Enter immediately closes the dialog
+        try:
+            self.query_one("#message-ok", Button).focus()
+        except Exception:
+            pass

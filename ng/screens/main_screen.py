@@ -158,17 +158,8 @@ class MainScreen(Screen):
 
     def update_paper_list(self, papers: List[Paper]) -> None:
         """Updates the paper list with new data."""
-        self.app._add_log(
-            "update_paper_list",
-            f"MainScreen updating paper list with {len(papers)} papers",
-        )
         paper_list_widget = self.query_one("#paper-list-view")
-        self.app._add_log(
-            "update_paper_list_widget",
-            f"Found paper list widget: {type(paper_list_widget).__name__}",
-        )
         paper_list_widget.set_papers(papers)
-        self.app._add_log("update_paper_list_done", "set_papers completed")
         # Update header stats
         self.update_header_stats()
 
@@ -177,17 +168,17 @@ class MainScreen(Screen):
         try:
             header = self.query_one("#custom-header")
             paper_list = self.query_one("#paper-list-view")
-            
+
             total_papers = len(paper_list.papers)
             current_position = paper_list.cursor_row + 1 if paper_list.papers else 0
-            
+
             if paper_list.in_select_mode:
                 # In select mode: show actual selected count
                 selected_count = len(paper_list.selected_paper_ids)
             else:
                 # Not in select mode: always show 0 since no papers are selected
                 selected_count = 0
-            
+
             header.update_stats(total_papers, current_position, selected_count)
         except Exception:
             pass  # Widgets might not be ready yet
@@ -318,50 +309,37 @@ class MainScreen(Screen):
             if current_focus == actual_input:
                 return
 
-            # Only handle printable characters that aren't already bound to actions
-            # Include "/" since all commands start with /
-            if (
+            # Handle printable characters, with special priority for "/" (command starter)
+            # Note: "/" key can be reported as either "/" or "slash"
+            is_command_char = event.key == "/" or event.key == "slash"
+            is_printable_char = (
                 event.key
                 and len(event.key) == 1
                 and event.key.isprintable()
                 and not event.key.isspace()  # Don't intercept space (used for selection toggle)
                 and event.key != "?"  # Don't intercept help key
-            ):
-                # Focus the input first
+            )
+
+            if is_command_char or is_printable_char:
+                # Focus the input and append the character directly
+                # The CustomInput widget will handle preventing text selection
                 self.app.set_focus(actual_input)
                 
-                # Get current value and add the new character
-                current_text = actual_input.value
-                new_value = current_text + event.key
-                
-                # Set the new value immediately
+                # Directly append the character to avoid selection issues
+                # Convert "slash" key name to actual "/" character
+                char_to_add = "/" if event.key == "slash" else event.key
+                current_text = actual_input.value or ""
+                new_value = current_text + char_to_add
                 actual_input.value = new_value
                 
-                # Position cursor at end immediately 
+                # Position cursor at end
                 actual_input.cursor_position = len(new_value)
-                
-                # Use a very short delay to ensure cursor positioning takes effect
-                def ensure_cursor_position():
-                    try:
-                        # Double-check cursor is at end and no text is selected
-                        actual_input.cursor_position = len(actual_input.value)
-                        # Force refresh to ensure visual update
-                        actual_input.refresh()
-                    except Exception:
-                        pass
-                
-                self.app.call_later(0.001, ensure_cursor_position)
 
                 # Preserve cursor and selection styling with a small delay
                 def preserve_cursor_and_selection():
                     try:
                         paper_list = self.query_one("#paper-list-view")
-                        if hasattr(self.app, "_add_log"):
-                            self.app._add_log(
-                                "focus_switch_pre",
-                                f"cursor_row={paper_list.cursor_row}, "
-                                f"selected_ids={list(paper_list.selected_paper_ids)}",
-                            )
+
                         # Store current cursor position before focus changes
                         current_cursor_row = paper_list.cursor_row
                         paper_list._stored_cursor_row = current_cursor_row
@@ -380,25 +358,10 @@ class MainScreen(Screen):
                         if paper_list.selected_paper_ids and paper_list.in_select_mode:
                             try:
                                 paper_list.add_class("retain-selection")
-                                if hasattr(self.app, "_add_log"):
-                                    self.app._add_log(
-                                        "keyboard_focus_switch_selection",
-                                        f"added retain-selection class, stored_cursor={current_cursor_row}, classes={paper_list.classes}",
-                                    )
+
                             except Exception:
                                 pass
-                        else:
-                            # Even in non-select mode, log cursor preservation
-                            if hasattr(self.app, "_add_log"):
-                                self.app._add_log(
-                                    "keyboard_focus_switch_cursor",
-                                    f"stored cursor position={current_cursor_row} for non-select mode",
-                                )
-                        if hasattr(self.app, "_add_log"):
-                            self.app._add_log(
-                                "focus_switch_post_cursor",
-                                f"cursor_row={paper_list.cursor_row}",
-                            )
+
                     except Exception:
                         pass
 
