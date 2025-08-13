@@ -53,6 +53,7 @@ class MainScreen(Screen):
         max-width: 18;
         layer: notification;
         background: $surface;
+        border: solid $primary;
         scrollbar-size-vertical: 1;
         padding: 0;
         margin: 0;
@@ -269,16 +270,17 @@ class MainScreen(Screen):
         self.app.push_screen(AddDialog(add_callback, app=self.app))
 
     def action_show_filter_dialog(self) -> None:
-        """Show filter dialog (F3)."""
+        """Show filter dialog (F8)."""
 
         def filter_callback(result):
             if result:
-                self.notify(
-                    f"Filtering by {result.get('field', 'unknown')}: {result.get('value', '')}"
-                )
+                field = result["field"]
+                value = result["value"]
+                # Apply the filter using the search commands
+                if hasattr(self.app, 'search_commands'):
+                    self.app.search_commands._apply_filter(field, value)
 
-        collection_service = CollectionService()
-        self.app.push_screen(FilterDialog(filter_callback, collection_service))
+        self.app.push_screen(FilterDialog(filter_callback))
 
     def action_show_sort_dialog(self) -> None:
         """Show sort dialog (F4)."""
@@ -286,9 +288,11 @@ class MainScreen(Screen):
 
         def sort_callback(result):
             if result:
-                self.notify(
-                    f"Sorted by {result.get('field', 'unknown')} ({'desc' if result.get('reverse', False) else 'asc'})"
-                )
+                field = result.get('field', 'title')
+                reverse = result.get('reverse', False)
+                # Apply the sort using the search commands
+                if hasattr(self.app, 'search_commands'):
+                    self.app.search_commands._apply_sort(field, reverse)
 
         self.app.push_screen(SortDialog(sort_callback))
 

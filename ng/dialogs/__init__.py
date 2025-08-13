@@ -9,6 +9,7 @@ from .edit import EditDialog
 from .filter import FilterDialog
 from .message import MessageDialog
 from .sort import SortDialog
+from .sync import SyncDialog
 
 __all__ = [
     "AddDialog",
@@ -22,4 +23,5 @@ __all__ = [
     "FilterDialog",
     "MessageDialog",
     "SortDialog",
+    "SyncDialog",
 ]

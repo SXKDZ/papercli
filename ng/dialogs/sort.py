@@ -2,6 +2,7 @@ from typing import Callable, Dict, Any
 
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, HorizontalScroll, Vertical
+from textual.events import Key
 from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.widgets import Button, RadioButton, RadioSet, Static
@@ -118,6 +119,8 @@ class SortDialog(ModalScreen):
     def on_mount(self) -> None:
         self.query_one("#sort-field-title", RadioButton).value = True
         self.query_one("#sort-order-asc", RadioButton).value = True
+        # Set initial focus to field radio set
+        self.query_one("#field-radio-set", RadioSet).focus()
 
     def on_radio_set_changed(self, event: RadioSet.Changed) -> None:
         if event.pressed and event.radio_set.id == "field-radio-set":
@@ -138,6 +141,13 @@ class SortDialog(ModalScreen):
         if hasattr(self, "callback") and self.callback:
             self.callback(None)
         self.dismiss(None)
+
+    def on_key(self, event: Key) -> None:
+        """Handle key presses throughout the dialog."""
+        if event.key == "enter":
+            # Always trigger OK button on ENTER, regardless of focus
+            self.action_apply_sort()
+            event.prevent_default()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "ok-button":

@@ -215,6 +215,8 @@ class PaperCLIApp(App):
             self.system_commands.handle_doctor_command(parts[1:])
         elif cmd == "/log":
             self.system_commands.handle_log_command()
+        elif cmd == "/help":
+            self.action_show_help()
         elif cmd == "/sync":
             self.system_commands.handle_sync_command(parts[1:])
         elif cmd == "/all":

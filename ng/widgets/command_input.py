@@ -14,16 +14,29 @@ from ng.services import CollectionService
 if TYPE_CHECKING:
     from ng.papercli import PaperCLIApp
 
+COLLECTION_COMMANDS = {"/add-to", "/remove-from"}
+SUBCOMMAND_COMMANDS = {
+    "/add",
+    "/edit",
+    "/export",
+    "/filter",
+    "/sort",
+    "/chat",
+    "/config",
+    "/doctor",
+    "/collect",
+}
+
 
 class CustomInput(Input):
     """Custom Input widget that prevents automatic text selection on focus."""
-    
+
     def on_focus(self, event) -> None:
         """Override focus handling to prevent text selection."""
         # Immediately position cursor at end to prevent text selection
         if self.value:
             self.cursor_position = len(self.value)
-        
+
         # Use a delayed call to ensure the cursor position sticks
         def ensure_no_selection(*args):
             try:
@@ -34,8 +47,8 @@ class CustomInput(Input):
                 self.refresh()
             except Exception:
                 pass
-        
-        if hasattr(self, 'app') and self.app:
+
+        if hasattr(self, "app") and self.app:
             # Use call_later instead of async worker (callback first, then delay)
             self.app.call_later(ensure_no_selection, 0.001)
 
@@ -146,6 +159,9 @@ class CommandInput(Container):
                 "description": "Filter papers by criteria",
                 "subcommands": {
                     "all": "Search across all fields",
+                    "title": "Search in paper titles",
+                    "abstract": "Search in paper abstracts",
+                    "notes": "Search in paper notes",
                     "year": "Filter by publication year",
                     "author": "Filter by author name",
                     "venue": "Filter by venue name",
@@ -170,6 +186,8 @@ class CommandInput(Container):
                 "subcommands": {
                     "show": "Show all current configuration",
                     "model": "Set OpenAI model",
+                    "max-tokens": "Set OpenAI max tokens",
+                    "temperature": "Set OpenAI temperature",
                     "openai_api_key": "Set OpenAI API key",
                     "remote": "Set remote sync path",
                     "auto-sync": "Enable/disable auto-sync",
@@ -227,84 +245,84 @@ class CommandInput(Container):
         words = text.split()
         items: List[DropdownItem] = []
 
-        # Show more items in dropdown (up to 10)
         max_items = 10
         count = 0
 
-        # Main command completion
+        def add_item(label: str) -> None:
+            nonlocal count
+            if count < max_items:
+                items.append(DropdownItem(label))
+                count += 1
+
+        # 1) Main command completion (no trailing space yet)
         if len(words) <= 1 and not text.endswith(" "):
             partial_cmd = words[0] if words else ""
+            for cmd in self.commands.keys():
+                if cmd.startswith(partial_cmd):
+                    # Show exact match for "/add" and "/edit"; suppress for others
+                    if partial_cmd == cmd and cmd not in ("/add", "/edit"):
+                        continue
+                    add_item(cmd)
+            return items
 
-            for cmd, info in self.commands.items():
-                if cmd.startswith(partial_cmd) and count < max_items:
-                    # Don't show completion if command is already complete (without trailing space)
-                    # This allows "/edit" to execute directly, but "/edit " will show subcommands
-                    if partial_cmd == cmd:
-                        continue  # Skip showing completion for complete commands
-                    items.append(DropdownItem(cmd))
-                    count += 1
-
-        # Collection name completion for /add-to and /remove-from (only after command is typed)
-        elif len(words) >= 1 and words[0] in ["/add-to", "/remove-from"]:
+        # 2) Collection name completion for /add-to and /remove-from
+        if words and words[0] in COLLECTION_COMMANDS:
             try:
                 collection_service = CollectionService()
                 collections = collection_service.get_all_collections()
 
-                # Get the partial collection name
-                if text.endswith(" "):
-                    partial_name = ""
-                else:
-                    partial_name = words[-1] if len(words) > 1 else ""
-
-                # Get already typed collection names to exclude them
+                partial_name = (
+                    "" if text.endswith(" ") else (words[-1] if len(words) > 1 else "")
+                )
                 already_typed = (
                     set(words[1:-1])
                     if len(words) > 2 and not text.endswith(" ")
                     else set(words[1:])
                 )
 
-                # Simplified logic: just show all matching collections for now
                 for collection in collections:
-                    if (
-                        collection.name not in already_typed
-                        and collection.name.lower().startswith(partial_name.lower())
-                        and count < max_items
+                    name = collection.name
+                    if name not in already_typed and name.lower().startswith(
+                        partial_name.lower()
                     ):
-                        items.append(DropdownItem(collection.name))
-                        count += 1
+                        add_item(name)
 
             except Exception:
-                # Add test items if service fails to verify completion works
                 for i in range(min(5, max_items - count)):
-                    items.append(DropdownItem(main=f"test-collection-{i+1}"))
-                    count += 1
+                    add_item(f"test-collection-{i+1}")
+            return items
 
-        # Subcommand completion (only after main command and space, but not for collection commands)
-        elif (
-            (len(words) >= 1 and text.endswith(" "))
-            or (len(words) == 2 and not text.endswith(" "))
-        ) and words[0] not in ["/add-to", "/remove-from"]:
+        # 3) Subcommand completion (after main command and optional space)
+        if words and words[0] not in COLLECTION_COMMANDS:
             cmd = words[0]
-            if cmd in self.commands:
-                subcommands = self.commands[cmd].get("subcommands", {})
-                if subcommands:
-                    partial_subcmd = "" if text.endswith(" ") else words[1]
-                    for subcmd, description in subcommands.items():
-                        if subcmd.startswith(partial_subcmd) and count < max_items:
-                            items.append(DropdownItem(subcmd))
-                            count += 1
-
-        # Special completion for /config model <model_name>
-        elif len(words) >= 2 and words[0] == "/config" and words[1] == "model":
-            model_options = self.commands["/config"].get("model_options", {})
-            if model_options:
-                partial_model = (
-                    "" if text.endswith(" ") else (words[2] if len(words) > 2 else "")
+            subcommands = self.commands.get(cmd, {}).get("subcommands", {})
+            if subcommands:
+                partial_subcmd = (
+                    "" if text.endswith(" ") else (words[1] if len(words) >= 2 else "")
                 )
-                for model, description in model_options.items():
-                    if model.startswith(partial_model) and count < max_items:
-                        items.append(DropdownItem(model))
-                        count += 1
+                # If the second token is already an exact subcommand and there's no trailing space,
+                # don't re-list subcommands; wait for a space to show next-level suggestions
+                if (
+                    partial_subcmd
+                    and not text.endswith(" ")
+                    and partial_subcmd in subcommands
+                ):
+                    return items
+                for subcmd in subcommands.keys():
+                    if subcmd.startswith(partial_subcmd):
+                        add_item(subcmd)
+                return items
+
+        # 4) Special: /config model <model_name>
+        if len(words) >= 2 and words[0] == "/config" and words[1] == "model":
+            model_options = self.commands["/config"].get("model_options", {})
+            partial_model = (
+                "" if text.endswith(" ") else (words[2] if len(words) > 2 else "")
+            )
+            for model in model_options.keys():
+                if model.startswith(partial_model):
+                    add_item(model)
+            return items
 
         return items
 
@@ -364,7 +382,7 @@ class CommandInput(Container):
                 except Exception:
                     pass
 
-            if hasattr(self, 'app') and self.app:
+            if hasattr(self, "app") and self.app:
                 self.app.run_worker(fix_cursor_position(), exclusive=False)
 
     @property
@@ -455,32 +473,22 @@ class CommandAutoComplete(AutoComplete):
 
         first = parts[0]
 
-        # Main command: match the whole first token (e.g. "/ad")
+        # Main command (before the first space)
         if len(parts) == 1 and not head.endswith(" "):
             return parts[0]
 
-        # Collection commands: match the last (partial) collection name
-        if first in ("/add-to", "/remove-from"):
-            if head.endswith(" "):
-                return ""
-            return parts[-1]
+        # Collections: complete the collection name
+        if first in COLLECTION_COMMANDS:
+            return "" if head.endswith(" ") else parts[-1]
 
-        # Subcommands: match the second token
-        if len(parts) >= 2 and first in (
-            "/add",
-            "/edit",
-            "/export",
-            "/filter",
-            "/sort",
-            "/chat",
-            "/config",
-        ):
-            if head.endswith(" "):
+        # Subcommands: complete the second token
+        if first in SUBCOMMAND_COMMANDS:
+            if len(parts) == 1 and head.endswith(" "):
                 return ""
-            # Return the current partial subcommand (2nd token)
-            return parts[1]
+            if len(parts) >= 2:
+                return "" if head.endswith(" ") else parts[1]
 
-        # Fallback: match last token
+        # Fallback to last token
         return parts[-1]
 
     def apply_completion(self, value: str, state: TargetState) -> None:
@@ -502,8 +510,8 @@ class CommandAutoComplete(AutoComplete):
             # Main command replacement
             if len(parts) == 1 and not head.endswith(" "):
                 new_head = value
-                # Add space after completing a command to encourage next completions
-                if not tail.startswith(" "):
+                # Only auto-add a space for commands other than /add and /edit
+                if value not in ("/add", "/edit") and not tail.startswith(" "):
                     tail = " " + tail
                 new_text = new_head + tail
 
@@ -521,21 +529,11 @@ class CommandAutoComplete(AutoComplete):
                 new_text = new_head + tail
 
             # Subcommands: replace the second token
-            elif len(parts) >= 2 and first in (
-                "/add",
-                "/edit",
-                "/export",
-                "/filter",
-                "/sort",
-                "/chat",
-                "/config",
-            ):
+            elif len(parts) >= 2 and first in SUBCOMMAND_COMMANDS:
                 if head.endswith(" "):
                     new_head = head + value
                 else:
                     new_head = " ".join([parts[0], value])
-                if not tail.startswith(" "):
-                    tail = " " + tail
                 new_text = new_head + tail
 
             else:
@@ -554,35 +552,21 @@ class CommandAutoComplete(AutoComplete):
         self.post_completion()
 
     def should_show_dropdown(self, search_string: str) -> bool:
-        """Show dropdown when there are options, even if search is empty for certain commands.
-
-        - Default behavior: show when search string non-empty and there are options.
-        - Extended: show when cursor is after a space in commands that expect another token
-          (e.g., collections list after `/add-to ` or subcommands after `/add `).
-        """
-        option_list = self.option_list
-        option_count = option_list.option_count
-        if option_count == 0:
+        """Show dropdown when there are options, even if search is empty in specific contexts."""
+        if self.option_list.option_count == 0:
             return False
         if len(search_string) > 0:
             return True
-        # When search string is empty, show in specific contexts
+
         state = self._get_target_state()
         text = state.text
         words = text.split()
         if not words:
             return False
+
         first = words[0]
-        if first in ("/add-to", "/remove-from"):
+        if first in COLLECTION_COMMANDS:
             return True
-        if text.endswith(" ") and first in (
-            "/add",
-            "/edit",
-            "/export",
-            "/filter",
-            "/sort",
-            "/chat",
-            "/config",
-        ):
+        if text.endswith(" ") and first in SUBCOMMAND_COMMANDS:
             return True
         return False

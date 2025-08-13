@@ -129,7 +129,7 @@ class ChatDialog(ModalScreen):
     
     .compact-model-input {
         height: 1;
-        width: 24;
+        width: 25;
         border: none;
         padding: 0;
         margin: 0 2 0 0;
@@ -188,8 +188,9 @@ class ChatDialog(ModalScreen):
         self.model_name = os.getenv("OPENAI_MODEL", "gpt-4o")
         self.pdf_manager = PDFManager()
         self.summary_in_progress = False
-        self.pdf_start_page = int(os.getenv("PAPERCLI_PDF_START_PAGE", "1"))
-        self.pdf_end_page = int(os.getenv("PAPERCLI_PDF_END_PAGE", "10"))
+        self.default_pdf_pages_limit = int(os.getenv("PAPERCLI_PDF_PAGES", "10"))
+        self.pdf_start_page = 1
+        self.pdf_end_page = self.default_pdf_pages_limit
         self.total_pdf_pages = 0  # Will be calculated based on available PDFs
 
         # Initialize services for summary generation (following app version)
@@ -248,7 +249,7 @@ class ChatDialog(ModalScreen):
                             value=str(self.pdf_end_page),
                             id="pdf-end-input",
                             classes="compact-input",
-                            placeholder="10",
+                            placeholder=str(self.default_pdf_pages_limit),
                         )
                         yield Static("pages", classes="control-label")
                 with Container(id="controls-right"):
@@ -267,7 +268,7 @@ class ChatDialog(ModalScreen):
         # Ensure Input is properly configured for input
         user_input.can_focus = True
         user_input.focus()
-        
+
         # Calculate total PDF pages and update input states
         self._update_pdf_controls_state()
 
@@ -504,20 +505,21 @@ class ChatDialog(ModalScreen):
         if not self.summary_in_progress:
             self._handle_send()
 
-    
     def on_input_changed(self, event: Input.Changed) -> None:
         """Handle model and page range input changes with validation."""
         if event.input.id == "model-input":
             self.model_name = event.value.strip() or "gpt-4o"
             if self.app:
-                self.app._add_log("chat_model_change", f"Model changed to: {self.model_name}")
+                self.app._add_log(
+                    "chat_model_change", f"Model changed to: {self.model_name}"
+                )
         elif event.input.id == "pdf-start-input":
             try:
                 if not event.value or not event.value.strip():
                     self.pdf_start_page = 1
                     event.input.value = "1"
                     return
-                    
+
                 value = int(event.value)
                 if value < 1:
                     value = 1
@@ -525,26 +527,28 @@ class ChatDialog(ModalScreen):
                 elif self.total_pdf_pages > 0 and value > self.total_pdf_pages:
                     value = self.total_pdf_pages
                     event.input.value = str(self.total_pdf_pages)
-                    
+
                 self.pdf_start_page = value
-                
+
                 # Ensure end page is not less than start page
                 end_input = self.query_one("#pdf-end-input", Input)
                 if self.pdf_end_page < self.pdf_start_page:
                     self.pdf_end_page = self.pdf_start_page
                     end_input.value = str(self.pdf_start_page)
-                    
+
             except ValueError:
                 self.pdf_start_page = 1
                 event.input.value = "1"
-                
+
         elif event.input.id == "pdf-end-input":
             try:
                 if not event.value or not event.value.strip():
-                    self.pdf_end_page = max(self.pdf_start_page, 10)
+                    self.pdf_end_page = max(
+                        self.pdf_start_page, self.default_pdf_pages_limit
+                    )
                     event.input.value = str(self.pdf_end_page)
                     return
-                    
+
                 value = int(event.value)
                 if value < self.pdf_start_page:
                     value = self.pdf_start_page
@@ -552,13 +556,15 @@ class ChatDialog(ModalScreen):
                 elif self.total_pdf_pages > 0 and value > self.total_pdf_pages:
                     value = self.total_pdf_pages
                     event.input.value = str(self.total_pdf_pages)
-                    
+
                 self.pdf_end_page = value
-                    
+
             except ValueError:
-                self.pdf_end_page = max(self.pdf_start_page, 10)
+                self.pdf_end_page = max(
+                    self.pdf_start_page, self.default_pdf_pages_limit
+                )
                 event.input.value = str(self.pdf_end_page)
-    
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "send-button":
             if not self.summary_in_progress:
@@ -580,7 +586,7 @@ class ChatDialog(ModalScreen):
         # Add user message to history with PDF page range info if applicable
         user_content = user_message
         pdf_info_added = False
-        
+
         # Check if any papers have PDF content that will be sent
         for paper in self.papers:
             fields = self._get_paper_fields(paper)
@@ -593,10 +599,12 @@ class ChatDialog(ModalScreen):
                         if start_page == end_page:
                             user_content += f"\n\n*(PDF page {start_page} attached)*"
                         else:
-                            user_content += f"\n\n*(PDF pages {start_page}-{end_page} attached)*"
+                            user_content += (
+                                f"\n\n*(PDF pages {start_page}-{end_page} attached)*"
+                            )
                         pdf_info_added = True
                         break
-        
+
         self.chat_history.append({"role": "user", "content": user_content})
 
         # Log the user message
@@ -636,7 +644,7 @@ class ChatDialog(ModalScreen):
                 params = get_model_parameters(self.model_name)
                 params["messages"] = messages
                 params["stream"] = True
-                
+
                 stream = self.openai_client.chat.completions.create(**params)
 
                 # Stream response by directly updating the widget to avoid rebuilding
@@ -773,7 +781,9 @@ class ChatDialog(ModalScreen):
 
         return ChatPrompts.paper_context_header() + "\n".join(context_parts)
 
-    def _extract_page_range(self, pdf_path: str, start_page: int = 1, end_page: int = 10) -> str:
+    def _extract_page_range(
+        self, pdf_path: str, start_page: int = 1, end_page: int = 10
+    ) -> str:
         """Extract text from a specific page range of a PDF."""
         try:
             with open(pdf_path, "rb") as file:
@@ -781,10 +791,18 @@ class ChatDialog(ModalScreen):
 
                 text_parts = []
                 total_pages = len(pdf_reader.pages)
-                
+
                 # Ensure valid page range
-                start_idx = max(0, start_page - 1)  # Convert to 0-based index
-                end_idx = min(total_pages, end_page)  # Convert to 0-based, inclusive
+                # If requested range exceeds this PDF's total pages in any way,
+                # send the entire document for this paper.
+                if end_page > total_pages or start_page > total_pages:
+                    start_idx = 0
+                    end_idx = total_pages
+                else:
+                    start_idx = max(0, start_page - 1)  # Convert to 0-based index
+                    end_idx = min(
+                        total_pages, end_page
+                    )  # Convert to 0-based, inclusive
 
                 for page_num in range(start_idx, end_idx):
                     page = pdf_reader.pages[page_num]
@@ -799,8 +817,7 @@ class ChatDialog(ModalScreen):
                     "pdf_extract_error", f"Failed to extract PDF text: {e}"
                 )
             return ""
-    
-        
+
     def _calculate_total_pdf_pages(self) -> int:
         """Calculate the maximum number of pages across all PDFs."""
         max_pages = 0
@@ -821,7 +838,7 @@ class ChatDialog(ModalScreen):
                                 f"Failed to count pages for '{fields['title']}': {e}",
                             )
         return max_pages
-    
+
     def _has_available_pdfs(self) -> bool:
         """Check if any papers have available PDF files."""
         for paper in self.papers:
@@ -831,24 +848,24 @@ class ChatDialog(ModalScreen):
                 if os.path.exists(absolute_path):
                     return True
         return False
-    
+
     def _update_pdf_controls_state(self):
         """Update the state of PDF page range controls based on available PDFs."""
         has_pdfs = self._has_available_pdfs()
-        
+
         if has_pdfs:
             self.total_pdf_pages = self._calculate_total_pdf_pages()
         else:
             self.total_pdf_pages = 0
-            
+
         # Update input controls
         try:
             start_input = self.query_one("#pdf-start-input", Input)
             end_input = self.query_one("#pdf-end-input", Input)
-            
+
             start_input.disabled = not has_pdfs
             end_input.disabled = not has_pdfs
-            
+
             if not has_pdfs:
                 start_input.placeholder = "No PDF"
                 end_input.placeholder = "No PDF"
@@ -856,19 +873,19 @@ class ChatDialog(ModalScreen):
                 end_input.value = ""
             else:
                 start_input.placeholder = "1"
-                end_input.placeholder = str(min(10, self.total_pdf_pages))
-                
+                end_input.placeholder = str(self.total_pdf_pages)
+
                 # Validate current values
                 if self.pdf_start_page > self.total_pdf_pages:
-                    self.pdf_start_page = min(1, self.total_pdf_pages)
+                    self.pdf_start_page = self.total_pdf_pages
                 if self.pdf_end_page > self.total_pdf_pages:
                     self.pdf_end_page = self.total_pdf_pages
                 if self.pdf_end_page < self.pdf_start_page:
                     self.pdf_end_page = self.pdf_start_page
-                    
+
                 start_input.value = str(self.pdf_start_page)
                 end_input.value = str(self.pdf_end_page)
-                
+
         except Exception:
             # Controls might not be mounted yet
             pass

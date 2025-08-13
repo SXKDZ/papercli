@@ -15,11 +15,37 @@ class SearchCommandHandler(CommandHandler):
     def __init__(self, app: PaperCLIApp):
         super().__init__(app)
         self.search_service = SearchService()
+    
+    def _find_paper_list_view(self):
+        """Find the paper list view, which may be behind modal dialogs."""
+        try:
+            # Try current screen first
+            return self.app.screen.query_one("#paper-list-view")
+        except:
+            # If not found, look through screen stack for MainScreen
+            for screen in reversed(self.app.screen_stack):
+                try:
+                    return screen.query_one("#paper-list-view")
+                except:
+                    continue
+            
+            # If still not found, try main_screen reference
+            if hasattr(self.app, 'main_screen'):
+                try:
+                    return self.app.main_screen.query_one("#paper-list-view")
+                except:
+                    pass
+        return None
 
     def handle_all_command(self):
         """Handle /all command - return to full paper list."""
         self.app.load_papers()  # Reload all papers
-        self.app.screen.query_one("#paper-list-view").set_in_select_mode(False)
+        
+        # Find the paper list view
+        paper_list = self._find_paper_list_view()
+        if paper_list:
+            paper_list.set_in_select_mode(False)
+            
         self.app.notify(
             f"Showing all {len(self.app.current_papers)} papers",
             severity="information",
@@ -27,7 +53,10 @@ class SearchCommandHandler(CommandHandler):
 
     def handle_clear_command(self):
         """Handle /clear command - deselect all papers."""
-        paper_list = self.app.screen.query_one("#paper-list-view")
+        paper_list = self._find_paper_list_view()
+        if not paper_list:
+            return
+            
         if not paper_list.selected_paper_ids:
             self.app.notify("No papers were selected", severity="warning")
             return
@@ -81,9 +110,9 @@ class SearchCommandHandler(CommandHandler):
 
                 # Update display
                 self.app.current_papers = results
-                self.app.screen.query_one("#paper-list-view").set_papers(
-                    self.app.current_papers
-                )
+                paper_list = self._find_paper_list_view()
+                if paper_list:
+                    paper_list.set_papers(self.app.current_papers)
                 self.app.notify(
                     f"Found {len(results)} papers matching '{query}' in all fields",
                     severity="information",
@@ -93,7 +122,7 @@ class SearchCommandHandler(CommandHandler):
             # Handle specific field filtering
             if len(args) < 2:
                 self.app.notify(
-                    "Usage: /filter <field> <value>. Fields: year, author, venue, type, collection, all",
+                    "Usage: /filter <field> <value>. Fields: title, abstract, notes, year, author, venue, type, collection, all",
                     severity="information",
                 )
                 return
@@ -101,7 +130,7 @@ class SearchCommandHandler(CommandHandler):
             value = " ".join(args[1:])
 
             # Validate field
-            valid_fields = ["year", "author", "venue", "type", "collection"]
+            valid_fields = ["title", "abstract", "notes", "year", "author", "venue", "type", "collection"]
             if field not in valid_fields:
                 self.app.notify(
                     f"Invalid filter field '{field}'. Valid fields: {', '.join(valid_fields + ['all'])}",
@@ -115,6 +144,58 @@ class SearchCommandHandler(CommandHandler):
             self.app.notify(f"Error filtering papers: {e}", severity="error")
 
     def _apply_filter(self, field: str, value: str):
+        # Handle "all" field - search across all fields
+        if field == "all":
+            self.app.notify(f"Searching all fields for '{value}'", severity="information")
+            
+            # Perform search across all fields like the old search command
+            results = self.search_service.search_papers(
+                value, ["title", "authors", "venue", "abstract"]
+            )
+            
+            if not results:
+                # Try fuzzy search
+                results = self.search_service.fuzzy_search_papers(value)
+            
+            # Update display
+            self.app.current_papers = results
+            paper_list = self._find_paper_list_view()
+            if paper_list:
+                paper_list.set_papers(self.app.current_papers)
+                
+            self.app.notify(
+                f"Found {len(results)} papers matching '{value}' in all fields",
+                severity="information",
+            )
+            return
+        
+        # Handle individual field searches
+        if field in ["title", "abstract", "notes"]:
+            # Perform search on specific field
+            field_mapping = {
+                "title": ["title"],
+                "abstract": ["abstract"],
+                "notes": ["notes"]
+            }
+            
+            results = self.search_service.search_papers(value, field_mapping[field])
+            
+            if not results:
+                # Try fuzzy search on the specific field
+                results = self.search_service.fuzzy_search_papers(value)
+            
+            # Update display
+            self.app.current_papers = results
+            paper_list = self._find_paper_list_view()
+            if paper_list:
+                paper_list.set_papers(self.app.current_papers)
+                
+            self.app.notify(
+                f"Found {len(results)} papers matching '{value}' in {field}",
+                severity="information",
+            )
+            return
+        
         filters = {}
         # Convert and validate value based on field
         if field == "year":
@@ -130,12 +211,12 @@ class SearchCommandHandler(CommandHandler):
         elif field == "type":
             # Validate paper type
             valid_types = [
-                "journal",
                 "conference",
+                "journal",
+                "workshop",
                 "preprint",
                 "website",
-                "book",
-                "thesis",
+                "other",
             ]
             if value.lower() not in valid_types:
                 self.app.notify(
@@ -154,9 +235,9 @@ class SearchCommandHandler(CommandHandler):
 
         # Update display
         self.app.current_papers = results
-        self.app.screen.query_one("#paper-list-view").set_papers(
-            self.app.current_papers
-        )
+        paper_list = self._find_paper_list_view()
+        if paper_list:
+            paper_list.set_papers(self.app.current_papers)
 
         filter_desc = ", ".join([f"{k}={v}" for k, v in filters.items()])
         self.app.notify(
@@ -235,16 +316,19 @@ class SearchCommandHandler(CommandHandler):
             self.app.current_papers.sort(key=lambda p: p.modified_date, reverse=reverse)
 
         # Update paper list control
-        self.app.screen.query_one("#paper-list-view").set_papers(
-            self.app.current_papers
-        )
+        paper_list = self._find_paper_list_view()
+        if paper_list:
+            paper_list.set_papers(self.app.current_papers)
 
         order_text = "descending" if reverse else "ascending"
         self.app.notify(f"Sorted by {field} ({order_text})", severity="information")
 
     def handle_select_command(self):
         """Handle /select command - toggle multi-selection mode."""
-        paper_list = self.app.screen.query_one("#paper-list-view")
+        paper_list = self._find_paper_list_view()
+        if not paper_list:
+            return
+            
         if paper_list.in_select_mode:
             # Exit select mode
             paper_list.set_in_select_mode(False)

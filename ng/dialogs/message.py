@@ -13,7 +13,7 @@ class MessageDialog(ModalScreen):
     }
 
     #message-container {
-        width: 80;
+        width: 50%;
         height: 30;
         border: solid $accent;
         background: $panel;

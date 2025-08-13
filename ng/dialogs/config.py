@@ -103,7 +103,7 @@ class ConfigDialog(ModalScreen):
         align: center middle;
     }
     ConfigDialog .bottom-buttons Button {
-        margin: 0 1;
+        margin: 0 2;
         min-width: 10;
         height: 3;
         content-align: center middle;

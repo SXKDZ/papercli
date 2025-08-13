@@ -8,7 +8,7 @@ from openai import OpenAI
 
 from ng.commands import CommandHandler
 from ng.version import VersionManager
-from ng.dialogs import MessageDialog, DoctorDialog, ConfigDialog
+from ng.dialogs import MessageDialog, DoctorDialog, ConfigDialog, SyncDialog
 from ng.services import DatabaseHealthService, SyncService
 
 if TYPE_CHECKING:
@@ -38,7 +38,6 @@ class SystemCommandHandler(CommandHandler):
             action = args[0] if args else None
 
             if not args:
-                self.app.notify("Running diagnostic checks...", severity="information")
                 report = self.db_health_service.run_full_diagnostic()
                 self._show_doctor_report(report)
 
@@ -98,28 +97,36 @@ class SystemCommandHandler(CommandHandler):
                     )
 
             elif action == "help":
-                help_text = """Database Doctor Commands:
+                help_markdown = """## Database Doctor Commands
 
-/doctor                 - Run full diagnostic check
-/doctor clean           - Clean orphaned records, files, and rename PDFs to follow naming convention
-/doctor help            - Show this help
+### Usage
 
-The doctor command helps maintain database health by:
-• Checking database integrity and structure
-• Detecting orphaned association records and PDF files
-• Identifying papers with absolute PDF paths (should be relative)
-• Verifying system dependencies  
-• Checking terminal capabilities
-• Providing automated cleanup
-• Ensuring PDF filenames follow consistent naming rules
+- `/doctor` — Run full diagnostic check
+- `/doctor clean` — Clean orphaned records, files, and rename PDFs to follow naming convention
+- `/doctor help` — Show this help
 
-PDF Filename Convention:
-• Format: {author_lastname}{year}{first_word}_{hash}.pdf
-• Example: smith2023learning_a1b2c3.pdf
-• Uses first author's last name, publication year, first significant word from title
-• Includes 6-character hash from PDF content for uniqueness"""
+### What it checks
 
-                self.app.push_screen(MessageDialog("Database Doctor Help", help_text))
+- Database integrity and structure
+- Orphaned association records and PDF files
+- Papers with absolute PDF paths (should be relative)
+- System dependencies
+- Terminal capabilities
+- Opportunities for automated cleanup
+- PDF filename consistency
+
+### PDF Filename Convention
+
+```
+Format: {author_lastname}{year}{first_word}_{hash}.pdf
+Example: smith2023learning_a1b2c3.pdf
+Notes:
+- Uses first author's last name, publication year, first significant word from title
+- Includes 6-character hash from PDF content for uniqueness
+```
+"""
+
+                self.app.push_screen(MessageDialog("Database Doctor Help", help_markdown))
 
             else:
                 self.app.notify(
@@ -298,7 +305,7 @@ PDF Filename Convention:
                     if self.version_manager.can_auto_update():
                         update_info += "To update, run: /version update\n\n"
                     else:
-                        update_info += f"To update manually, run:\n"
+                        update_info += "To update manually, run:\n"
                         update_info += (
                             f"{self.version_manager.get_update_instructions()}\n\n"
                         )
@@ -487,6 +494,42 @@ PDF Filename Convention:
                         )
                 return
 
+            elif action == "max-tokens":
+                if len(args) < 2:
+                    self._show_current_max_tokens()
+                else:
+                    try:
+                        max_tokens = int(args[1])
+                        if max_tokens > 0:
+                            self._set_max_tokens(max_tokens)
+                        else:
+                            self.app.notify(
+                                "Max tokens must be a positive number", severity="error"
+                            )
+                    except ValueError:
+                        self.app.notify(
+                            "Max tokens must be a valid number", severity="error"
+                        )
+                return
+
+            elif action == "temperature":
+                if len(args) < 2:
+                    self._show_current_temperature()
+                else:
+                    try:
+                        temperature = float(args[1])
+                        if 0 <= temperature <= 2:
+                            self._set_temperature(temperature)
+                        else:
+                            self.app.notify(
+                                "Temperature must be between 0 and 2", severity="error"
+                            )
+                    except ValueError:
+                        self.app.notify(
+                            "Temperature must be a valid number", severity="error"
+                        )
+                return
+
             elif action == "show":
                 self._show_all_config()
                 return
@@ -528,53 +571,75 @@ PDF Filename Convention:
         # Get available models dynamically
         available_models_text = self._get_available_models_text()
 
-        help_text = f"""Configuration Commands:
+        # Build markdown-formatted help content
+        markdown_lines = [
+            "## Configuration Commands",
+            "",
+            "### Available Commands",
+            "",
+            "- `/config show` — Show all current configuration",
+            "- `/config model` — Show current OpenAI model",
+            "- `/config model <model_name>` — Set OpenAI model (e.g., gpt-4o, gpt-3.5-turbo)",
+            "- `/config max-tokens` — Show current OpenAI max tokens",
+            "- `/config max-tokens <number>` — Set OpenAI max tokens",
+            "- `/config temperature` — Show current OpenAI temperature",
+            "- `/config temperature <0-2>` — Set OpenAI temperature (0–2)",
+            "- `/config openai_api_key` — Show current API key (masked)",
+            "- `/config openai_api_key <key>` — Set OpenAI API key",
+            "- `/config remote` — Show current remote sync path",
+            "- `/config remote <path>` — Set remote sync path (e.g., ~/OneDrive/papercli-sync)",
+            "- `/config auto-sync` — Show current auto-sync setting",
+            "- `/config auto-sync enable` — Enable auto-sync after edits",
+            "- `/config auto-sync disable` — Disable auto-sync",
+            "- `/config pdf-pages` — Show current PDF pages limit for chat/summarize",
+            "- `/config pdf-pages <number>` — Set PDF pages limit (e.g., 15, 20)",
+            "- `/config theme` — Show current theme",
+            "- `/config theme <theme_name>` — Set theme (dark, light, textual-dark, textual-light)",
+            "",
+            "### Available OpenAI Models",
+            "",
+            "```",
+            available_models_text,
+            "```",
+            "",
+            "### Examples",
+            "",
+            "```",
+            "/config show",
+            "/config model gpt-4o",
+            "/config max-tokens 4000",
+            "/config temperature 0.7",
+            "/config model gpt-3.5-turbo",
+            "/config openai_api_key sk-...",
+            "/config remote ~/OneDrive/papercli-sync",
+            "/config auto-sync enable",
+            "/config pdf-pages 15",
+            "/config theme dark",
+            "/config theme light",
+            "```",
+            "",
+            "### Temperature Guidance",
+            "",
+            "You can think of temperature like randomness, with 0 being least random (most deterministic) and 2 being most random (least deterministic).",
+            "When using low values (e.g. `0.2`) responses are more consistent but may feel robotic.",
+            "Values higher than `1.0` can lead to erratic outputs. For creative tasks, try `1.2` and prompt the model to be creative.",
+            "Experiment to find the best setting for your use case.",
+            "",
+            "### Configuration Storage",
+            "",
+            "Settings are stored in environment variables and automatically saved to a `.env` file.",
+            "The `.env` file is searched in this order:",
+            "1. Current directory (`.env`)",
+            "2. `PAPERCLI_DATA_DIR` if set",
+            "3. `~/.papercli/.env` (default)",
+            "",
+            "### API Key Security",
+            "",
+            "API keys are masked when displayed for security. Only the first 8 and last 4 characters are shown.",
+        ]
 
-Available Commands:
--------------------
-/config show                    - Show all current configuration
-/config model                   - Show current OpenAI model
-/config model <model_name>      - Set OpenAI model (e.g., gpt-4o, gpt-3.5-turbo)
-/config openai_api_key          - Show current API key (masked)
-/config openai_api_key <key>    - Set OpenAI API key
-/config remote                  - Show current remote sync path
-/config remote <path>           - Set remote sync path (e.g., ~/OneDrive/papercli-sync)
-/config auto-sync               - Show current auto-sync setting
-/config auto-sync enable        - Enable auto-sync after edits
-/config auto-sync disable       - Disable auto-sync
-/config pdf-pages               - Show current PDF pages limit for chat/summarize
-/config pdf-pages <number>      - Set PDF pages limit (e.g., 15, 20)
-/config theme                   - Show current theme
-/config theme <theme_name>      - Set theme (dark, light, textual-dark, textual-light)
-
-{available_models_text}
-
-Examples:
----------
-/config show                    - View all current settings
-/config model gpt-4o            - Set model to GPT-4 Omni
-/config model gpt-3.5-turbo     - Set model to GPT-3.5 Turbo
-/config openai_api_key sk-...   - Set your OpenAI API key
-/config remote ~/OneDrive/papercli-sync  - Set OneDrive sync path
-/config auto-sync enable        - Enable automatic sync after edits
-/config pdf-pages 15            - Set PDF pages limit to 15 for chat/summarize
-/config theme dark              - Set to dark theme
-/config theme light             - Set to light theme
-
-Configuration Storage:
-----------------------
-Settings are stored in environment variables and automatically saved to a .env file.
-The .env file is searched in this order:
-1. Current directory (.env)
-2. PAPERCLI_DATA_DIR if set
-3. ~/.papercli/.env (default)
-
-API Key Security:
------------------
-API keys are masked when displayed for security.
-Only the first 8 and last 4 characters are shown."""
-
-        self.app.push_screen(MessageDialog("Configuration Help", help_text))
+        help_markdown = "\n".join(markdown_lines)
+        self.app.push_screen(MessageDialog("Configuration Help", help_markdown))
 
     def _get_available_models_text(self):
         """Get formatted text of available OpenAI models."""
@@ -712,7 +777,7 @@ gpt-3.5-turbo                   - GPT-3.5 Turbo model (faster, cheaper)"""
             self.app.notify(
                 f"Current OpenAI model: {current_model}", severity="information"
             )
-        except:
+        except Exception:
             pass
 
     def _set_model(self, model_name):
@@ -857,10 +922,62 @@ gpt-3.5-turbo                   - GPT-3.5 Turbo model (faster, cheaper)"""
                 "Failed to save PDF pages setting to .env file", severity="error"
             )
 
+    def _show_current_max_tokens(self):
+        """Show the current OpenAI max tokens."""
+        max_tokens = int(os.getenv("OPENAI_MAX_TOKENS", "4000"))
+        self.app.notify(f"Current OpenAI max tokens: {max_tokens}", severity="information")
+
+    def _set_max_tokens(self, max_tokens: int):
+        """Set the OpenAI max tokens."""
+        value = str(max_tokens)
+
+        # Update environment variable
+        os.environ["OPENAI_MAX_TOKENS"] = value
+
+        # Update .env file
+        env_vars = self._read_env_file()
+        env_vars["OPENAI_MAX_TOKENS"] = value
+
+        if self._write_env_file(env_vars):
+            self.app.notify(
+                f"OpenAI max tokens set to: {max_tokens}", severity="information"
+            )
+        else:
+            self.app.notify(
+                "Failed to save max tokens setting to .env file", severity="error"
+            )
+
+    def _show_current_temperature(self):
+        """Show the current OpenAI temperature."""
+        temperature = os.getenv("OPENAI_TEMPERATURE", "0.7")
+        self.app.notify(f"Current OpenAI temperature: {temperature}", severity="information")
+
+    def _set_temperature(self, temperature: float):
+        """Set the OpenAI temperature."""
+        value = str(temperature)
+
+        # Update environment variable
+        os.environ["OPENAI_TEMPERATURE"] = value
+
+        # Update .env file
+        env_vars = self._read_env_file()
+        env_vars["OPENAI_TEMPERATURE"] = value
+
+        if self._write_env_file(env_vars):
+            self.app.notify(
+                f"OpenAI temperature set to: {temperature}", severity="information"
+            )
+        else:
+            self.app.notify(
+                "Failed to save temperature setting to .env file", severity="error"
+            )
+
     def _show_all_config(self):
         """Show all current configuration."""
         model = os.getenv("OPENAI_MODEL", "gpt-4o")
         api_key = os.getenv("OPENAI_API_KEY", "")
+        max_tokens = int(os.getenv("OPENAI_MAX_TOKENS", "4000"))
+        temperature = os.getenv("OPENAI_TEMPERATURE", "0.7")
         remote_path = os.getenv("PAPERCLI_REMOTE_PATH", "Not set")
         auto_sync = os.getenv("PAPERCLI_AUTO_SYNC", "false").lower() == "true"
         pdf_pages = int(os.getenv("PAPERCLI_PDF_PAGES", "10"))
@@ -878,27 +995,40 @@ gpt-3.5-turbo                   - GPT-3.5 Turbo model (faster, cheaper)"""
         auto_sync_status = "enabled" if auto_sync else "disabled"
         env_file = self._get_env_file_path()
 
-        config_text = f"""Current Configuration:
+        # Build markdown-formatted configuration details for proper rendering
+        markdown_lines = [
+            "## Current Configuration",
+            "",
+            f"- **OpenAI Model**: `{model}`",
+            f"- **OpenAI Max Tokens**: `{max_tokens}`",
+            f"- **OpenAI Temperature**: `{temperature}`",
+            f"- **OpenAI API Key**: `{masked_key}`",
+            f"- **Remote Sync Path**: `{remote_path}`",
+            f"- **Auto-sync**: `{auto_sync_status}`",
+            f"- **PDF Pages Limit**: `{pdf_pages}`",
+            f"- **Theme**: `{theme}`",
+            "",
+            "### Configuration File",
+            "",
+            f"- **Path**: `{env_file}`",
+            f"- **Exists**: {'✅ Yes' if env_file.exists() else '❌ No'}",
+            "",
+            "### Change Settings",
+            "",
+            "```",
+            "/config model <model_name>",
+            "/config max-tokens <number>",
+            "/config temperature <0-2>",
+            "/config openai_api_key <key>",
+            "/config remote <path>",
+            "/config auto-sync enable|disable",
+            "/config pdf-pages <number>",
+            "/config theme <theme_name>",
+            "```",
+        ]
 
-OpenAI Model: {model}
-OpenAI API Key: {masked_key}
-Remote Sync Path: {remote_path}
-Auto-sync: {auto_sync_status}
-PDF Pages Limit: {pdf_pages}
-Theme: {theme}
-
-Configuration file: {env_file}
-File exists: {'Yes' if env_file.exists() else 'No'}
-
-To change settings:
-/config model <model_name>
-/config openai_api_key <key>
-/config remote <path>
-/config auto-sync enable|disable
-/config pdf-pages <number>
-/config theme <theme_name>"""
-
-        self.app.push_screen(MessageDialog("Current Configuration", config_text))
+        config_markdown = "\n".join(markdown_lines)
+        self.app.push_screen(MessageDialog("Current Configuration", config_markdown))
 
     def _show_current_theme(self):
         """Show the current theme."""
@@ -946,71 +1076,44 @@ To change settings:
             # Get data directory path
             local_data_dir = Path(self.app.db_path).parent
 
-            # Default remote path - typically OneDrive or cloud storage
+            # Check for remote path - first from args, then from config
             remote_data_dir = None
             if args:
                 remote_data_dir = Path(args[0])
             else:
-                # Try to find OneDrive directory
-                home = Path.home()
-                possible_paths = [
-                    home / "OneDrive" / "PaperCLI",
-                    home / "OneDrive - Personal" / "PaperCLI",
-                    home / "Dropbox" / "PaperCLI",
-                    home / "Google Drive" / "PaperCLI",
-                ]
-                for path in possible_paths:
-                    if path.exists():
-                        remote_data_dir = path
-                        break
+                # Check configured remote path
+                configured_path = os.getenv("PAPERCLI_REMOTE_PATH", "")
+                if configured_path:
+                    remote_data_dir = Path(os.path.expanduser(configured_path))
 
             if not remote_data_dir:
                 try:
                     self.app.notify(
-                        "No remote path specified. Use: /sync <remote_path>",
+                        "No remote path configured. Set it with: /config remote <path> or use: /sync <remote_path>",
                         severity="error",
                     )
                 except:
                     pass
                 return
 
-            # Create sync service
-            def progress_callback(message):
-                try:
-                    self.app.notify(message, severity="information")
-                except:
-                    pass
+            # Show sync dialog with progress
+            def sync_callback(result):
+                if result:
+                    try:
+                        # Refresh papers after successful sync
+                        self.app.load_papers()
+                        if hasattr(self.app, 'main_screen') and self.app.main_screen:
+                            self.app.main_screen.refresh_papers()
+                    except:
+                        pass
 
-            sync_service = SyncService(
-                str(local_data_dir),
-                str(remote_data_dir),
-                progress_callback=progress_callback,
-                app=self.app,
+            self.app.push_screen(
+                SyncDialog(
+                    callback=sync_callback,
+                    local_path=str(local_data_dir),
+                    remote_path=str(remote_data_dir),
+                )
             )
-
-            try:
-                self.app.notify("Starting sync...", severity="information")
-            except:
-                pass
-
-            # Run sync
-            result = sync_service.sync()
-
-            # Display result
-            summary = result.get_summary()
-            try:
-                if result.has_conflicts():
-                    self.app.notify(summary, severity="warning")
-                elif result.errors:
-                    self.app.notify(
-                        f"Sync failed: {result.errors[0]}", severity="error"
-                    )
-                else:
-                    self.app.notify(summary, severity="information")
-                    # Refresh papers after sync
-                    self.app.load_papers()
-            except:
-                pass
 
         except Exception as e:
             try:
@@ -1018,6 +1121,3 @@ To change settings:
             except:
                 pass
 
-    def _run_sync_with_progress(self, local_path, remote_path):
-        """Show centered progress dialog using SyncProgressDialog."""
-        pass
