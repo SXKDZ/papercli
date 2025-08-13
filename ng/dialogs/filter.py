@@ -1,9 +1,10 @@
-from textual.app import ComposeResult
-from textual.containers import VerticalScroll, HorizontalScroll, Container
-from textual.widgets import Button, Static, Input, RadioSet, RadioButton
-from textual.screen import ModalScreen
-from textual.reactive import reactive
 from typing import Callable, Dict, Any
+
+from textual.app import ComposeResult
+from textual.containers import Container, HorizontalScroll, VerticalScroll
+from textual.reactive import reactive
+from textual.screen import ModalScreen
+from textual.widgets import Button, Input, RadioButton, RadioSet, Static
 
 
 class FilterDialog(ModalScreen):
@@ -15,10 +16,10 @@ class FilterDialog(ModalScreen):
         layer: dialog;
     }
     FilterDialog > Container {
-        width: 65;
-        height: 25;
-        max-width: 75;
-        max-height: 30;
+        width: 80;
+        height: 24;
+        max-width: 90;
+        max-height: 28;
         border: solid $accent;
         background: $panel;
     }
@@ -32,23 +33,21 @@ class FilterDialog(ModalScreen):
     }
     FilterDialog .dialog-label {
         text-style: bold;
-        height: 3;
-        margin: 0;
+        height: 1;
+        margin: 1 1;
     }
     FilterDialog #filter-dialog-content {
-        padding: 1;
+        padding: 0;
         height: 1fr;
     }
     FilterDialog #filter-dialog-buttons {
-        height: 5;
+        height: 3;
         align: center middle;
         padding: 0;
     }
     FilterDialog Button {
-        margin: 0 1;
-        min-width: 8;
-        max-width: 12;
-        height: 3;
+        margin: 0 5;
+        min-width: 10;
         content-align: center middle;
         text-align: center;
     }
@@ -71,13 +70,16 @@ class FilterDialog(ModalScreen):
     selected_field = reactive("all")
 
     def __init__(
-        self, callback: Callable[[Dict[str, Any] | None], None], *args, **kwargs
+        self,
+        callback: Callable[[Dict[str, Any] | None], None] = None,
+        *args,
+        **kwargs,
     ):
         super().__init__(*args, **kwargs)
         self.callback = callback
 
     def compose(self) -> ComposeResult:
-        with Container():
+        with Container(id="dialog-container"):
             yield Static("Filter Papers", classes="dialog-title")
             with VerticalScroll(id="filter-dialog-content"):
                 yield Static("Filter Field:", classes="dialog-label")
@@ -105,8 +107,8 @@ class FilterDialog(ModalScreen):
         value = self.query_one("#value-input", Input).value.strip()
 
         if not value:
-            # In a real app, you might show a validation message to the user
-            self.app.notify("Filter value cannot be empty", severity="warning")
+            if hasattr(self.app, 'notify'):
+                self.app.notify("Filter value cannot be empty", severity="warning")
             return
 
         result = {"field": field, "value": value}

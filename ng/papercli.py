@@ -131,7 +131,7 @@ class PaperCLIApp(App):
                         self.main_screen = screen  # Update the reference
                         self._add_log(
                             "load_papers_found_screen",
-                            f"Found MainScreen in stack, updating reference",
+                            "Found MainScreen in stack, updating reference",
                         )
                         break
 
@@ -144,14 +144,9 @@ class PaperCLIApp(App):
                 self._add_log(
                     "load_papers_called_update", "update_paper_list completed"
                 )
-            else:
-                self._add_log(
-                    "load_papers_no_main_screen",
-                    f"No MainScreen found, current screen: {type(self.screen).__name__}, stack: {[type(s).__name__ for s in self._screen_stack]}",
-                )
+
         except Exception as e:
             self._add_log("load_papers_error", f"Error loading papers: {e}")
-            # Error will be logged but not displayed during startup
 
     def action_cursor_up(self) -> None:
         """Move cursor up in paper list."""

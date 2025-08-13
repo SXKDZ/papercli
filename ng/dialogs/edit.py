@@ -1,26 +1,28 @@
 import os
+from typing import Any, Callable, Dict, List
+
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
+from textual.reactive import reactive
+from textual.screen import ModalScreen
 from textual.widgets import (
     Button,
-    Static,
+    ContentSwitcher,
     Input,
-    TextArea,
-    RadioSet,
-    RadioButton,
     Label,
+    RadioButton,
+    RadioSet,
+    Static,
+    TextArea,
 )
-from textual.screen import ModalScreen
-from textual.reactive import reactive
-from typing import Callable, Dict, Any, List
 
 from ng.services import (
     AuthorService,
+    BackgroundOperationService,
     CollectionService,
     MetadataExtractor,
     PDFManager,
     normalize_paper_data,
-    BackgroundOperationService,
 )
 
 
@@ -33,8 +35,18 @@ class EditDialog(ModalScreen):
         layer: dialog;
     }
     EditDialog > Container {
-        width: 90%;
-        height: 90%;
+        width: 80%;
+        height: auto;
+        max-height: 90%;
+        min-height: 50%;
+        border: solid $accent;
+        background: $panel;
+    }
+    EditDialog.compact > Container {
+        width: 80%;
+        height: auto;
+        max-height: 70%;
+        min-height: 40%;
         border: solid $accent;
         background: $panel;
     }
@@ -48,21 +60,46 @@ class EditDialog(ModalScreen):
     }
     EditDialog .paper-type-section {
         height: auto;
-        margin: 0;
+        margin: 0 0 1 2;
+        align: left top;
     }
     EditDialog .paper-type-label {
         text-style: bold;
         width: 15;
         margin: 0 1 0 0;
+        text-align: right;
+        height: 3;
+        content-align: center middle;
+    }
+    EditDialog #paper-type-radio-set {
+        margin: 0 1 0 0;
+        padding: 0 1;
+        height: 3;
+        border: solid $border;
     }
     EditDialog .form-fields {
         height: 1fr;
-        border: solid grey;
-        margin: 0;
+        max-height: 50;
+        margin: 0 1;
+        scrollbar-size: 2 1;
+        scrollbar-background: $surface;
+        scrollbar-color: $accent;
+        overflow-y: auto;
+        border: solid $border;
+    }
+    EditDialog .form-fields-compact {
+        height: 1fr;
+        max-height: 35;
+        margin: 0 1;
+        scrollbar-size: 2 1;
+        scrollbar-background: $surface;
+        scrollbar-color: $accent;
+        overflow-y: auto;
+        border: solid $border;
     }
     EditDialog .form-row {
         height: auto;
-        margin: 0;
+        margin: 0 0 1 0;
     }
     EditDialog .field-label {
         width: 15;
@@ -71,40 +108,48 @@ class EditDialog(ModalScreen):
     }
     EditDialog .field-input {
         width: 1fr;
+        padding: 0 0 0 1;
     }
     EditDialog .single-line-input {
-        height: 2;
+        height: 1;
+        border: none;
     }
-    EditDialog .small-multiline-input {
-        height: 2;
+    EditDialog .multiline-input {
+        height: 8;
+        border: none;
     }
-    EditDialog .medium-multiline-input {
-        height: 4;
+    EditDialog .single-line-input:focus {
+        height: 1;
+        border: none;
     }
-    EditDialog .large-multiline-input {
-        height: 6;
+    EditDialog .multiline-input:focus {
+        height: 8;
+        border: none;
     }
     EditDialog .changed-field {
         text-style: italic;
     }
     EditDialog .button-row {
-        height: 5;
+        height: 3;
         align: center middle;
         padding: 0;
+        margin: 1;
     }
     EditDialog .button-row Button {
-        margin: 0 1;
-        min-width: 8;
         height: 3;
-        content-align: center middle;
-        text-align: center;
+        margin: 0 1;
     }
     EditDialog RadioSet {
         height: 3;
         layout: horizontal;
+        border: solid $border;
     }
     EditDialog RadioButton {
         margin: 0 1 0 0;
+        height: 1;
+    }
+    EditDialog RadioButton:focus {
+        height: 1;
     }
     """
 
@@ -216,6 +261,7 @@ class EditDialog(ModalScreen):
 
     current_paper_type = reactive("conference")
     changed_fields = reactive(set())
+    dialog_height = reactive("90%")
 
     def __init__(
         self,
@@ -232,22 +278,30 @@ class EditDialog(ModalScreen):
         self.callback = callback
         self.error_display_callback = error_display_callback
         self.read_only_fields = read_only_fields or []
-        self.parent_app = app  # Renamed to avoid conflict with Textual's app property
+        self.parent_app = app
+
+        if self.parent_app:
+            self.background_service = BackgroundOperationService(app=self.parent_app)
 
         self.collection_service = CollectionService()
         self.author_service = AuthorService()
         self.pdf_manager = PDFManager()
 
-        # Initialize BackgroundOperationService - use parent_app if available, otherwise create a minimal version
-        if self.parent_app:
-            self.background_service = BackgroundOperationService(app=self.parent_app)
-        else:
-            # Fallback: create a simple version without background operations
-            self.background_service = None
-
         self.input_widgets: Dict[str, Input | TextArea] = {}
         self.current_paper_type = paper_data.get("paper_type", "conference")
         self.changed_fields = set()
+
+    def _get_field_count_for_type(self, paper_type: str) -> int:
+        """Get the number of fields for a given paper type."""
+        return len(self.fields_by_type.get(paper_type, []))
+
+    def _get_form_fields_class(self, paper_type: str) -> str:
+        """Get the appropriate CSS class for form fields based on field count."""
+        field_count = self._get_field_count_for_type(paper_type)
+        # Website type has 8 fields, which is significantly fewer than others (12-14)
+        if field_count <= 8:
+            return "form-fields-compact"
+        return "form-fields"
 
     def _get_full_pdf_path(self):
         """Get the full absolute path for the PDF file."""
@@ -256,11 +310,61 @@ class EditDialog(ModalScreen):
             return ""
         return self.pdf_manager.get_absolute_path(pdf_path)
 
+    def _process_pdf_path(self, pdf_path: str) -> str:
+        """Process PDF path: copy file if needed and return relative path for database."""
+        if not pdf_path or not pdf_path.strip():
+            return ""
+
+        pdf_path = pdf_path.strip()
+
+        # If it's already a relative path, check if it exists and return as-is
+        if not os.path.isabs(pdf_path):
+            # Check if file exists in pdfs directory
+            abs_path = self.pdf_manager.get_absolute_path(pdf_path)
+            if os.path.exists(abs_path):
+                return pdf_path  # Return the relative path as-is
+            else:
+                return pdf_path  # Still return it, might be created later
+
+        # Use the PDFManager's process_pdf_path method for proper handling
+        try:
+            # Build paper data for the PDF manager
+            authors = self.paper_data.get("authors", [])
+            if isinstance(authors, list):
+                author_names = [getattr(a, "full_name", str(a)) for a in authors]
+            else:
+                author_names = [str(authors)] if authors else []
+
+            paper_data_for_pdf = {
+                "title": self.paper_data.get("title", ""),
+                "authors": author_names,
+                "year": self.paper_data.get("year", ""),
+            }
+
+            # Get the old PDF path for cleanup
+            old_pdf_path = self.paper_data.get("pdf_path", "")
+            if old_pdf_path:
+                old_pdf_path = self.pdf_manager.get_absolute_path(old_pdf_path)
+
+            # Process the PDF path using the PDFManager
+            relative_path, error = self.pdf_manager.process_pdf_path(
+                pdf_path, paper_data_for_pdf, old_pdf_path
+            )
+
+            if error:
+                # Return the original path converted to relative as fallback
+                return self.pdf_manager.get_relative_path(pdf_path)
+
+            return relative_path
+
+        except Exception as e:
+            # Fallback: return relative path of original
+            return self.pdf_manager.get_relative_path(pdf_path)
+
     def compose(self) -> ComposeResult:
         with Container():
             yield Static("Edit Paper Metadata", classes="dialog-title")
 
-            # Paper Type Selection
             with Horizontal(classes="paper-type-section"):
                 yield Label("Paper Type:", classes="paper-type-label")
                 with RadioSet(id="paper-type-radio-set"):
@@ -271,11 +375,17 @@ class EditDialog(ModalScreen):
                             id=f"type-{type_value}",
                         )
 
-            # Scrollable form fields
-            with VerticalScroll(classes="form-fields", id="form-fields"):
-                yield Container(id="field-container")
+            with VerticalScroll(
+                classes=self._get_form_fields_class(self.current_paper_type),
+                id="form-fields",
+            ):
+                with ContentSwitcher(
+                    initial=self.current_paper_type, id="content-switcher"
+                ):
+                    for paper_type in self.paper_types.values():
+                        with Container(id=paper_type):
+                            pass  # Will be populated in on_mount
 
-            # Action buttons
             with Horizontal(classes="button-row"):
                 yield Button("Extract", id="extract-button", variant="default")
                 yield Button("Summarize", id="summarize-button", variant="default")
@@ -284,24 +394,46 @@ class EditDialog(ModalScreen):
 
     def on_mount(self) -> None:
         """Initialize the dialog on mount."""
-        # Create all fields first
-        self._create_all_input_fields()
+        # Create all fields for all paper types
+        self._create_all_paper_type_containers()
+
+        # Set initial compact class if needed
+        if (
+            self._get_form_fields_class(self.current_paper_type)
+            == "form-fields-compact"
+        ):
+            self.add_class("compact")
 
         # Set initial paper type selection
+        radio_set = self.query_one("#paper-type-radio-set", RadioSet)
+
+        # First clear all selections
+        for button in radio_set.query(RadioButton):
+            button.value = False
+
+        # Then set the correct one
         try:
-            radio_set = self.query_one("#paper-type-radio-set", RadioSet)
-            for button in radio_set.query(RadioButton):
-                if button.id == f"type-{self.current_paper_type}":
-                    button.value = True
-                    break
-        except:
-            pass
+            target_button = radio_set.query_one(
+                f"#type-{self.current_paper_type}", RadioButton
+            )
+            target_button.value = True
 
-        # Update visible fields after radio buttons are set
-        self._update_visible_fields()
+            # Force the RadioSet to recognize this selection
+            radio_set._pressed = target_button
 
-    def _create_all_input_fields(self):
-        """Create all possible input fields for all paper types."""
+        except Exception as e:
+            # Fallback: select the first button
+            buttons = radio_set.query(RadioButton)
+            if buttons:
+                buttons[0].value = True
+                radio_set._pressed = buttons[0]
+
+        # Set initial content switcher state
+        content_switcher = self.query_one("#content-switcher", ContentSwitcher)
+        content_switcher.current = self.current_paper_type
+
+    def _create_all_paper_type_containers(self):
+        """Create field containers for each paper type with their specific fields."""
         # Get all field values from paper data
         authors = self.paper_data.get("authors", [])
         if isinstance(authors, list):
@@ -340,109 +472,95 @@ class EditDialog(ModalScreen):
         label_mappings = {
             "doi": "DOI",
             "pdf_path": "PDF Path",
-            "preprint_id": "Preprint ID",
             "url": "URL",
-            "venue_full": "Venue Full",
             "venue_acronym": "Venue Acronym",
             "author_names": "Authors",
         }
 
-        for field_name, value in all_field_values.items():
-            is_read_only = field_name in self.read_only_fields
-            safe_value = str(value) if value is not None else ""
+        # Create containers for each paper type
+        for paper_type, visible_fields in self.fields_by_type.items():
+            container = self.query_one(f"#{paper_type}", Container)
 
-            # Determine widget type and height class based on field
-            if field_name in ["notes"]:
-                # Large text areas for notes
-                widget = TextArea(
-                    text=safe_value,
-                    id=f"input-{field_name}",
-                    read_only=is_read_only,
-                    classes="field-input large-multiline-input",
-                )
-            elif field_name in ["abstract"]:
-                # Medium text areas for abstract
-                widget = TextArea(
-                    text=safe_value,
-                    id=f"input-{field_name}",
-                    read_only=is_read_only,
-                    classes="field-input medium-multiline-input",
-                )
-            elif field_name in ["title", "author_names"]:
-                # Small text areas for title and authors (may be long)
-                widget = TextArea(
-                    text=safe_value,
-                    id=f"input-{field_name}",
-                    read_only=is_read_only,
-                    classes="field-input small-multiline-input",
-                )
-            else:
-                # Single line inputs for everything else
-                widget = Input(
-                    value=safe_value,
-                    id=f"input-{field_name}",
-                    disabled=is_read_only,
-                    classes="field-input single-line-input",
-                )
+            for field_name in visible_fields:
+                if field_name in all_field_values:
+                    value = all_field_values[field_name]
+                    is_read_only = field_name in self.read_only_fields
+                    safe_value = str(value) if value is not None else ""
 
-            self.input_widgets[field_name] = widget
+                    # Create the widget
+                    if field_name in ["notes"]:
+                        widget = TextArea(
+                            text=safe_value,
+                            id=f"input-{field_name}-{paper_type}",
+                            read_only=is_read_only,
+                            classes="field-input multiline-input",
+                        )
+                    elif field_name in ["abstract"]:
+                        widget = TextArea(
+                            text=safe_value,
+                            id=f"input-{field_name}-{paper_type}",
+                            read_only=is_read_only,
+                            classes="field-input multiline-input",
+                        )
+                    else:
+                        widget = Input(
+                            value=safe_value,
+                            id=f"input-{field_name}-{paper_type}",
+                            disabled=is_read_only,
+                            classes="field-input single-line-input",
+                        )
 
-    def _update_visible_fields(self):
-        """Update visible fields based on current paper type."""
-        visible_fields = self.fields_by_type.get(
-            self.current_paper_type, self.fields_by_type["other"]
-        )
+                    # Store widget reference with paper type suffix for later access
+                    widget_key = f"{field_name}_{paper_type}"
+                    self.input_widgets[widget_key] = widget
 
-        # Get field container
-        field_container = self.query_one("#field-container", Container)
-        field_container.remove_children()
+                    # Get label text
+                    if field_name == "preprint_id":
+                        label_text = "ID" if paper_type == "preprint" else "Preprint ID"
+                    elif field_name == "venue_full":
+                        label_text = (
+                            "Website" if paper_type == "preprint" else "Venue Full"
+                        )
+                    else:
+                        label_text = label_mappings.get(
+                            field_name, field_name.replace("_", " ").title()
+                        )
 
-        # Custom label mappings
-        label_mappings = {
-            "doi": "DOI",
-            "pdf_path": "PDF Path",
-            "preprint_id": (
-                "ID" if self.current_paper_type == "preprint" else "Preprint ID"
-            ),
-            "url": "URL",
-            "venue_full": (
-                "Website" if self.current_paper_type == "preprint" else "Venue Full"
-            ),
-            "venue_acronym": "Venue Acronym",
-            "author_names": "Authors",
-        }
+                    # Create row with label and widget
+                    row = Horizontal(
+                        Label(f"{label_text}:", classes="field-label"),
+                        widget,
+                        classes="form-row",
+                    )
 
-        for field_name in visible_fields:
-            if field_name in self.input_widgets:
-                label_text = label_mappings.get(
-                    field_name, field_name.replace("_", " ").title()
-                )
-
-                # Check if field has pending changes for styling
-                label_classes = "field-label"
-
-                # Preserve existing widget classes (including height classes) and add change indicator
-                widget = self.input_widgets[field_name]
-
-                if field_name in self.changed_fields:
-                    widget.add_class("changed-field")
-                else:
-                    widget.remove_class("changed-field")
-
-                row_widget = Horizontal(
-                    Label(f"{label_text}:", classes=label_classes),
-                    widget,
-                    classes="form-row",
-                )
-                field_container.mount(row_widget)
+                    container.mount(row)
 
     def on_radio_set_changed(self, event: RadioSet.Changed) -> None:
         """Handle paper type change."""
         if event.radio_set.id == "paper-type-radio-set" and event.pressed:
             new_type = event.pressed.id.replace("type-", "")
+
             if new_type != self.current_paper_type:
+                old_type = self.current_paper_type
                 self.current_paper_type = new_type
-                self._update_visible_fields()
+
+                # Switch to the new paper type content
+                content_switcher = self.query_one("#content-switcher", ContentSwitcher)
+                content_switcher.current = new_type
+
+                # Update form fields CSS class for dynamic height
+                form_fields = self.query_one("#form-fields", VerticalScroll)
+                old_class = self._get_form_fields_class(old_type)
+                new_class = self._get_form_fields_class(new_type)
+                if old_class != new_class:
+                    form_fields.remove_class(old_class)
+                    form_fields.add_class(new_class)
+
+                    # Also update dialog compact class
+                    if new_class == "form-fields-compact":
+                        self.add_class("compact")
+                    else:
+                        self.remove_class("compact")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
@@ -460,9 +578,21 @@ class EditDialog(ModalScreen):
         result = {"paper_type": self.current_paper_type}
         changes_made = []
 
-        for field_name, input_widget in self.input_widgets.items():
+        # Get the current paper type's visible fields
+        visible_fields = self.fields_by_type.get(
+            self.current_paper_type, self.fields_by_type["other"]
+        )
+
+        for field_name in visible_fields:
             if field_name in self.read_only_fields:
                 continue
+
+            # Get the widget for the current paper type
+            widget_key = f"{field_name}_{self.current_paper_type}"
+            if widget_key not in self.input_widgets:
+                continue
+
+            input_widget = self.input_widgets[widget_key]
 
             if isinstance(input_widget, TextArea):
                 new_value = input_widget.text.strip()
@@ -503,17 +633,38 @@ class EditDialog(ModalScreen):
             # Process field values for result
             if field_name == "author_names":
                 names = [name.strip() for name in new_value.split(",") if name.strip()]
-                result["authors"] = [
-                    self.author_service.get_or_create_author(name) for name in names
-                ]
+                try:
+                    result["authors"] = [
+                        self.author_service.get_or_create_author(name) for name in names
+                    ]
+                except Exception as e:
+                    if self.parent_app:
+                        import traceback
+
+                        error_details = f"Error processing authors: {str(e)}\nFull traceback:\n{traceback.format_exc()}"
+                    # Fallback: just store the names as strings
+                    result["author_names"] = new_value
             elif field_name == "collections":
                 names = [name.strip() for name in new_value.split(",") if name.strip()]
-                result["collections"] = [
-                    self.collection_service.get_or_create_collection(name)
-                    for name in names
-                ]
+                try:
+                    result["collections"] = [
+                        self.collection_service.get_or_create_collection(name)
+                        for name in names
+                    ]
+                except Exception as e:
+                    if self.parent_app:
+                        import traceback
+
+                        error_details = f"Error processing collections: {str(e)}\nFull traceback:\n{traceback.format_exc()}"
+                    # Fallback: just store the names as strings
+                    result["collection_names"] = new_value
             elif field_name == "year":
                 result["year"] = int(new_value) if new_value.isdigit() else None
+            elif field_name == "pdf_path":
+                # Special handling for PDF path
+                result["pdf_path"] = (
+                    self._process_pdf_path(new_value) if new_value else None
+                )
             else:
                 result[field_name] = new_value if new_value else None
 
@@ -537,6 +688,9 @@ class EditDialog(ModalScreen):
             except Exception as e:
                 # Handle any errors from callback
                 if self.parent_app:
+                    import traceback
+
+                    error_details = f"Error saving paper: {str(e)}\nFull traceback:\n{traceback.format_exc()}"
                     self.parent_app.notify(f"Error saving paper: {e}", severity="error")
                 return
         self.dismiss(result)
@@ -600,7 +754,7 @@ class EditDialog(ModalScreen):
             if not changes:
                 if self.parent_app:
                     self.parent_app.notify(
-                        "ℹ No changes found - extracted metadata matches current values",
+                        "No changes found: extracted metadata matches current values",
                         severity="information",
                     )
                 return
@@ -608,8 +762,8 @@ class EditDialog(ModalScreen):
             self._update_fields_with_extracted_data(extracted_data)
             if self.parent_app:
                 self.parent_app.notify(
-                    f"PDF metadata extracted and applied - {len(changes)} fields updated",
-                    severity="success",
+                    f"PDF metadata extracted and applied: {len(changes)} fields updated",
+                    severity="information",
                 )
 
         if self.background_service:
@@ -673,23 +827,26 @@ class EditDialog(ModalScreen):
                 return
 
             summary = result["summary"]
-            if summary and "notes" in self.input_widgets:
+            # Get notes widget with current paper type suffix
+            notes_widget_key = f"notes_{self.current_paper_type}"
+            if summary and notes_widget_key in self.input_widgets:
+                notes_widget = self.input_widgets[notes_widget_key]
                 current_notes = (
-                    self.input_widgets["notes"].text
-                    if hasattr(self.input_widgets["notes"], "text")
-                    else self.input_widgets["notes"].value
+                    notes_widget.text
+                    if hasattr(notes_widget, "text")
+                    else notes_widget.value
                 )
                 if current_notes.strip() != summary.strip():
-                    if hasattr(self.input_widgets["notes"], "text"):
-                        self.input_widgets["notes"].text = summary
+                    if hasattr(notes_widget, "text"):
+                        notes_widget.text = summary
                     else:
-                        self.input_widgets["notes"].value = summary
+                        notes_widget.value = summary
                     self.changed_fields.add("notes")
-                    self._update_visible_fields()  # Refresh to show italic styling
+                    self._update_field_styling()  # Refresh to show italic styling
                     if self.parent_app:
                         self.parent_app.notify(
                             "Summary generated and applied to notes field",
-                            severity="success",
+                            severity="information",
                         )
                 else:
                     if self.parent_app:
@@ -749,6 +906,7 @@ class EditDialog(ModalScreen):
                     value = str(value)
                 elif extracted_field == "paper_type":
                     if value != self.current_paper_type:
+                        old_paper_type = self.current_paper_type
                         self.current_paper_type = value
                         updated_fields.append(form_field)
                         # Update radio buttons
@@ -760,11 +918,17 @@ class EditDialog(ModalScreen):
                                 button.value = button.id == f"type-{value}"
                         except:
                             pass
-                        self._update_visible_fields()
+                        # Switch to new paper type content
+                        content_switcher = self.query_one(
+                            "#content-switcher", ContentSwitcher
+                        )
+                        content_switcher.current = value
                     continue
 
-                if form_field in self.input_widgets:
-                    widget = self.input_widgets[form_field]
+                # Get widget with current paper type suffix
+                widget_key = f"{form_field}_{self.current_paper_type}"
+                if widget_key in self.input_widgets:
+                    widget = self.input_widgets[widget_key]
                     if hasattr(widget, "text"):
                         old_value = widget.text or ""
                     else:
@@ -781,7 +945,16 @@ class EditDialog(ModalScreen):
 
         # Add updated fields to changed_fields set for italic styling
         self.changed_fields.update(updated_fields)
-        self._update_visible_fields()  # Refresh to show styling changes
+        # Update styling for changed fields without rebuilding the entire UI
+        self._update_field_styling()
+
+    def _update_field_styling(self):
+        """Update styling for changed fields without rebuilding the UI."""
+        # Update styling for the current paper type's widgets
+        for field_name in self.changed_fields:
+            widget_key = f"{field_name}_{self.current_paper_type}"
+            if widget_key in self.input_widgets:
+                self.input_widgets[widget_key].add_class("changed-field")
 
     def _compare_extracted_with_current_form(self, extracted_data):
         """Compare extracted data with current form values and return list of changes."""
@@ -813,14 +986,17 @@ class EditDialog(ModalScreen):
 
                 if extracted_field == "paper_type":
                     current_value = self.current_paper_type
-                elif form_field in self.input_widgets:
-                    widget = self.input_widgets[form_field]
-                    if hasattr(widget, "text"):
-                        current_value = widget.text or ""
-                    else:
-                        current_value = widget.value or ""
                 else:
-                    current_value = ""
+                    # Get widget with current paper type suffix
+                    widget_key = f"{form_field}_{self.current_paper_type}"
+                    if widget_key in self.input_widgets:
+                        widget = self.input_widgets[widget_key]
+                        if hasattr(widget, "text"):
+                            current_value = widget.text or ""
+                        else:
+                            current_value = widget.value or ""
+                    else:
+                        current_value = ""
 
                 if new_value.strip() != current_value.strip():
                     changes.append(f"{form_field}: '{current_value}' → '{new_value}'")

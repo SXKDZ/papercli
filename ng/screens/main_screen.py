@@ -79,7 +79,7 @@ class MainScreen(Screen):
         yield custom_header
         yield PaperList(self.papers, id="paper-list-view")
         yield CommandInput(
-            app=self.app, placeholder="Enter command...", id="command-input"
+            app=self.app, placeholder="❯ Enter command...", id="command-input"
         )
         log_panel = LogPanel(id="log-panel")  # Add LogPanel
         log_panel.set_app_reference(self.app)  # Set app reference for auto-refresh
@@ -319,6 +319,7 @@ class MainScreen(Screen):
                 return
 
             # Only handle printable characters that aren't already bound to actions
+            # Include "/" since all commands start with /
             if (
                 event.key
                 and len(event.key) == 1
@@ -326,15 +327,33 @@ class MainScreen(Screen):
                 and not event.key.isspace()  # Don't intercept space (used for selection toggle)
                 and event.key != "?"  # Don't intercept help key
             ):
-                # Add the typed character to the input
+                # Focus the input first
+                self.app.set_focus(actual_input)
+                
+                # Get current value and add the new character
                 current_text = actual_input.value
-                actual_input.value = current_text + event.key
+                new_value = current_text + event.key
+                
+                # Set the new value immediately
+                actual_input.value = new_value
+                
+                # Position cursor at end immediately 
+                actual_input.cursor_position = len(new_value)
+                
+                # Use a very short delay to ensure cursor positioning takes effect
+                def ensure_cursor_position():
+                    try:
+                        # Double-check cursor is at end and no text is selected
+                        actual_input.cursor_position = len(actual_input.value)
+                        # Force refresh to ensure visual update
+                        actual_input.refresh()
+                    except Exception:
+                        pass
+                
+                self.app.call_later(0.001, ensure_cursor_position)
 
-                # Move cursor to end of input
-                actual_input.cursor_position = len(actual_input.value)
-
-                # Focus the input with a small delay; also keep the paper list cursor on current row
-                def focus_input_and_preserve_cursor():
+                # Preserve cursor and selection styling with a small delay
+                def preserve_cursor_and_selection():
                     try:
                         paper_list = self.query_one("#paper-list-view")
                         if hasattr(self.app, "_add_log"):
@@ -382,16 +401,9 @@ class MainScreen(Screen):
                             )
                     except Exception:
                         pass
-                    try:
-                        self.app.set_focus(actual_input)
-                        if hasattr(self.app, "_add_log"):
-                            self.app._add_log(
-                                "focus_set_input", "Focus moved to command input"
-                            )
-                    except Exception:
-                        pass
 
-                self.app.call_later(0.05, focus_input_and_preserve_cursor)
+                # Preserve cursor and selection styling with a small delay
+                self.app.call_later(0.05, preserve_cursor_and_selection)
 
                 # Prevent the event from being processed further
                 event.prevent_default()

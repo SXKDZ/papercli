@@ -334,10 +334,28 @@ class DetailDialog(ModalScreen):
 
             # Add detail dialog specific logic
             if updated_paper:
-                self.paper = updated_paper  # Update our reference
-                self.on_mount()  # Refresh the detail display
-                if self.callback:
-                    self.callback({"action": "updated", "paper": updated_paper})
+                # Fetch a fresh copy of the paper to avoid detached instances
+                try:
+                    self.app._add_log("debug", f"Fetching fresh paper data for ID: {updated_paper.id}")
+                    fresh_paper = self.app.paper_commands.paper_service.get_paper_by_id(updated_paper.id)
+                    if fresh_paper:
+                        self.app._add_log("debug", "Successfully fetched fresh paper data, updating detail view")
+                        self.paper = fresh_paper  # Update our reference with fresh data
+                        self.on_mount()  # Refresh the detail display
+                        if self.callback:
+                            self.callback({"action": "updated", "paper": fresh_paper})
+                    else:
+                        self.app._add_log("debug", "Fresh paper fetch returned None, using updated_paper")
+                        # Fallback to updated_paper if fresh fetch fails
+                        self.paper = updated_paper
+                        if self.callback:
+                            self.callback({"action": "updated", "paper": updated_paper})
+                except Exception as e:
+                    self.app._add_log("debug", f"Error fetching fresh paper data: {e}")
+                    # If there's an error fetching fresh data, just update our reference without refresh
+                    self.paper = updated_paper
+                    if self.callback:
+                        self.callback({"action": "updated", "paper": updated_paper})
 
         self.app.push_screen(
             EditDialog(

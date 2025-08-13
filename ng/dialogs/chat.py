@@ -60,8 +60,6 @@ class ChatDialog(ModalScreen):
         border: solid $primary;
     }
     
-
-    
     #input-area {
         height: auto;
         margin: 0 1 0 1;
@@ -151,10 +149,10 @@ class ChatDialog(ModalScreen):
 
     def compose(self) -> ComposeResult:
         with Container(id="chat-container"):
-            selection_text = format_count(len(self.papers), "paper", include_number=True)
-            yield Static(
-                f"Chat with {selection_text} selected", id="chat-title"
+            selection_text = format_count(
+                len(self.papers), "paper", include_number=True
             )
+            yield Static(f"Chat with {selection_text} selected", id="chat-title")
             with VerticalScroll(id="chat-history"):
                 pass  # Content will be dynamically added
             with Container(id="input-area"):

@@ -252,6 +252,26 @@ class PDFManager:
         # Convert relative path to absolute
         return os.path.join(self.pdf_dir, relative_path)
 
+    def get_relative_path(self, absolute_path: str) -> str:
+        """Convert an absolute PDF path to relative path."""
+        if not absolute_path:
+            return ""
+        
+        # If path is already relative, return as-is
+        if not os.path.isabs(absolute_path):
+            return absolute_path
+        
+        # Convert absolute path to relative
+        try:
+            return os.path.relpath(absolute_path, self.pdf_dir)
+        except ValueError:
+            # If path is outside pdf_dir, just return the filename
+            return os.path.basename(absolute_path)
+
+    def get_pdfs_directory(self) -> str:
+        """Get the absolute path to the PDFs directory."""
+        return self.pdf_dir
+
     def get_pdf_info(self, relative_path: str) -> Dict[str, Any]:
         """Get PDF file information including size and page count."""
         info = {

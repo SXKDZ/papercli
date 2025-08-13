@@ -1,14 +1,10 @@
-from textual.app import ComposeResult
-from textual.containers import (
-    HorizontalScroll,
-    Container,
-    Horizontal,
-    Vertical,
-)
-from textual.widgets import Button, Static, RadioSet, RadioButton
-from textual.screen import ModalScreen
-from textual.reactive import reactive
 from typing import Callable, Dict, Any
+
+from textual.app import ComposeResult
+from textual.containers import Container, Horizontal, HorizontalScroll, Vertical
+from textual.reactive import reactive
+from textual.screen import ModalScreen
+from textual.widgets import Button, RadioButton, RadioSet, Static
 
 
 class SortDialog(ModalScreen):
@@ -20,10 +16,10 @@ class SortDialog(ModalScreen):
         layer: dialog;
     }
     SortDialog > Container {
-        width: 50;
-        height: 25;
-        max-width: 60;
-        max-height: 30;
+        width: 80;
+        height: 20;
+        max-width: 90;
+        max-height: 25;
         border: solid $accent;
         background: $panel;
     }
@@ -37,11 +33,11 @@ class SortDialog(ModalScreen):
     }
     SortDialog .dialog-label {
         text-style: bold;
-        height: 3;
-        margin: 0;
+        height: 1;
+        margin: 1 1;
     }
     SortDialog #sort-dialog-content {
-        padding: 1;
+        padding: 0;
         height: 1fr;
     }
     SortDialog #sort-dialog-content > Vertical {
@@ -49,15 +45,13 @@ class SortDialog(ModalScreen):
         margin: 0 1;
     }
     SortDialog #sort-dialog-buttons {
-        height: 5;
+        height: 3;
         align: center middle;
         padding: 0;
     }
     SortDialog Button {
-        margin: 0 1;
-        min-width: 8;
-        max-width: 12;
-        height: 3;
+        margin: 0 5;
+        min-width: 10;
         content-align: center middle;
         text-align: center;
     }
@@ -87,13 +81,16 @@ class SortDialog(ModalScreen):
     selected_order = reactive("asc")
 
     def __init__(
-        self, callback: Callable[[Dict[str, Any] | None], None], *args, **kwargs
+        self,
+        callback: Callable[[Dict[str, Any] | None], None] = None,
+        *args,
+        **kwargs,
     ):
         super().__init__(*args, **kwargs)
         self.callback = callback
 
     def compose(self) -> ComposeResult:
-        with Container():
+        with Container(id="dialog-container"):
             yield Static("Sort Papers", classes="dialog-title")
             with Horizontal(id="sort-dialog-content"):
                 # Left column - Sort Field

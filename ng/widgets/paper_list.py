@@ -1,9 +1,9 @@
-from textual.widgets import DataTable
-from textual.message import Message
-from textual import events
 from typing import List, Optional, Set
+
 from rich.text import Text
-from rich.style import Style
+from textual import events
+from textual.message import Message
+from textual.widgets import DataTable
 
 from ng.db.models import Paper
 from ng.services import ThemeService
@@ -39,24 +39,26 @@ class PaperList(DataTable):
 
     def __init__(self, papers: List[Paper], *args, **kwargs):
         super().__init__(
-            show_header=True, 
-            zebra_stripes=True, 
-            cursor_type="row", 
+            show_header=True,
+            zebra_stripes=True,
+            cursor_type="row",
             cursor_foreground_priority="renderable",  # Preserve Rich Text colors
-            *args, 
-            **kwargs
+            *args,
+            **kwargs,
         )
         self.papers = papers or []
         self.selected_paper_ids: Set[int] = set()  # For select mode
         self.in_select_mode: bool = False
-        self.current_paper_id: Optional[int] = None  # For single selection (non-select mode)
+        self.current_paper_id: Optional[int] = (
+            None  # For single selection (non-select mode)
+        )
         self.can_focus = True
         self._is_focused: bool = False  # Manual focus tracking
 
     def _get_selection_style(self) -> str:
         """Get the theme-appropriate selection style."""
-        app = getattr(self, 'app', None)
-        success_color = ThemeService.get_color('success', app=app)
+        app = getattr(self, "app", None)
+        success_color = ThemeService.get_color("success", app=app)
         return f"bold {success_color}"
 
     def on_mount(self) -> None:
@@ -102,7 +104,14 @@ class PaperList(DataTable):
         venue_width = max(10, venue_width)
         collections_width = max(10, collections_width)
 
-        total_calculated = sel_width + title_width + authors_width + year_width + venue_width + collections_width
+        total_calculated = (
+            sel_width
+            + title_width
+            + authors_width
+            + year_width
+            + venue_width
+            + collections_width
+        )
         if total_calculated < available_width:
             title_width += available_width - total_calculated
 
@@ -124,14 +133,10 @@ class PaperList(DataTable):
         """Populate the DataTable with papers."""
         self.clear(columns=False)
 
-        # Debug logging for current state
-        if hasattr(self, "app") and self.app and self.current_paper_id:
-            self.app._add_log("populate_table_debug", f"current_paper_id={self.current_paper_id}, _is_focused={self._is_focused}, has_focus={self.has_focus}, in_select_mode={self.in_select_mode}")
-
         for paper in self.papers:
             is_selected = paper.id in self.selected_paper_ids
             is_current = paper.id == self.current_paper_id
-            
+
             # Determine styling
             should_highlight = False
             if self.in_select_mode:
@@ -140,10 +145,6 @@ class PaperList(DataTable):
             else:
                 # In single selection mode: highlight current paper only when not focused
                 should_highlight = is_current and not self._is_focused
-                
-            # Debug logging for highlighting decision
-            if is_current and hasattr(self, "app") and self.app:
-                self.app._add_log("highlight_decision", f"paper_id={paper.id}, is_current={is_current}, _is_focused={self._is_focused}, has_focus={self.has_focus}, should_highlight={should_highlight}")
 
             # Selection indicator - use theme-appropriate colors
             if is_selected:
@@ -159,7 +160,9 @@ class PaperList(DataTable):
                 title_width = column_list[1].width - 1 if len(column_list) > 1 else 40
                 authors_width = column_list[2].width - 1 if len(column_list) > 2 else 25
                 venue_width = column_list[4].width - 1 if len(column_list) > 4 else 15
-                collections_width = column_list[5].width - 1 if len(column_list) > 5 else 20
+                collections_width = (
+                    column_list[5].width - 1 if len(column_list) > 5 else 20
+                )
             except (IndexError, KeyError, AttributeError):
                 title_width = 40
                 authors_width = 25
@@ -169,30 +172,41 @@ class PaperList(DataTable):
             # Title - try multiple color approaches
             title_text = paper.title
             if len(title_text) > title_width:
-                title_text = title_text[:title_width - 3] + "..."
+                title_text = title_text[: title_width - 3] + "..."
             if should_highlight:
                 # Use theme-appropriate selection color
                 title = Text(str(title_text), style=self._get_selection_style())
-                if hasattr(self, "app") and self.app:
-                    self.app._add_log("color_approach", f"paper_id={paper.id}, theme_style_applied=True, style={title.style}")
+            # Removed noisy color_approach log
             else:
                 title = title_text
 
             # Authors - use theme-appropriate colors
             authors_text = paper.author_names or "Unknown Authors"
             if len(authors_text) > authors_width:
-                authors_text = authors_text[:authors_width - 3] + "..."
-            authors = Text(str(authors_text), style=self._get_selection_style()) if should_highlight else authors_text
+                authors_text = authors_text[: authors_width - 3] + "..."
+            authors = (
+                Text(str(authors_text), style=self._get_selection_style())
+                if should_highlight
+                else authors_text
+            )
 
             # Year - use theme-appropriate colors
             year_text = str(paper.year) if paper.year else "—"
-            year = Text(str(year_text), style=self._get_selection_style()) if should_highlight else year_text
+            year = (
+                Text(str(year_text), style=self._get_selection_style())
+                if should_highlight
+                else year_text
+            )
 
             # Venue - use theme-appropriate colors
             venue_text = paper.venue_acronym or paper.venue_full or "—"
             if len(venue_text) > venue_width:
-                venue_text = venue_text[:venue_width - 3] + "..."
-            venue = Text(str(venue_text), style=self._get_selection_style()) if should_highlight else venue_text
+                venue_text = venue_text[: venue_width - 3] + "..."
+            venue = (
+                Text(str(venue_text), style=self._get_selection_style())
+                if should_highlight
+                else venue_text
+            )
 
             # Collections
             collections = ""
@@ -201,47 +215,53 @@ class PaperList(DataTable):
                     collection_names = [c.name for c in paper.collections]
                     collections = ", ".join(collection_names)
                     if len(collections) > collections_width:
-                        collections = collections[:collections_width - 3] + "..."
+                        collections = collections[: collections_width - 3] + "..."
             except Exception:
                 collections = "—"
 
             if not collections:
                 collections = "—"
-            
-            # Collections - use theme-appropriate colors
-            collections = Text(str(collections), style=self._get_selection_style()) if should_highlight else collections
 
-            # Log what we're actually adding to the table
-            if should_highlight and hasattr(self, "app") and self.app:
-                self.app._add_log("add_row_debug", f"paper_id={paper.id}, title_type={type(title)}, title_has_style={hasattr(title, 'style') if hasattr(title, 'style') else 'no_style_attr'}")
-            
+            # Collections - use theme-appropriate colors
+            collections = (
+                Text(str(collections), style=self._get_selection_style())
+                if should_highlight
+                else collections
+            )
+
+            # Removed noisy add_row_debug log
+
             self.add_row(
-                selection_indicator, title, authors, year, venue, collections,
-                key=str(paper.id)
+                selection_indicator,
+                title,
+                authors,
+                year,
+                venue,
+                collections,
+                key=str(paper.id),
             )
 
     def update_table(self) -> None:
         """Update the DataTable display to reflect current selection state."""
         current_cursor = self.cursor_row
-        
+
         # Save scroll position before rebuilding
         try:
             scroll_x, scroll_y = self.scroll_offset
         except:
             scroll_x, scroll_y = 0, 0
-            
+
         self.populate_table()
-        
+
         # Restore cursor position
         if 0 <= current_cursor < len(self.papers):
             self.move_cursor(row=current_cursor)
-            
+
         # Try to restore scroll position
         try:
             self.scroll_to(scroll_x, scroll_y, animate=False)
         except:
             pass
-
 
     def get_current_paper(self) -> Optional[Paper]:
         """Get currently highlighted paper."""
@@ -256,7 +276,9 @@ class PaperList(DataTable):
         else:
             # Return current paper in single-select mode
             if self.current_paper_id:
-                current_papers = [p for p in self.papers if p.id == self.current_paper_id]
+                current_papers = [
+                    p for p in self.papers if p.id == self.current_paper_id
+                ]
                 return current_papers
             return []
 
@@ -268,7 +290,10 @@ class PaperList(DataTable):
         self.current_paper_id = None
         self.in_select_mode = False
         if hasattr(self, "app") and self.app and old_current:
-            self.app._add_log("current_paper_cleared", f"set_papers cleared current_paper_id from {old_current} to None")
+            self.app._add_log(
+                "current_paper_cleared",
+                f"set_papers cleared current_paper_id from {old_current} to None",
+            )
         self.populate_table()
         if self.papers:
             self.move_cursor(row=0)
@@ -294,25 +319,34 @@ class PaperList(DataTable):
             if current_paper:
                 current_row = self.cursor_row
                 if hasattr(self, "app") and self.app:
-                    self.app._add_log("toggle_selection_start", f"current_row={current_row}, paper_id={current_paper.id}")
-                
+                    self.app._add_log(
+                        "toggle_selection_start",
+                        f"current_row={current_row}, paper_id={current_paper.id}",
+                    )
+
                 if current_paper.id in self.selected_paper_ids:
                     self.selected_paper_ids.remove(current_paper.id)
                     action = "removed"
                 else:
                     self.selected_paper_ids.add(current_paper.id)
                     action = "added"
-                
+
                 if hasattr(self, "app") and self.app:
-                    self.app._add_log("toggle_selection_action", f"{action} paper_id={current_paper.id}")
-                
+                    self.app._add_log(
+                        "toggle_selection_action",
+                        f"{action} paper_id={current_paper.id}",
+                    )
+
                 self.update_table()
-                
+
                 if 0 <= current_row < len(self.papers):
                     self.move_cursor(row=current_row)
                     if hasattr(self, "app") and self.app:
-                        self.app._add_log("toggle_selection_end", f"restored cursor to row={current_row}, final_cursor={self.cursor_row}")
-                
+                        self.app._add_log(
+                            "toggle_selection_end",
+                            f"restored cursor to row={current_row}, final_cursor={self.cursor_row}",
+                        )
+
                 # Notify that stats changed
                 self.post_message(self.StatsChanged())
 
@@ -322,17 +356,19 @@ class PaperList(DataTable):
         if 0 <= current_row < len(self.papers):
             self.move_cursor(row=current_row)
             if hasattr(self, "app") and self.app:
-                self.app._add_log("toggle_selection_end", f"restored cursor to row={current_row}, final_cursor={self.cursor_row}")
+                self.app._add_log(
+                    "toggle_selection_end",
+                    f"restored cursor to row={current_row}, final_cursor={self.cursor_row}",
+                )
 
     def on_data_table_row_selected(self, event) -> None:
         """Handle row selection via mouse or keyboard."""
         if hasattr(event, "cursor_row") and 0 <= event.cursor_row < len(self.papers):
             paper = self.papers[event.cursor_row]
             clicked_row = event.cursor_row
-            
-            if hasattr(self, "app") and self.app:
-                self.app._add_log("row_selected", f"clicked_row={clicked_row}, paper_id={paper.id}, in_select_mode={self.in_select_mode}")
-            
+
+            # Removed noisy row_selected log
+
             self.move_cursor(row=clicked_row)
 
             if self.in_select_mode:
@@ -347,12 +383,9 @@ class PaperList(DataTable):
             else:
                 # In single selection mode: set current paper
                 self.current_paper_id = paper.id
-                if hasattr(self, "app") and self.app:
-                    self.app._add_log("current_paper_set", f"current_paper_id={self.current_paper_id}")
-            
+
             # Notify that stats changed for any cursor/selection change
             self.post_message(self.StatsChanged())
-
 
     def on_click(self, event) -> None:
         """Handle double-click to show paper details."""
@@ -369,7 +402,7 @@ class PaperList(DataTable):
             self.toggle_selection()
             event.prevent_default()
         # Let DataTable handle all other navigation keys to avoid double movement
-        
+
     def on_data_table_row_highlighted(self, event) -> None:
         """Handle cursor movement via keyboard navigation."""
         # This is called when cursor moves via keyboard
@@ -382,15 +415,11 @@ class PaperList(DataTable):
     def on_focus(self) -> None:
         """When the list regains focus, show normal DataTable cursor styling."""
         self._is_focused = True
-        if hasattr(self, "app") and self.app:
-            self.app._add_log("paper_list_focus", f"current_paper_id={self.current_paper_id}, _is_focused={self._is_focused}, in_select_mode={self.in_select_mode}")
         self.update_table()
 
     def on_blur(self) -> None:
         """When the list loses focus, apply bold/green styling to current/selected papers."""
         self._is_focused = False
-        if hasattr(self, "app") and self.app:
-            self.app._add_log("paper_list_blur", f"current_paper_id={self.current_paper_id}, _is_focused={self._is_focused}, in_select_mode={self.in_select_mode}")
         self.update_table()
 
     # Movement methods
@@ -449,12 +478,22 @@ class PaperList(DataTable):
             old_current = self.current_paper_id
             if current_paper:
                 self.current_paper_id = current_paper.id
-                if hasattr(self, "app") and self.app and old_current != current_paper.id:
-                    self.app._add_log("current_paper_updated", f"keyboard navigation changed current_paper_id from {old_current} to {current_paper.id}")
+                if (
+                    hasattr(self, "app")
+                    and self.app
+                    and old_current != current_paper.id
+                ):
+                    self.app._add_log(
+                        "current_paper_updated",
+                        f"keyboard navigation changed current_paper_id from {old_current} to {current_paper.id}",
+                    )
             else:
                 self.current_paper_id = None
                 if hasattr(self, "app") and self.app and old_current:
-                    self.app._add_log("current_paper_cleared", f"keyboard navigation cleared current_paper_id from {old_current} to None")
+                    self.app._add_log(
+                        "current_paper_cleared",
+                        f"keyboard navigation cleared current_paper_id from {old_current} to None",
+                    )
 
     class ShowDetails(Message):
         """Message to request showing paper details."""

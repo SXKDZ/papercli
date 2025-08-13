@@ -1,9 +1,10 @@
-from textual.widgets import Markdown
-from textual.reactive import reactive
-from textual.events import Key
-from textual.containers import VerticalScroll
-from textual.app import ComposeResult
 from datetime import datetime
+
+from textual.app import ComposeResult
+from textual.containers import VerticalScroll
+from textual.events import Key
+from textual.reactive import reactive
+from textual.widgets import Markdown
 
 from ng.services import ThemeService
 
@@ -108,7 +109,7 @@ class LogPanel(VerticalScroll):
         self.panel_mode = "log"
         self.show_panel = True
         # Load current logs when showing
-        if self._app_ref and hasattr(self._app_ref, 'logs'):
+        if self._app_ref and hasattr(self._app_ref, "logs"):
             self.logs = self._app_ref.logs
 
     def refresh_if_visible(self):
@@ -167,7 +168,9 @@ class LogPanel(VerticalScroll):
             return
 
         if not self.logs:
-            markdown_content = "# Activity Log\n\n*No activities logged in this session.*"
+            markdown_content = (
+                "# Activity Log\n\n*No activities logged in this session.*"
+            )
             self._markdown_widget.update(markdown_content)
             return
 
@@ -178,29 +181,24 @@ class LogPanel(VerticalScroll):
         text_lines.append("---")
         text_lines.append("")
 
-        # Show all logs (newest first)
         all_logs_reversed = list(reversed(self.logs))
         for log in all_logs_reversed:
             timestamp = log["timestamp"].strftime("%H:%M:%S")
             action = log["action"]
             details = log["details"]
 
-            # Use Markdown list formatting for better structure
             text_lines.append(f"- **[{timestamp}]** `{action}`: {details}")
             text_lines.append("")
 
-        text_lines.append("---")
-        text_lines.append(f"*Showing all {len(self.logs)} entries*")
-
         markdown_content = "\n".join(text_lines)
         self._markdown_widget.update(markdown_content)
-    
+
     def _schedule_update(self):
         """Schedule a batched update to prevent flashing."""
         if not self._pending_update:
             self._pending_update = True
             self.app.call_later(self._do_update, 0.2)  # 200ms delay
-    
+
     def _do_update(self, *args):
         """Perform the actual update."""
         self._pending_update = False

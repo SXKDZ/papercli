@@ -305,7 +305,7 @@ class CommandInput(Container):
             self._input_widget.value = ""
 
     def on_mouse_down(self, event: events.MouseDown) -> None:
-        """Before focus moves to the input on mouse click, preserve cursor row highlight and log state."""
+        """Before focus moves to the input on mouse click, preserve cursor row highlight and selection styling."""
         try:
             paper_list = self.screen.query_one("#paper-list-view")
             # Store cursor position before focus changes
@@ -321,14 +321,6 @@ class CommandInput(Container):
             # Ensure selection styling is maintained when focus moves to input
             if paper_list.selected_paper_ids and paper_list.in_select_mode:
                 paper_list.add_class("retain-selection")
-            if hasattr(self.app, "_add_log"):
-                self.app._add_log(
-                    "command_input_mouse_down",
-                    f"preserve cursor_row={current_cursor_row}, stored_cursor={current_cursor_row}, "
-                    f"selected_ids={list(paper_list.selected_paper_ids)}, "
-                    f"in_select_mode={paper_list.in_select_mode}, "
-                    f"classes_before={paper_list.classes}",
-                )
         except Exception:
             pass
 

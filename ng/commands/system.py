@@ -292,7 +292,7 @@ PDF Filename Convention:
                 else:
                     self.app.notify(
                         f"You're running the latest version (v{current_version})",
-                        severity="success",
+                        severity="information",
                     )
             except Exception as e:
                 self.app.notify(f"Could not check for updates: {e}", severity="error")
@@ -324,7 +324,7 @@ PDF Filename Convention:
                     current_version = self.version_manager.get_current_version()
                     self.app.notify(
                         f"Already running latest version (v{current_version})",
-                        severity="success",
+                        severity="information",
                     )
                     return
 
@@ -336,7 +336,7 @@ PDF Filename Convention:
                 if self.version_manager.perform_update():
                     self.app.notify(
                         "Update successful! Please restart PaperCLI.",
-                        severity="success",
+                        severity="information",
                     )
                     # Show restart dialog
                     restart_info = f"Update Successful!\n\n"
