@@ -15,6 +15,7 @@ from titlecase import titlecase
 
 from ng.services.prompts import MetadataPrompts, SummaryPrompts
 from ng.services import HTTPClient, fix_broken_lines, normalize_paper_data
+from ng.services.llm_utils import get_model_parameters
 
 if TYPE_CHECKING:
     from ng.services import PDFManager
@@ -26,6 +27,7 @@ class MetadataExtractor:
     def __init__(self, pdf_manager: PDFManager, app=None):
         self.app = app
         self.pdf_manager = pdf_manager
+    
 
     def extract_from_arxiv(self, arxiv_id: str) -> Dict[str, Any]:
         """Extract metadata from arXiv."""
@@ -513,6 +515,7 @@ class MetadataExtractor:
                     raise Exception("Could not extract text from PDF")
 
             client = OpenAI()
+            model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
             prompt = MetadataPrompts.extraction_prompt(text_content)
 
@@ -524,20 +527,20 @@ class MetadataExtractor:
                 )
                 self.app._add_log(
                     "llm_metadata_prompt",
-                    f"Full prompt sent to gpt-4o-mini:\n{prompt}",
+                    f"Full prompt sent to {model_name}:\n{prompt}",
                 )
 
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": MetadataPrompts.system_message(),
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0,
-            )
+            # Build parameters using centralized utility (force temperature=0 for extraction)
+            params = get_model_parameters(model_name, temperature=0)
+            params["messages"] = [
+                {
+                    "role": "system",
+                    "content": MetadataPrompts.system_message(),
+                },
+                {"role": "user", "content": prompt},
+            ]
+
+            response = client.chat.completions.create(**params)
 
             response_content = response.choices[0].message.content.strip()
 
@@ -545,7 +548,7 @@ class MetadataExtractor:
             if self.app:
                 self.app._add_log(
                     "llm_metadata_response",
-                    f"GPT-4o-mini response received ({len(response_content)} chars)",
+                    f"{model_name} response received ({len(response_content)} chars)",
                 )
                 self.app._add_log(
                     "llm_metadata_content",
@@ -633,6 +636,7 @@ class MetadataExtractor:
                     return ""
 
             client = OpenAI()
+            model_name = os.getenv("OPENAI_MODEL", "gpt-4o")
 
             prompt = SummaryPrompts.academic_summary(full_text)
 
@@ -644,21 +648,20 @@ class MetadataExtractor:
                 )
                 self.app._add_log(
                     "llm_summarization_prompt",
-                    f"Full prompt sent to gpt-4o:\n{prompt}",
+                    f"Full prompt sent to {model_name}:\n{prompt}",
                 )
 
-            response = client.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": SummaryPrompts.system_message(),
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                max_tokens=8000,
-                temperature=0.1,
-            )
+            # Build parameters using centralized utility  
+            params = get_model_parameters(model_name)
+            params["messages"] = [
+                {
+                    "role": "system",
+                    "content": SummaryPrompts.system_message(),
+                },
+                {"role": "user", "content": prompt},
+            ]
+
+            response = client.chat.completions.create(**params)
 
             summary_response = response.choices[0].message.content.strip()
 
@@ -666,7 +669,7 @@ class MetadataExtractor:
             if self.app:
                 self.app._add_log(
                     "llm_summarization_response",
-                    f"GPT-4o response received ({len(summary_response)} chars)",
+                    f"{model_name} response received ({len(summary_response)} chars)",
                 )
                 self.app._add_log(
                     "llm_summarization_content",

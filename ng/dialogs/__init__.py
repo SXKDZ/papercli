@@ -1,6 +1,7 @@
 from .add import AddDialog
 from .chat import ChatDialog
 from .collect import CollectDialog
+from .config import ConfigDialog
 from .confirm import ConfirmDialog
 from .detail import DetailDialog
 from .doctor import DoctorDialog
@@ -13,6 +14,7 @@ __all__ = [
     "AddDialog",
     "ChatDialog",
     "CollectDialog",
+    "ConfigDialog",
     "ConfirmDialog",
     "DetailDialog",
     "DoctorDialog",

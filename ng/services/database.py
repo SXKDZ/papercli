@@ -9,7 +9,7 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker
 
 from ng.db import models  # Reusing models
-from ng.db.models import Base, Paper, Author, Collection, PaperAuthor  # Reusing models
+from ng.db.models import Base, Paper, Author, Collection, PaperAuthor, paper_collections  # Reusing models
 
 
 class DatabaseHealthService:
@@ -19,6 +19,16 @@ class DatabaseHealthService:
         # If db_path is not provided, get it from app
         self.db_path = db_path if db_path else (app.db_path if app else None)
         self.engine = create_engine(f"sqlite:///{self.db_path}")
+        
+        # Enable foreign key constraints for SQLite
+        def _enable_foreign_keys(dbapi_connection, connection_record):
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
+        
+        from sqlalchemy import event
+        event.listen(self.engine, "connect", _enable_foreign_keys)
+        
         self.Session = sessionmaker(bind=self.engine)
         self.app = app
 
@@ -28,18 +38,27 @@ class DatabaseHealthService:
 
     def run_full_diagnostic(self) -> Dict[str, Any]:
         """Runs a comprehensive diagnostic check on the database and system."""
-        report = {
-            "timestamp": datetime.now().isoformat(),
-            "database_checks": self._check_database_integrity(),
-            "orphaned_records": self._find_orphaned_records(),
-            "orphaned_pdfs": self._find_orphaned_pdfs(),
-            "absolute_pdf_paths": self._find_absolute_pdf_paths(),
-            "missing_pdfs": self._find_missing_pdfs(),
-            "system_checks": self._check_system_health(),
-            "terminal_checks": self._check_terminal_capabilities(),
-            "issues_found": [],
-            "recommendations": [],
-        }
+        self._add_log("diagnostic_start", "Starting full database diagnostic")
+        
+        try:
+            report = {
+                "timestamp": datetime.now().isoformat(),
+                "database_checks": self._check_database_integrity(),
+                "orphaned_records": self._find_orphaned_records(),
+                "orphaned_pdfs": self._find_orphaned_pdfs(),
+                "absolute_pdf_paths": self._find_absolute_pdf_paths(),
+                "missing_pdfs": self._find_missing_pdfs(),
+                "system_checks": self._check_system_health(),
+                "terminal_checks": self._check_terminal_capabilities(),
+                "issues_found": [],
+                "recommendations": [],
+            }
+            
+            self._add_log("diagnostic_progress", "Basic checks completed, analyzing results")
+            
+        except Exception as e:
+            self._add_log("diagnostic_error", f"Error during diagnostic setup: {e}")
+            raise
 
         # Analyze report and add issues/recommendations
         if not report["database_checks"]["database_exists"]:
@@ -83,10 +102,13 @@ class DatabaseHealthService:
                 "Verify PDF file locations or remove missing papers."
             )
 
+        self._add_log("diagnostic_complete", f"Diagnostic completed, found {len(report['issues_found'])} issues")
         return report
 
     def _check_database_integrity(self) -> Dict[str, Any]:
         """Checks basic database file and table integrity."""
+        self._add_log("db_integrity_start", f"Checking database integrity for {self.db_path}")
+        
         db_exists = Path(self.db_path).exists()
         tables_exist = False
         table_counts = {}
@@ -95,12 +117,16 @@ class DatabaseHealthService:
 
         if db_exists:
             db_size = os.path.getsize(self.db_path)
+            self._add_log("db_integrity_info", f"Database exists, size: {db_size} bytes")
+            
             try:
                 with self.engine.connect() as connection:
                     inspector = inspect(self.engine)
                     existing_tables = inspector.get_table_names()
                     if existing_tables:
                         tables_exist = True
+                        self._add_log("db_integrity_info", f"Found {len(existing_tables)} tables: {existing_tables}")
+                        
                         for table_name in existing_tables:
                             result = connection.execute(
                                 text(f"SELECT COUNT(*) FROM {table_name}")
@@ -113,33 +139,42 @@ class DatabaseHealthService:
                         text("PRAGMA foreign_keys")
                     ).scalar_one()
                     foreign_key_constraints = fk_check == 1
+                    self._add_log("db_integrity_info", f"Foreign key constraints: {foreign_key_constraints}")
 
             except Exception as e:
                 self._add_log("db_integrity_error", f"Error checking DB integrity: {e}")
+        else:
+            self._add_log("db_integrity_warning", f"Database file does not exist: {self.db_path}")
 
-        return {
+        result = {
             "database_exists": db_exists,
             "tables_exist": tables_exist,
             "database_size": db_size,
             "foreign_key_constraints": foreign_key_constraints,
             "table_counts": table_counts,
         }
+        
+        self._add_log("db_integrity_complete", f"Database integrity check complete")
+        return result
 
     def _find_orphaned_records(self) -> Dict[str, Any]:
         """Finds and counts orphaned records in association tables."""
+        self._add_log("orphaned_records_start", "Checking for orphaned records")
+        
         session = self.Session()
         orphaned_paper_collections = 0
         orphaned_paper_authors = 0
         try:
-            # Orphaned PaperCollection entries (paper_id or collection_id does not exist)
-            orphaned_paper_collections = (
-                session.query(PaperCollection)
-                .filter(
-                    ~PaperCollection.paper_id.in_(session.query(Paper.id)),
-                    ~PaperCollection.collection_id.in_(session.query(Collection.id)),
-                )
-                .count()
-            )
+            # Orphaned paper_collections entries (paper_id or collection_id does not exist)
+            # Use raw SQL since paper_collections is a Table, not a model class
+            result = session.execute(text("""
+                SELECT COUNT(*) FROM paper_collections pc
+                LEFT JOIN papers p ON pc.paper_id = p.id
+                LEFT JOIN collections c ON pc.collection_id = c.id
+                WHERE p.id IS NULL OR c.id IS NULL
+            """))
+            orphaned_paper_collections = result.scalar_one()
+            self._add_log("orphaned_records_info", f"Found {orphaned_paper_collections} orphaned paper-collection associations")
 
             # Orphaned PaperAuthor entries (paper_id or author_id does not exist)
             orphaned_paper_authors = (
@@ -150,6 +185,7 @@ class DatabaseHealthService:
                 )
                 .count()
             )
+            self._add_log("orphaned_records_info", f"Found {orphaned_paper_authors} orphaned paper-author associations")
 
         except Exception as e:
             self._add_log(
@@ -158,12 +194,15 @@ class DatabaseHealthService:
         finally:
             session.close()
 
-        return {
+        result = {
             "summary": {
                 "orphaned_paper_collections": orphaned_paper_collections,
                 "orphaned_paper_authors": orphaned_paper_authors,
             }
         }
+        
+        self._add_log("orphaned_records_complete", f"Orphaned records check complete")
+        return result
 
     def _find_orphaned_pdfs(self) -> Dict[str, Any]:
         """Finds PDF files in the data directory not linked to any paper."""
@@ -247,61 +286,118 @@ class DatabaseHealthService:
 
     def _check_system_health(self) -> Dict[str, Any]:
         """Checks system-level health (Python version, dependencies)."""
-        import sys
-        import importlib.util
-
-        python_version = sys.version
-        dependencies = {
-            "sqlalchemy": importlib.util.find_spec("sqlalchemy") is not None,
-            "rich": importlib.util.find_spec("rich") is not None,
-            "textual": importlib.util.find_spec("textual") is not None,
-            "prompt_toolkit": importlib.util.find_spec("prompt_toolkit")
-            is not None,  # Keep for now as it's still in app
-            "requests": importlib.util.find_spec("requests") is not None,
-            "openai": importlib.util.find_spec("openai") is not None,
-        }
-
-        # Basic disk space check (for the drive where the DB is)
-        disk_space = {}
+        self._add_log("system_health_start", "Checking system health")
+        
         try:
-            statvfs = os.statvfs(Path(self.db_path).parent)
-            total_bytes = statvfs.f_blocks * statvfs.f_bsize
-            free_bytes = statvfs.f_bavail * statvfs.f_bsize
-            disk_space = {
-                "total_mb": total_bytes // (1024 * 1024),
-                "free_mb": free_bytes // (1024 * 1024),
-            }
-        except Exception as e:
-            self._add_log("disk_space_error", f"Error checking disk space: {e}")
+            import sys
+            import importlib.util
 
-        return {
-            "python_version": python_version,
-            "dependencies": dependencies,
-            "disk_space": disk_space,
-        }
+            python_version = sys.version
+            self._add_log("system_health_info", f"Python version: {python_version[:50]}...")
+            
+            dependencies = {}
+            dep_modules = [
+                "sqlalchemy", "rich", "textual", "prompt_toolkit", "requests", "openai"
+            ]
+            
+            for module_name in dep_modules:
+                try:
+                    dependencies[module_name] = importlib.util.find_spec(module_name) is not None
+                    self._add_log("system_health_info", f"Module {module_name}: {'Found' if dependencies[module_name] else 'Missing'}")
+                except Exception as e:
+                    self._add_log("system_health_warning", f"Error checking module {module_name}: {e}")
+                    dependencies[module_name] = False
+
+            # Basic disk space check (for the drive where the DB is)
+            disk_space = {}
+            try:
+                statvfs = os.statvfs(Path(self.db_path).parent)
+                total_bytes = statvfs.f_blocks * statvfs.f_bsize
+                free_bytes = statvfs.f_bavail * statvfs.f_bsize
+                disk_space = {
+                    "total_mb": total_bytes // (1024 * 1024),
+                    "free_mb": free_bytes // (1024 * 1024),
+                }
+                self._add_log("system_health_info", f"Disk space: {disk_space['free_mb']}MB free")
+            except Exception as e:
+                self._add_log("disk_space_error", f"Error checking disk space: {e}")
+                disk_space = {"error": str(e)}
+
+            result = {
+                "python_version": python_version,
+                "dependencies": dependencies,
+                "disk_space": disk_space,
+            }
+            
+            self._add_log("system_health_complete", "System health check complete")
+            return result
+            
+        except Exception as e:
+            self._add_log("system_health_error", f"Critical error in system health check: {e}")
+            return {
+                "python_version": "Error retrieving",
+                "dependencies": {},
+                "disk_space": {"error": str(e)},
+            }
 
     def _check_terminal_capabilities(self) -> Dict[str, Any]:
-        """Checks terminal capabilities (unicode, color, size)."""
-        # These checks are more relevant for prompt_toolkit, but we can keep placeholders
-        # for general terminal info.
-        import sys
-        import shutil
+        """Checks terminal capabilities for Textual application mode."""
+        try:
+            import sys
+            import shutil
 
-        terminal_type = os.getenv("TERM", "unknown")
-        unicode_support = sys.stdout.encoding == "UTF-8"
-        color_support = os.getenv("TERM") not in ("dumb", "xterm-mono")  # Basic check
+            # In Textual application mode, we should report capabilities differently
+            terminal_type = "textual-app"
+            
+            # For Textual apps, we can assume good capabilities
+            unicode_support = True  # Textual handles Unicode well
+            color_support = True    # Textual supports rich colors
+            
+            # Get actual terminal size for the underlying terminal
+            try:
+                terminal_size = shutil.get_terminal_size(fallback=(80, 24))
+                size_dict = {
+                    "columns": terminal_size.columns,
+                    "lines": terminal_size.lines,
+                }
+            except Exception as e:
+                self._add_log("terminal_check_warning", f"Error getting terminal size: {e}")
+                size_dict = {"columns": 80, "lines": 24}
 
-        terminal_size = shutil.get_terminal_size(fallback=(80, 24))
+            # Additional Textual-specific capabilities
+            textual_features = {
+                "rich_rendering": True,
+                "mouse_support": True,
+                "keyboard_events": True,
+                "async_events": True,
+            }
 
-        return {
-            "terminal_type": terminal_type,
-            "unicode_support": unicode_support,
-            "color_support": color_support,
-            "terminal_size": {
-                "columns": terminal_size.columns,
-                "lines": terminal_size.lines,
-            },
-        }
+            result = {
+                "terminal_type": terminal_type,
+                "unicode_support": unicode_support,
+                "color_support": color_support,
+                "terminal_size": size_dict,
+                "textual_features": textual_features,
+            }
+            
+            self._add_log("terminal_check", f"Terminal capabilities for Textual app: {terminal_type}, unicode: {unicode_support}, colors: {color_support}")
+            return result
+            
+        except Exception as e:
+            self._add_log("terminal_check_error", f"Critical error in terminal capabilities check: {e}")
+            # Return safe defaults with Textual assumptions
+            return {
+                "terminal_type": "textual-app-fallback",
+                "unicode_support": True,
+                "color_support": True,
+                "terminal_size": {"columns": 80, "lines": 24},
+                "textual_features": {
+                    "rich_rendering": True,
+                    "mouse_support": True,
+                    "keyboard_events": True,
+                    "async_events": True,
+                },
+            }
 
     def clean_orphaned_records(self) -> Dict[str, int]:
         """Cleans up orphaned records in association tables."""
@@ -311,18 +407,13 @@ class DatabaseHealthService:
             "paper_authors": 0,
         }
         try:
-            # Delete orphaned PaperCollection entries
-            orphaned_pcs = (
-                session.query(PaperCollection)
-                .filter(
-                    ~PaperCollection.paper_id.in_(session.query(Paper.id)),
-                    ~PaperCollection.collection_id.in_(session.query(Collection.id)),
-                )
-                .all()
-            )
-            for pc in orphaned_pcs:
-                session.delete(pc)
-                cleaned_counts["paper_collections"] += 1
+            # Delete orphaned paper_collections entries using raw SQL
+            result = session.execute(text("""
+                DELETE FROM paper_collections
+                WHERE paper_id NOT IN (SELECT id FROM papers)
+                   OR collection_id NOT IN (SELECT id FROM collections)
+            """))
+            cleaned_counts["paper_collections"] = result.rowcount
 
             # Delete orphaned PaperAuthor entries
             orphaned_pas = (

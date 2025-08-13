@@ -8,7 +8,7 @@ from openai import OpenAI
 
 from ng.commands import CommandHandler
 from ng.version import VersionManager
-from ng.dialogs import MessageDialog, DoctorDialog
+from ng.dialogs import MessageDialog, DoctorDialog, ConfigDialog
 from ng.services import DatabaseHealthService, SyncService
 
 if TYPE_CHECKING:
@@ -131,97 +131,123 @@ PDF Filename Convention:
             self.app.notify(f"Failed to run doctor command: {str(e)}", severity="error")
 
     def _show_doctor_report(self, report: dict):
-        """Display the doctor diagnostic report."""
-        # Create formatted report text
-        lines = [
-            f"Database Doctor Report - {report['timestamp'][:19]}",
-            "=" * 60,
+        """Display the doctor diagnostic report formatted as markdown."""
+        # Create formatted markdown report (title already shown in dialog header)
+        markdown_lines = [
+            f"*Generated: {report['timestamp'][:19]}*",
             "",
-            "📊 DATABASE HEALTH:",
+            "## Database Health",
+            "📊 *Database integrity and structure*",
+            "",
         ]
 
         db_checks = report["database_checks"]
-        lines.extend(
-            [
-                f"  Database exists: {'✓' if db_checks['database_exists'] else '✗'}",
-                f"  Tables exist: {'✓' if db_checks['tables_exist'] else '✗'}",
-                f"  Database size: {db_checks.get('database_size', 0) // 1024} KB",
-                f"  Foreign key constraints: {'✓' if db_checks['foreign_key_constraints'] else '✗'}",
-            ]
-        )
+        health_items = [
+            f"- **Database exists:** {'✅ Yes' if db_checks['database_exists'] else '❌ No'}",
+            f"- **Tables exist:** {'✅ Yes' if db_checks['tables_exist'] else '❌ No'}",
+            f"- **Database size:** {db_checks.get('database_size', 0) // 1024:,} KB",
+            f"- **Foreign key constraints:** {'✅ Enabled' if db_checks['foreign_key_constraints'] else '❌ Disabled'}",
+        ]
+        markdown_lines.extend(health_items)
 
         if db_checks.get("table_counts"):
-            lines.append("  Table counts:")
+            markdown_lines.extend(["", "### Table Counts", ""])
             for table, count in db_checks["table_counts"].items():
-                lines.append(f"    {table}: {count}")
+                markdown_lines.append(f"- `{table}`: {count:,} records")
 
-        lines.extend(["", "🔗 ORPHANED RECORDS:"])
+        markdown_lines.extend(["", "## Orphaned Records", "🔗 *Records and files without valid references*", ""])
         orphaned_records = report["orphaned_records"]["summary"]
         pc_count = orphaned_records.get("orphaned_paper_collections", 0)
         pa_count = orphaned_records.get("orphaned_paper_authors", 0)
-        lines.extend(
-            [
-                f"  Paper-collection associations: {pc_count}",
-                f"  Paper-author associations: {pa_count}",
-            ]
-        )
+        
+        orphan_items = [
+            f"- **Paper-collection associations:** {pc_count:,}",
+            f"- **Paper-author associations:** {pa_count:,}",
+        ]
 
         orphaned_pdfs = report.get("orphaned_pdfs", {}).get("summary", {})
         pdf_count = orphaned_pdfs.get("orphaned_pdf_files", 0)
         if pdf_count > 0:
-            lines.append(f"  Orphaned PDF files: {pdf_count}")
+            orphan_items.append(f"- **Orphaned PDF files:** {pdf_count:,}")
 
         absolute_paths = report.get("absolute_pdf_paths", {}).get("summary", {})
         absolute_count = absolute_paths.get("absolute_path_count", 0)
         if absolute_count > 0:
-            lines.append(f"  Papers with absolute PDF paths: {absolute_count}")
+            orphan_items.append(f"- **Papers with absolute PDF paths:** {absolute_count:,}")
 
         missing_pdfs = report.get("missing_pdfs", {}).get("summary", {})
         missing_count = missing_pdfs.get("missing_pdf_count", 0)
         if missing_count > 0:
-            lines.append(f"  Papers with missing PDF files: {missing_count}")
+            orphan_items.append(f"- **Papers with missing PDF files:** {missing_count:,}")
 
-        lines.extend(["", "💻 SYSTEM HEALTH:"])
+        markdown_lines.extend(orphan_items)
+
+        markdown_lines.extend(["", "## System Health", "💻 *Python environment and dependencies*", ""])
         sys_checks = report["system_checks"]
-        lines.append(f"  Python version: {sys_checks['python_version']}")
-        lines.append("  Dependencies:")
+        python_version = sys_checks['python_version'].split()[0] if sys_checks['python_version'] else "Unknown"
+        markdown_lines.append(f"- **Python version:** `{python_version}`")
+        
+        # Show dependencies as individual list items
+        markdown_lines.extend(["", "### Dependencies", ""])
         for dep, status in sys_checks["dependencies"].items():
-            lines.append(f"    {dep}: {status}")
+            status_icon = "✅" if status else "❌"
+            markdown_lines.append(f"- `{dep}`: {status_icon}")
 
         if "disk_space" in sys_checks and "free_mb" in sys_checks["disk_space"]:
-            lines.append(f"  Free disk space: {sys_checks['disk_space']['free_mb']} MB")
+            free_mb = sys_checks['disk_space']['free_mb']
+            markdown_lines.append(f"- **Free disk space:** {free_mb:,} MB")
 
-        lines.extend(["", "🖥️ TERMINAL SETUP:"])
+        markdown_lines.extend(["", "## Terminal Setup", "🖥️ *Terminal capabilities and configuration*", ""])
         term_checks = report["terminal_checks"]
-        lines.extend(
-            [
-                f"  Terminal type: {term_checks['terminal_type']}",
-                f"  Unicode support: {'✓' if term_checks['unicode_support'] else '✗'}",
-                f"  Color support: {'✓' if term_checks['color_support'] else '✗'}",
-            ]
-        )
+        terminal_items = [
+            f"- **Terminal type:** `{term_checks['terminal_type']}`",
+            f"- **Unicode support:** {'✅ Yes' if term_checks['unicode_support'] else '❌ No'}",
+            f"- **Color support:** {'✅ Yes' if term_checks['color_support'] else '❌ No'}",
+        ]
 
         if "terminal_size" in term_checks and "columns" in term_checks["terminal_size"]:
             size = term_checks["terminal_size"]
-            lines.append(f"  Terminal size: {size['columns']}x{size['lines']}")
+            terminal_items.append(f"- **Terminal size:** {size['columns']}×{size['lines']}")
+
+        # Add Textual-specific features if available
+        if "textual_features" in term_checks:
+            textual_features = term_checks["textual_features"]
+            terminal_items.extend([
+                "",
+                "### Textual Application Features",
+                f"- **Rich rendering:** {'✅ Yes' if textual_features.get('rich_rendering') else '❌ No'}",
+                f"- **Mouse support:** {'✅ Yes' if textual_features.get('mouse_support') else '❌ No'}",
+                f"- **Keyboard events:** {'✅ Yes' if textual_features.get('keyboard_events') else '❌ No'}",
+                f"- **Async events:** {'✅ Yes' if textual_features.get('async_events') else '❌ No'}",
+            ])
+
+        markdown_lines.extend(terminal_items)
 
         # Issues and recommendations
         if report["issues_found"]:
-            lines.extend(["", "⚠ ISSUES FOUND:"])
+            markdown_lines.extend(["", "## Issues Found", "⚠️ *Problems detected that need attention*", ""])
             for issue in report["issues_found"]:
-                lines.append(f"  • {issue}")
+                markdown_lines.append(f"- {issue}")
 
         if report["recommendations"]:
-            lines.extend(["", "💡 RECOMMENDATIONS:"])
+            markdown_lines.extend(["", "## Recommendations", "💡 *Suggested actions to improve database health*", ""])
             for rec in report["recommendations"]:
-                lines.append(f"  • {rec}")
+                markdown_lines.append(f"- {rec}")
 
         if pc_count > 0 or pa_count > 0 or absolute_count > 0 or pdf_count > 0:
-            lines.extend(["", "🧹 To clean issues, run: /doctor clean"])
+            markdown_lines.extend([
+                "",
+                "## Quick Fix",
+                "🧹 *Automatic cleanup command*",
+                "",
+                "To automatically clean up issues, run:",
+                "```",
+                "/doctor clean", 
+                "```"
+            ])
 
-        report_text = "\n".join(lines)
-
-        self.app.push_screen(DoctorDialog(report_text))
+        report_markdown = "\n".join(markdown_lines)
+        self.app.push_screen(DoctorDialog(report_markdown))
 
     def handle_exit_command(self):
         """Handle /exit command - exit the application."""
@@ -399,80 +425,103 @@ PDF Filename Convention:
 
     def handle_config_command(self, args: List[str]):
         """Handle /config command for configuration management."""
-        if not args:
-            self._show_config_help()
-            return
-
-        action = args[0].lower()
-
-        if action == "model":
-            if len(args) < 2:
-                self._show_current_model()
-            else:
-                model_name = args[1]
-                self._set_model(model_name)
-
-        elif action == "openai_api_key":
-            if len(args) < 2:
-                self._show_current_api_key()
-            else:
-                api_key = args[1]
-                self._set_api_key(api_key)
-
-        elif action == "remote":
-            if len(args) < 2:
-                self._show_current_remote_path()
-            else:
-                remote_path = args[1]
-                self._set_remote_path(remote_path)
-
-        elif action == "auto-sync":
-            if len(args) < 2:
-                self._show_current_auto_sync()
-            else:
-                setting = args[1].lower()
-                if setting in ["enable", "on", "true"]:
-                    self._set_auto_sync(True)
-                elif setting in ["disable", "off", "false"]:
-                    self._set_auto_sync(False)
+        # Check if using legacy command format
+        if args:
+            action = args[0].lower()
+            
+            # Handle legacy commands
+            if action == "model":
+                if len(args) < 2:
+                    self._show_current_model()
                 else:
-                    self.app.notify(
-                        "Use 'enable' or 'disable' for auto-sync", severity="error"
-                    )
+                    model_name = args[1]
+                    self._set_model(model_name)
+                return
 
-        elif action == "pdf-pages":
-            if len(args) < 2:
-                self._show_current_pdf_pages()
-            else:
-                try:
-                    pages = int(args[1])
-                    if pages > 0:
-                        self._set_pdf_pages(pages)
+            elif action == "openai_api_key":
+                if len(args) < 2:
+                    self._show_current_api_key()
+                else:
+                    api_key = args[1]
+                    self._set_api_key(api_key)
+                return
+
+            elif action == "remote":
+                if len(args) < 2:
+                    self._show_current_remote_path()
+                else:
+                    remote_path = args[1]
+                    self._set_remote_path(remote_path)
+                return
+
+            elif action == "auto-sync":
+                if len(args) < 2:
+                    self._show_current_auto_sync()
+                else:
+                    setting = args[1].lower()
+                    if setting in ["enable", "on", "true"]:
+                        self._set_auto_sync(True)
+                    elif setting in ["disable", "off", "false"]:
+                        self._set_auto_sync(False)
                     else:
                         self.app.notify(
-                            "PDF pages must be a positive number", severity="error"
+                            "Use 'enable' or 'disable' for auto-sync", severity="error"
                         )
-                except ValueError:
-                    self.app.notify(
-                        "PDF pages must be a valid number", severity="error"
-                    )
+                return
 
-        elif action == "show":
-            self._show_all_config()
+            elif action == "pdf-pages":
+                if len(args) < 2:
+                    self._show_current_pdf_pages()
+                else:
+                    try:
+                        pages = int(args[1])
+                        if pages > 0:
+                            self._set_pdf_pages(pages)
+                        else:
+                            self.app.notify(
+                                "PDF pages must be a positive number", severity="error"
+                            )
+                    except ValueError:
+                        self.app.notify(
+                            "PDF pages must be a valid number", severity="error"
+                        )
+                return
 
-        elif action == "theme":
-            if len(args) < 2:
-                self._show_current_theme()
-            else:
-                theme_name = args[1].lower()
-                self._set_theme(theme_name)
+            elif action == "show":
+                self._show_all_config()
+                return
 
-        elif action == "help":
-            self._show_config_help()
+            elif action == "theme":
+                if len(args) < 2:
+                    self._show_current_theme()
+                else:
+                    theme_name = args[1].lower()
+                    self._set_theme(theme_name)
+                return
 
-        else:
-            self.app.notify(f"Unknown config option: {action}", severity="error")
-            self._show_config_help()
+            elif action == "help":
+                self._show_config_help()
+                return
+        
+        # Show interactive config dialog (new default behavior)
+        def config_callback(changes):
+            if changes:
+                changed_settings = []
+                for key, value in changes.items():
+                    setting_name = key.replace("PAPERCLI_", "").replace("OPENAI_", "").lower().replace("_", "-")
+                    if key == "OPENAI_API_KEY":
+                        # Mask the API key in the message
+                        masked_value = value[:8] + "*" * (len(value) - 12) + value[-4:] if len(value) > 12 else "****"
+                        changed_settings.append(f"{setting_name}: {masked_value}")
+                    else:
+                        changed_settings.append(f"{setting_name}: {value}")
+                
+                if changed_settings:
+                    self.app.notify(f"Configuration updated: {', '.join(changed_settings)}", severity="information")
+                else:
+                    self.app.notify("No configuration changes made", severity="information")
+
+        self.app.push_screen(ConfigDialog(callback=config_callback))
 
     def _show_config_help(self):
         """Show configuration help."""

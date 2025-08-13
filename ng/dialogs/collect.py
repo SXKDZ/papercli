@@ -34,13 +34,13 @@ class CollectDialog(ModalScreen):
     CollectDialog .column {
         width: 1fr;
         height: 1fr;
-        border: solid grey;
+        border: solid $border;
         margin: 0 1;
     }
     CollectDialog .column-title {
         text-style: bold;
         text-align: center;
-        height: 3;
+        height: 1;
         background: $accent-darken-1;
         color: $text;
     }
@@ -48,32 +48,34 @@ class CollectDialog(ModalScreen):
         height: 1fr;
     }
     CollectDialog .action-buttons {
-        width: 15;
+        width: 12;
         height: 1fr;
         align: center middle;
     }
     CollectDialog .action-buttons Button {
-        width: 12;
-        margin: 0;
+        width: 1fr;
+        margin: 0 1;
         height: 3;
         content-align: center middle;
         text-align: center;
+        min-width: 8;
     }
     CollectDialog .column Button {
         height: 3;
         content-align: center middle;
         text-align: center;
         margin: 0 1;
+        min-width: 8;
     }
     CollectDialog .paper-details {
-        height: 8;
-        border: solid grey;
+        height: 6;
+        border: solid $border;
         margin: 1;
     }
     CollectDialog .paper-details-title {
         text-style: bold;
         text-align: center;
-        height: 3;
+        height: 1;
         background: $accent-darken-1;
         color: $text;
     }

@@ -1,6 +1,6 @@
 from textual.app import ComposeResult
-from textual.containers import VerticalScroll
-from textual.widgets import Header, Footer, Button, Static
+from textual.containers import VerticalScroll, Container, Vertical
+from textual.widgets import Button, Static, Markdown
 from textual.screen import ModalScreen
 
 
@@ -8,7 +8,18 @@ class DoctorDialog(ModalScreen):
     """A modal dialog for displaying the doctor report."""
 
     DEFAULT_CSS = """
-    DoctorDialog .dialog-title {
+    DoctorDialog {
+        align: center middle;
+    }
+
+    #doctor-container {
+        width: 90;
+        height: 35;
+        border: solid $accent;
+        background: $panel;
+    }
+
+    #dialog-title {
         text-align: center;
         text-style: bold;
         background: $accent;
@@ -16,12 +27,24 @@ class DoctorDialog(ModalScreen):
         height: 1;
         width: 100%;
     }
-    DoctorDialog Button {
+
+    #report-content {
+        padding: 1;
+        height: 1fr;
+    }
+
+    #doctor-buttons {
+        height: 5;
+        align: center middle;
+        padding: 0;
+    }
+
+    #doctor-ok {
+        margin: 0 1;
         height: 3;
+        min-width: 8;
         content-align: center middle;
         text-align: center;
-        margin: 0 1;
-        min-width: 8;
     }
     """
 
@@ -30,20 +53,20 @@ class DoctorDialog(ModalScreen):
         self.report_text = report_text
 
     def compose(self) -> ComposeResult:
-        yield Header()
-        yield Static("Database Doctor Report", classes="dialog-title")
-        with VerticalScroll(id="report-content"):
-            yield Static(self.report_text, id="report-text")
-        yield Button("OK", id="doctor-ok", classes="--warning")
-        yield Footer()
+        with Vertical(id="doctor-container"):
+            yield Static("Database Doctor Report", id="dialog-title")
+            with VerticalScroll(id="report-content"):
+                yield Markdown(self.report_text, id="report-text")
+            with Container(id="doctor-buttons"):
+                yield Button("OK", id="doctor-ok", variant="primary")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "doctor-ok":
             self.dismiss()
 
     def on_mount(self) -> None:
-        self.query_one("#report-text").update(self.report_text)
-        # Focus OK by default
+        self.query_one("#report-text", Markdown).update(self.report_text)
+        # Focus OK by default so Enter immediately closes the dialog
         try:
             self.query_one("#doctor-ok", Button).focus()
         except Exception:
