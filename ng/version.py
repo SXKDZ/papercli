@@ -13,7 +13,7 @@ from typing import Dict, Optional, Tuple
 import requests
 from packaging import version
 
-__version__ = "1.2.3"
+__version__ = "2.0.0"
 
 
 class VersionManager:

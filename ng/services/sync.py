@@ -10,7 +10,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List
 
-from ng.services import DatabaseHealthService, format_count
+from pluralizer import Pluralizer
+
+from ng.services import DatabaseHealthService
+
+_pluralizer = Pluralizer()
 
 
 class SyncOperation:
@@ -91,7 +95,10 @@ class SyncResult:
             return "Sync operation was cancelled by user"
 
         if self.has_conflicts():
-            return f"Sync completed with {len(self.conflicts)} conflicts that need resolution"
+            return (
+                f"Sync completed with "
+                f"{_pluralizer.pluralize('conflict', len(self.conflicts), True)} that need resolution"
+            )
 
         total_changes = sum(self.changes_applied.values())
         has_detailed_changes = (
@@ -106,22 +113,19 @@ class SyncResult:
         summary_parts = []
         if self.changes_applied["papers_added"] > 0:
             count = self.changes_applied["papers_added"]
-            summary_parts.append(f"{count} {'paper' if count == 1 else 'papers'} added")
+            summary_parts.append(f"{_pluralizer.pluralize('paper', count, True)} added")
         if self.changes_applied["papers_updated"] > 0:
             count = self.changes_applied["papers_updated"]
-            summary_parts.append(
-                f"{count} {'paper' if count == 1 else 'papers'} updated"
-            )
+            summary_parts.append(f"{_pluralizer.pluralize('paper', count, True)} updated")
         if self.changes_applied["collections_added"] > 0:
-            summary_parts.append(
-                f"{self.changes_applied['collections_added']} collections added"
-            )
+            c = self.changes_applied['collections_added']
+            summary_parts.append(f"{_pluralizer.pluralize('collection', c, True)} added")
         if self.changes_applied["collections_updated"] > 0:
-            summary_parts.append(
-                f"{self.changes_applied['collections_updated']} collections updated"
-            )
+            c = self.changes_applied['collections_updated']
+            summary_parts.append(f"{_pluralizer.pluralize('collection', c, True)} updated")
         if self.changes_applied["pdfs_copied"] > 0:
-            summary_parts.append(f"{self.changes_applied['pdfs_copied']} PDFs copied")
+            c = self.changes_applied['pdfs_copied']
+            summary_parts.append(f"{_pluralizer.pluralize('PDF', c, True)} copied")
 
         return f"Sync completed: {', '.join(summary_parts)}"
 
@@ -693,7 +697,7 @@ class SyncService:
                 paper_count = len(local_papers)
                 self.app._add_log(
                     "sync_collections",
-                    f"Added collection to remote: '{name}' with {format_count(paper_count, 'paper')}",
+                    f"Added collection to remote: '{name}' with {_pluralizer.pluralize('paper', paper_count, True)}",
                 )
 
         # Collections only in remote - copy to local
@@ -709,7 +713,7 @@ class SyncService:
                 paper_count = len(remote_papers)
                 self.app._add_log(
                     "sync_collections",
-                    f"Added collection from remote: '{name}' with {format_count(paper_count, 'paper')}",
+                    f"Added collection from remote: '{name}' with {_pluralizer.pluralize('paper', paper_count, True)}",
                 )
 
         # Collections in both - use latest timestamp
@@ -760,10 +764,18 @@ class SyncService:
                     self.app._add_log(
                         "sync_collections",
                         (
-                            "Merged collection '" + name + "': "
-                            + "local (" + str(local_count) + ") + "
-                            + "remote (" + str(remote_count) + ") + "
-                            + "keep_both (" + str(keep_both_count) + ") = "
+                            "Merged collection '"
+                            + name
+                            + "': "
+                            + "local ("
+                            + str(local_count)
+                            + ") + "
+                            + "remote ("
+                            + str(remote_count)
+                            + ") + "
+                            + "keep_both ("
+                            + str(keep_both_count)
+                            + ") = "
                             + str(merged_count)
                             + " papers total"
                         ),
@@ -1242,7 +1254,7 @@ class SyncService:
                 count = fixed["pdf_paths"]
                 self.app._add_log(
                     "sync_prep",
-                    f"Fixed {count} absolute PDF {'path' if count == 1 else 'paths'} to relative",
+                    f"Fixed {_pluralizer.pluralize('absolute PDF path', count, True)} to relative",
                 )
         except Exception as e:
             if self.app:

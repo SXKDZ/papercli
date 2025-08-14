@@ -1,15 +1,14 @@
 from __future__ import annotations
+
 import os
-from typing import Any, Dict, List, Tuple, TYPE_CHECKING
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, Dict, List, Tuple
 
 from ng.db.database import get_pdf_directory
-from ng.services import (
-    MetadataExtractor,
-    PaperService,
-    SystemService,
-    normalize_paper_data,
-)
-from datetime import datetime
+from ng.services.metadata import MetadataExtractor
+from ng.services.paper import PaperService
+from ng.services.system import SystemService
+from ng.services.utils import normalize_paper_data
 
 if TYPE_CHECKING:
     from ng.db.models import Paper
@@ -66,7 +65,12 @@ class AddPaperService:
             "arxiv", arxiv_id, pdf_dir, paper_data
         )
 
-        return {"paper": paper, "pdf_path": pdf_path, "pdf_error": pdf_error, "download_duration": download_duration}
+        return {
+            "paper": paper,
+            "pdf_path": pdf_path,
+            "pdf_error": pdf_error,
+            "download_duration": download_duration,
+        }
 
     def add_arxiv_paper_async(self, arxiv_id: str) -> Dict[str, Any]:
         """Add a paper from arXiv (step 1: metadata only, for background processing)."""
@@ -99,79 +103,157 @@ class AddPaperService:
 
         return {"paper": paper, "arxiv_id": arxiv_id, "paper_data": paper_data}
 
-    def download_and_update_pdf(self, paper_id: int, source: str, identifier: str, paper_data: Dict[str, Any]) -> Dict[str, Any]:
+    def download_and_update_pdf(
+        self, paper_id: int, source: str, identifier: str, paper_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """Background task to download PDF and update paper record."""
         try:
             # Log start of download process
             if self.app:
-                self.app._add_log("pdf_download_start", f"Starting PDF download for paper_id={paper_id}, source={source}, identifier={identifier}")
-                self.app._add_log("pdf_download_stage", "Stage 1/5: Initializing download process")
-            
+                self.app._add_log(
+                    "pdf_download_start",
+                    f"Starting PDF download for paper_id={paper_id}, source={source}, identifier={identifier}",
+                )
+                self.app._add_log(
+                    "pdf_download_stage", "Stage 1/5: Initializing download process"
+                )
+
             # Download PDF
             pdf_dir = get_pdf_directory()
             if self.app:
                 self.app._add_log("pdf_download_debug", f"PDF directory: {pdf_dir}")
-                self.app._add_log("pdf_download_debug", f"Paper data keys: {list(paper_data.keys()) if paper_data else 'None'}")
-                self.app._add_log("pdf_download_stage", "Stage 2/5: Calling SystemService to download PDF")
-                self.app._add_log("pdf_download_debug", f"About to call system_service.download_pdf with source='{source}', identifier='{identifier}'")
-            
+                self.app._add_log(
+                    "pdf_download_debug",
+                    f"Paper data keys: {list(paper_data.keys()) if paper_data else 'None'}",
+                )
+                self.app._add_log(
+                    "pdf_download_stage",
+                    "Stage 2/5: Calling SystemService to download PDF",
+                )
+                self.app._add_log(
+                    "pdf_download_debug",
+                    f"About to call system_service.download_pdf with source='{source}', identifier='{identifier}'",
+                )
+
             try:
-                pdf_path, pdf_error, download_duration = self.system_service.download_pdf(
-                    source, identifier, pdf_dir, paper_data
+                pdf_path, pdf_error, download_duration = (
+                    self.system_service.download_pdf(
+                        source, identifier, pdf_dir, paper_data
+                    )
                 )
                 if self.app:
-                    self.app._add_log("pdf_download_debug", f"system_service.download_pdf returned successfully")
+                    self.app._add_log(
+                        "pdf_download_debug",
+                        f"system_service.download_pdf returned successfully",
+                    )
             except Exception as e:
                 if self.app:
-                    self.app._add_log("pdf_download_exception", f"Exception calling system_service.download_pdf: {str(e)}")
+                    self.app._add_log(
+                        "pdf_download_exception",
+                        f"Exception calling system_service.download_pdf: {str(e)}",
+                    )
                     import traceback
-                    self.app._add_log("pdf_download_traceback", f"Traceback: {traceback.format_exc()}")
+
+                    self.app._add_log(
+                        "pdf_download_traceback", f"Traceback: {traceback.format_exc()}"
+                    )
                 raise
-            
+
             if self.app:
-                self.app._add_log("pdf_download_result", f"Download result: pdf_path='{pdf_path}', pdf_error='{pdf_error}', duration={download_duration:.2f}s")
+                self.app._add_log(
+                    "pdf_download_result",
+                    f"Download result: pdf_path='{pdf_path}', pdf_error='{pdf_error}', duration={download_duration:.2f}s",
+                )
 
             if pdf_path and not pdf_error:
                 if self.app:
-                    self.app._add_log("pdf_download_success", f"PDF downloaded successfully to: {pdf_path}")
-                    self.app._add_log("pdf_download_stage", "Stage 3/5: PDF download completed, processing path")
-                
+                    self.app._add_log(
+                        "pdf_download_success",
+                        f"PDF downloaded successfully to: {pdf_path}",
+                    )
+                    self.app._add_log(
+                        "pdf_download_stage",
+                        "Stage 3/5: PDF download completed, processing path",
+                    )
+
                 # Convert absolute path to relative for storage
                 relative_pdf_path = os.path.relpath(pdf_path, pdf_dir)
                 if self.app:
-                    self.app._add_log("pdf_download_debug", f"Relative PDF path: {relative_pdf_path}")
-                    self.app._add_log("pdf_download_stage", "Stage 4/5: Updating database with PDF path")
-                
+                    self.app._add_log(
+                        "pdf_download_debug", f"Relative PDF path: {relative_pdf_path}"
+                    )
+                    self.app._add_log(
+                        "pdf_download_stage",
+                        "Stage 4/5: Updating database with PDF path",
+                    )
+
                 # Update the paper with PDF path
                 update_data = {"pdf_path": relative_pdf_path}
                 if self.app:
-                    self.app._add_log("pdf_update_start", f"Updating paper {paper_id} with update_data: {update_data}")
-                
-                updated_paper, update_error = self.paper_service.update_paper(paper_id, update_data)
+                    self.app._add_log(
+                        "pdf_update_start",
+                        f"Updating paper {paper_id} with update_data: {update_data}",
+                    )
+
+                updated_paper, update_error = self.paper_service.update_paper(
+                    paper_id, update_data
+                )
                 if self.app:
-                    self.app._add_log("pdf_update_result", f"Database update result: paper={updated_paper is not None}, error='{update_error}'")
-                
+                    self.app._add_log(
+                        "pdf_update_result",
+                        f"Database update result: paper={updated_paper is not None}, error='{update_error}'",
+                    )
+
                 if update_error:
                     if self.app:
-                        self.app._add_log("pdf_update_error", f"Database update failed: {update_error}")
-                    return {"success": False, "error": f"PDF downloaded but database update failed: {update_error}"}
-                
+                        self.app._add_log(
+                            "pdf_update_error",
+                            f"Database update failed: {update_error}",
+                        )
+                    return {
+                        "success": False,
+                        "error": f"PDF downloaded but database update failed: {update_error}",
+                    }
+
                 if self.app:
-                    self.app._add_log("pdf_download_stage", "Stage 5/5: Process completed successfully")
-                    self.app._add_log("pdf_download_complete", f"Successfully updated paper {paper_id} with PDF path: {relative_pdf_path}")
-                return {"success": True, "pdf_path": relative_pdf_path, "paper": updated_paper, "download_duration": download_duration}
+                    self.app._add_log(
+                        "pdf_download_stage",
+                        "Stage 5/5: Process completed successfully",
+                    )
+                    self.app._add_log(
+                        "pdf_download_complete",
+                        f"Successfully updated paper {paper_id} with PDF path: {relative_pdf_path}",
+                    )
+                return {
+                    "success": True,
+                    "pdf_path": relative_pdf_path,
+                    "paper": updated_paper,
+                    "download_duration": download_duration,
+                }
             else:
                 error_msg = pdf_error or "Unknown PDF download error"
                 if self.app:
-                    self.app._add_log("pdf_download_error", f"PDF download failed: {error_msg}")
-                return {"success": False, "error": error_msg, "download_duration": download_duration}
+                    self.app._add_log(
+                        "pdf_download_error", f"PDF download failed: {error_msg}"
+                    )
+                return {
+                    "success": False,
+                    "error": error_msg,
+                    "download_duration": download_duration,
+                }
 
         except Exception as e:
             error_msg = f"Failed to download and update PDF: {str(e)}"
             if self.app:
                 import traceback
-                self.app._add_log("pdf_download_exception", f"Exception in download_and_update_pdf: {error_msg}")
-                self.app._add_log("pdf_download_traceback", f"Traceback: {traceback.format_exc()}")
+
+                self.app._add_log(
+                    "pdf_download_exception",
+                    f"Exception in download_and_update_pdf: {error_msg}",
+                )
+                self.app._add_log(
+                    "pdf_download_traceback", f"Traceback: {traceback.format_exc()}"
+                )
             return {"success": False, "error": error_msg, "download_duration": 0.0}
 
     def add_dblp_paper(self, dblp_url: str) -> Dict[str, Any]:
@@ -240,7 +322,12 @@ class AddPaperService:
             "openreview", openreview_id, pdf_dir, paper_data
         )
 
-        return {"paper": paper, "pdf_path": pdf_path, "pdf_error": pdf_error, "download_duration": download_duration}
+        return {
+            "paper": paper,
+            "pdf_path": pdf_path,
+            "pdf_error": pdf_error,
+            "download_duration": download_duration,
+        }
 
     def add_openreview_paper_async(self, openreview_id: str) -> Dict[str, Any]:
         """Add a paper from OpenReview (step 1: metadata only, for background processing)."""
@@ -272,7 +359,11 @@ class AddPaperService:
             paper_data, authors, collections
         )
 
-        return {"paper": paper, "openreview_id": openreview_id, "paper_data": paper_data}
+        return {
+            "paper": paper,
+            "openreview_id": openreview_id,
+            "paper_data": paper_data,
+        }
 
     def add_pdf_paper(self, pdf_path: str) -> Dict[str, Any]:
         """Add a paper from local PDF file."""
@@ -298,11 +389,12 @@ class AddPaperService:
 
         # Use new PDFService for enhanced copy functionality
         from ng.services.pdf import PDFService
+
         pdf_service = PDFService(app=self.app)
-        
+
         # Copy PDF to collection directory with timing
-        relative_pdf_path, pdf_error, copy_duration = pdf_service.copy_local_pdf_to_collection(
-            pdf_path, temp_paper_data
+        relative_pdf_path, pdf_error, copy_duration = (
+            pdf_service.copy_local_pdf_to_collection(pdf_path, temp_paper_data)
         )
 
         if pdf_error:
@@ -332,7 +424,12 @@ class AddPaperService:
             paper_data, authors, collections
         )
 
-        return {"paper": paper, "pdf_path": relative_pdf_path, "pdf_error": None, "copy_duration": copy_duration}
+        return {
+            "paper": paper,
+            "pdf_path": relative_pdf_path,
+            "pdf_error": None,
+            "copy_duration": copy_duration,
+        }
 
     def add_bib_papers(self, bib_path: str) -> Tuple[List[Paper], List[str]]:
         """Add papers from .bib file."""
@@ -384,29 +481,42 @@ class AddPaperService:
                 # Try to download PDF if URL is provided and looks like a PDF
                 if metadata.get("url"):
                     from ng.services.pdf import PDFService
+
                     pdf_service = PDFService(app=self.app)
-                    
+
                     try:
-                        pdf_path, pdf_error, download_duration = pdf_service.download_pdf_from_website_url(
-                            metadata["url"], paper_data
+                        pdf_path, pdf_error, download_duration = (
+                            pdf_service.download_pdf_from_website_url(
+                                metadata["url"], paper_data
+                            )
                         )
-                        
+
                         if pdf_path and not pdf_error:
                             # Convert to relative path and update paper
                             pdf_dir = get_pdf_directory()
                             relative_pdf_path = os.path.relpath(pdf_path, pdf_dir)
-                            
+
                             update_data = {"pdf_path": relative_pdf_path}
-                            updated_paper, update_error = self.paper_service.update_paper(paper.id, update_data)
-                            
+                            updated_paper, update_error = (
+                                self.paper_service.update_paper(paper.id, update_data)
+                            )
+
                             if not update_error and self.app:
-                                summary = pdf_service.create_download_summary(pdf_path, download_duration)
-                                self.app.notify(f"PDF downloaded for '{paper_data['title'][:50]}...': {summary}", severity="information")
-                        
+                                summary = pdf_service.create_download_summary(
+                                    pdf_path, download_duration
+                                )
+                                self.app.notify(
+                                    f"PDF downloaded for '{paper_data['title'][:50]}...': {summary}",
+                                    severity="information",
+                                )
+
                     except Exception as pdf_e:
                         # Don't fail the entire paper addition if PDF download fails
                         if self.app:
-                            self.app._add_log("bib_pdf_warning", f"Could not download PDF for '{paper_data['title']}': {str(pdf_e)}")
+                            self.app._add_log(
+                                "bib_pdf_warning",
+                                f"Could not download PDF for '{paper_data['title']}': {str(pdf_e)}",
+                            )
 
                 added_papers.append(paper)
 

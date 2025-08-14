@@ -1,17 +1,21 @@
-from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, VerticalScroll
-from textual.widgets import Button, Static
-from textual.screen import ModalScreen
-from typing import Callable, Dict, Any
-from rich.text import Text
-from ng.db.models import Paper
 import os
 import webbrowser
+from typing import Any, Callable, Dict
 
-from ng.services import PDFManager, PDFService, ThemeService, format_count, SystemService
-from ng.dialogs.edit import EditDialog
-from ng.dialogs.confirm import ConfirmDialog
+from pluralizer import Pluralizer
+from rich.text import Text
+from textual.app import ComposeResult
+from textual.containers import Container, Horizontal, VerticalScroll
+from textual.screen import ModalScreen
+from textual.widgets import Button, Static
+
+from ng.db.models import Paper
 from ng.dialogs.chat import ChatDialog
+from ng.dialogs.confirm import ConfirmDialog
+from ng.dialogs.edit import EditDialog
+from ng.services import PDFManager, PDFService, SystemService, ThemeService
+
+_pluralizer = Pluralizer()
 
 
 class DetailDialog(ModalScreen):
@@ -161,7 +165,7 @@ class DetailDialog(ModalScreen):
             # Use SystemService for cross-platform PDF opening
             system_service = SystemService(pdf_manager=pdf_manager, app=self.app)
             success, error_msg = system_service.open_pdf(pdf_path)
-            
+
             if success:
                 self.app.notify(
                     f"Opened PDF for '{self.paper.title}'", severity="information"
@@ -183,13 +187,16 @@ class DetailDialog(ModalScreen):
             # Use SystemService for cross-platform file location opening
             system_service = SystemService(pdf_manager=pdf_manager, app=self.app)
             success, error_msg = system_service.open_file_location(pdf_path)
-            
+
             if success:
                 self.app.notify(
-                    f"Revealed PDF location for '{self.paper.title}'", severity="information"
+                    f"Revealed PDF location for '{self.paper.title}'",
+                    severity="information",
                 )
             else:
-                self.app.notify(f"Failed to show file location: {error_msg}", severity="error")
+                self.app.notify(
+                    f"Failed to show file location: {error_msg}", severity="error"
+                )
         except Exception as e:
             self.app.notify(f"Failed to show file location: {str(e)}", severity="error")
 
@@ -248,25 +255,29 @@ class DetailDialog(ModalScreen):
             pdf_service = PDFService(app=self.app)
             absolute_path = pdf_manager.get_absolute_path(paper.pdf_path)
             content.append(f"{absolute_path}\n", style=colors["success"])
-            
+
             # Get and display enhanced PDF info using both services
             pdf_info = pdf_manager.get_pdf_info(paper.pdf_path)
             if pdf_info["exists"]:
                 info_parts = []
-                
+
                 # Use PDFService for better formatting
                 if pdf_info["size_bytes"] > 0:
-                    formatted_size = pdf_service.calculate_file_size_formatted(pdf_info["size_bytes"])
+                    formatted_size = pdf_service.calculate_file_size_formatted(
+                        pdf_info["size_bytes"]
+                    )
                     info_parts.append(f"Size: {formatted_size}")
-                
+
                 # Get page count using PDFService
                 page_count = pdf_service.get_pdf_page_count(absolute_path)
                 if page_count > 0:
                     page_text = "page" if page_count == 1 else "pages"
                     info_parts.append(f"{page_count} {page_text}")
-                
+
                 if info_parts:
-                    content.append(f"({', '.join(info_parts)})\n\n", style=colors["text"])
+                    content.append(
+                        f"({', '.join(info_parts)})\n\n", style=colors["text"]
+                    )
                 else:
                     content.append("\n", style=colors["text"])
             elif pdf_info["error"]:
@@ -336,16 +347,26 @@ class DetailDialog(ModalScreen):
             if updated_paper:
                 # Fetch a fresh copy of the paper to avoid detached instances
                 try:
-                    self.app._add_log("debug", f"Fetching fresh paper data for ID: {updated_paper.id}")
-                    fresh_paper = self.app.paper_commands.paper_service.get_paper_by_id(updated_paper.id)
+                    self.app._add_log(
+                        "debug", f"Fetching fresh paper data for ID: {updated_paper.id}"
+                    )
+                    fresh_paper = self.app.paper_commands.paper_service.get_paper_by_id(
+                        updated_paper.id
+                    )
                     if fresh_paper:
-                        self.app._add_log("debug", "Successfully fetched fresh paper data, updating detail view")
+                        self.app._add_log(
+                            "debug",
+                            "Successfully fetched fresh paper data, updating detail view",
+                        )
                         self.paper = fresh_paper  # Update our reference with fresh data
                         self.on_mount()  # Refresh the detail display
                         if self.callback:
                             self.callback({"action": "updated", "paper": fresh_paper})
                     else:
-                        self.app._add_log("debug", "Fresh paper fetch returned None, using updated_paper")
+                        self.app._add_log(
+                            "debug",
+                            "Fresh paper fetch returned None, using updated_paper",
+                        )
                         # Fallback to updated_paper if fresh fetch fails
                         self.paper = updated_paper
                         if self.callback:
@@ -383,7 +404,7 @@ class DetailDialog(ModalScreen):
                     )
                     self.app.load_papers()  # Reload papers to reflect changes
                     self.app.notify(
-                        f"Successfully deleted {format_count(deleted_count, 'paper')}",
+                        f"Successfully deleted {_pluralizer.pluralize('paper', deleted_count, True)}",
                         severity="information",
                     )
                     if self.callback:

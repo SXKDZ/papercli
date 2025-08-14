@@ -1,16 +1,18 @@
 from __future__ import annotations
+
 import os
-from typing import List, TYPE_CHECKING, Any, Dict
+from typing import TYPE_CHECKING, Any, Dict, List
 
 import pyperclip
+from pluralizer import Pluralizer
 
 from ng.commands import CommandHandler
-from ng.services import ExportService, ChatService, LLMSummaryService
 from ng.dialogs import ChatDialog
+from ng.services import ChatService, ExportService, LLMSummaryService
 
 if TYPE_CHECKING:
-    from ng.papercli import PaperCLIApp
     from ng.db.models import Paper
+    from ng.papercli import PaperCLIApp
 
 
 class ExportCommandHandler(CommandHandler):
@@ -19,6 +21,7 @@ class ExportCommandHandler(CommandHandler):
     def __init__(self, app: PaperCLIApp):
         super().__init__(app)
         self.export_service = ExportService()
+        self.pluralizer = Pluralizer()
         pdf_dir = os.path.join(os.path.dirname(self.app.db_path), "pdfs")
         self.chat_service = ChatService(app=self.app, pdf_dir=pdf_dir)
         self.llm_summary_service = LLMSummaryService(
@@ -103,7 +106,7 @@ class ExportCommandHandler(CommandHandler):
                     with open(filename, "w", encoding="utf-8") as f:
                         f.write(content)
                     self.app.notify(
-                        f"Exported {len(papers_to_export)} papers to {filename}",
+                        f"Exported {self.pluralizer.pluralize('paper', len(papers_to_export), True)} to {filename}",
                         severity="information",
                     )
                 else:
@@ -115,7 +118,7 @@ class ExportCommandHandler(CommandHandler):
                 try:
                     pyperclip.copy(content)
                     self.app.notify(
-                        f"Copied {len(papers_to_export)} papers to clipboard",
+                        f"Copied {self.pluralizer.pluralize('paper', len(papers_to_export), True)} to clipboard",
                         severity="information",
                     )
                 except pyperclip.PyperclipException:
@@ -125,7 +128,10 @@ class ExportCommandHandler(CommandHandler):
                     )
 
         except Exception as e:
-            self.app.notify(f"Error exporting papers: {e}", severity="error")
+            self.app.notify(
+                f"Error exporting {self.pluralizer.pluralize('paper', len(papers_to_export), True)}: {e}",
+                severity="error",
+            )
 
     async def handle_chat_command(self, provider: str = None):
         """Handle /chat command with optional provider."""

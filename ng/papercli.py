@@ -123,8 +123,6 @@ class PaperCLIApp(App):
 
             if not main_screen_to_update:
                 # If stored reference is None, try to find MainScreen in screen stack
-                from ng.screens.main_screen import MainScreen
-
                 for screen in reversed(self._screen_stack):
                     if isinstance(screen, MainScreen):
                         main_screen_to_update = screen
@@ -376,7 +374,8 @@ You can get an API key from: https://platform.openai.com/api-keys
     return data_dir
 
 
-if __name__ == "__main__":
+def main():
+    """Main entry point for PaperCLI."""
     # Set up environment and get data directory
     data_dir = setup_environment()
 
@@ -384,3 +383,7 @@ if __name__ == "__main__":
     db_path = data_dir / "papers.db"
     app = PaperCLIApp(db_path=str(db_path))
     app.run()
+
+
+if __name__ == "__main__":
+    main()

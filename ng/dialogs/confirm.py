@@ -49,7 +49,7 @@ class ConfirmDialog(ModalScreen):
         height: 3;
         content-align: center middle;
         text-align: center;
-        margin: 0 1;
+        margin: 0 5;
         min-width: 10;
     }
     """

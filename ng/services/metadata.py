@@ -1,10 +1,11 @@
 from __future__ import annotations
+
 import json
 import os
 import re
 import tempfile
 import xml.etree.ElementTree as ET
-from typing import Any, Dict, List, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, List
 
 import bibtexparser
 import PyPDF2
@@ -13,9 +14,10 @@ import rispy
 from openai import OpenAI
 from titlecase import titlecase
 
-from ng.services.prompts import MetadataPrompts, SummaryPrompts
-from ng.services import HTTPClient, fix_broken_lines, normalize_paper_data
+from ng.services.http_utils import HTTPClient
 from ng.services.llm_utils import get_model_parameters
+from ng.services.prompts import MetadataPrompts, SummaryPrompts
+from ng.services.utils import fix_broken_lines, normalize_paper_data
 
 if TYPE_CHECKING:
     from ng.services import PDFManager
@@ -27,7 +29,6 @@ class MetadataExtractor:
     def __init__(self, pdf_manager: PDFManager, app=None):
         self.app = app
         self.pdf_manager = pdf_manager
-    
 
     def extract_from_arxiv(self, arxiv_id: str) -> Dict[str, Any]:
         """Extract metadata from arXiv."""
@@ -384,8 +385,6 @@ class MetadataExtractor:
     def _extract_authors_from_bibtex(self, bibtex_content: str) -> List[str]:
         """Extract authors from BibTeX content."""
         try:
-            import re
-
             # Look for author field in bibtex
             author_match = re.search(
                 r"author\s*=\s*\{([^}]+)\}", bibtex_content, re.IGNORECASE
@@ -651,7 +650,7 @@ class MetadataExtractor:
                     f"Full prompt sent to {model_name}:\n{prompt}",
                 )
 
-            # Build parameters using centralized utility  
+            # Build parameters using centralized utility
             params = get_model_parameters(model_name)
             params["messages"] = [
                 {

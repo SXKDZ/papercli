@@ -110,6 +110,7 @@ class SystemCommandHandler(CommandHandler):
 - Database integrity and structure
 - Orphaned association records and PDF files
 - Papers with absolute PDF paths (should be relative)
+- Papers with missing PDF files
 - System dependencies
 - Terminal capabilities
 - Opportunities for automated cleanup
@@ -189,6 +190,42 @@ Notes:
 
         markdown_lines.extend(orphan_items)
 
+        # Add detailed missing PDF information if available
+        if missing_count > 0:
+            missing_pdf_details = report.get("missing_pdfs", {}).get("details", [])
+            if missing_pdf_details:
+                markdown_lines.extend(["", "### Missing PDF Files Details", ""])
+                for detail in missing_pdf_details[:10]:  # Limit to first 10 for display
+                    paper_id = detail.get("paper_id", "Unknown")
+                    title = detail.get("title", "No title")
+                    pdf_path = detail.get("pdf_path", "No path")
+                    path_type = detail.get("path_type", "unknown")
+                    markdown_lines.append(f"- **Paper {paper_id}**: {title}")
+                    markdown_lines.append(f"  - Path: `{pdf_path}` ({path_type})")
+                
+                if len(missing_pdf_details) > 10:
+                    remaining = len(missing_pdf_details) - 10
+                    markdown_lines.append(f"- ... and {remaining} more papers with missing PDFs")
+
+        # Add PDF statistics section
+        pdf_stats = report.get("pdf_statistics", {})
+        if pdf_stats:
+            markdown_lines.extend(["", "## PDF Collection", "📁 *PDF folder statistics and information*", ""])
+            
+            if pdf_stats.get("pdf_folder_exists", False):
+                total_files = pdf_stats.get("total_pdf_files", 0)
+                total_size = pdf_stats.get("total_size_formatted", "0 B")
+                
+                pdf_info = [
+                    f"- **Total PDF files:** {total_files:,}",
+                    f"- **Total folder size:** {total_size}",
+                ]
+                
+                markdown_lines.extend(pdf_info)
+            else:
+                pdf_folder_path = pdf_stats.get("pdf_folder_path", "Unknown")
+                markdown_lines.append(f"- **PDF folder:** ❌ Does not exist (`{pdf_folder_path}`)")
+
         markdown_lines.extend(["", "## System Health", "💻 *Python environment and dependencies*", ""])
         sys_checks = report["system_checks"]
         python_version = sys_checks['python_version'].split()[0] if sys_checks['python_version'] else "Unknown"
@@ -200,9 +237,6 @@ Notes:
             status_icon = "✅" if status else "❌"
             markdown_lines.append(f"- `{dep}`: {status_icon}")
 
-        if "disk_space" in sys_checks and "free_mb" in sys_checks["disk_space"]:
-            free_mb = sys_checks['disk_space']['free_mb']
-            markdown_lines.append(f"- **Free disk space:** {free_mb:,} MB")
 
         markdown_lines.extend(["", "## Terminal Setup", "🖥️ *Terminal capabilities and configuration*", ""])
         term_checks = report["terminal_checks"]

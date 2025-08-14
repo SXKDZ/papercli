@@ -1,19 +1,19 @@
 from __future__ import annotations
+
 import os
 import threading
 from functools import partial
-from typing import Callable, Any, Dict, List, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable, Dict, List
 
-# Runtime imports for classes used directly
-from ng.services.pdf import PDFManager
+from pluralizer import Pluralizer
+
 from ng.services.metadata import MetadataExtractor
 
+from ng.services.pdf import PDFManager
+
 if TYPE_CHECKING:
-    from ng.services import (
-        PaperService,
-        BackgroundOperationService,
-    )
     from ng.db.models import Paper
+    from ng.services import BackgroundOperationService, PaperService
 
 
 class LLMSummaryService:
@@ -33,6 +33,7 @@ class LLMSummaryService:
         self.metadata_extractor = MetadataExtractor(
             pdf_manager=self.pdf_manager, app=self.app
         )
+        self._pluralizer = Pluralizer()
 
     def _filter_papers_with_pdfs(self, papers: List[Paper]) -> List[Paper]:
         """Filter papers that have accessible PDF files (resolving relative paths)."""
@@ -96,7 +97,7 @@ class LLMSummaryService:
                 )
             else:
                 self.background_service.app.notify(
-                    f"Generating summaries for {tracking['total']} papers...",
+                    f"Generating {self._pluralizer.pluralize('summary', tracking['total'], True)}...",
                     severity="information",
                 )
 
@@ -170,7 +171,7 @@ class LLMSummaryService:
         def on_operation_complete(result, error):
             """Adapter to match BackgroundOperationService callback signature."""
             on_summary_complete(paper, tracking, result, error)
-        
+
         self.background_service.run_operation(
             operation_func=partial(generate_summary, paper),
             operation_name=f"{tracking['operation_prefix']}_{paper.id}",
@@ -183,13 +184,20 @@ class LLMSummaryService:
         if tracking["completed"] < tracking["total"]:
             # Still in progress
             if self.background_service.app:
-                status_msg = f"Generating summaries... ({tracking['completed']}/{tracking['total']} completed)"
+                total_text = self._pluralizer.pluralize(
+                    "summary", tracking["total"], True
+                )
+                completed = tracking["completed"]
+                total = tracking["total"]
+                status_msg = (
+                    f"Generating {total_text}... ({completed}/{total} completed)"
+                )
                 self.background_service.app.notify(status_msg, severity="information")
             return
 
         # All operations are complete, now process results
         success_count = len(tracking["queue"])
-        failed_count = len(tracking["failed"])
+        # Note: we don't need failed_count here; it's used in _finalize_status
 
         if success_count > 0:
             # Process successful summaries
@@ -214,11 +222,11 @@ class LLMSummaryService:
                             f"{tracking['operation_prefix']}_save_attempt_{paper_id}",
                             f"Attempting to save summary for paper ID {paper_id}: {paper_title[:50]}...",
                         )
-                    
+
                     updated_paper, error_msg = self.paper_service.update_paper(
                         paper_id, {"notes": summary}
                     )
-                    
+
                     if error_msg:
                         if self.app:
                             self.app._add_log(
@@ -272,17 +280,24 @@ class LLMSummaryService:
             else:
                 if success_count > 0 and failed_count > 0:
                     self.background_service.app.notify(
-                        f"Completed: {success_count} succeeded, {failed_count} failed",
+                        f"Completed: {self._pluralizer.pluralize('summary', success_count, True)} succeeded, "
+                        f"{self._pluralizer.pluralize('summary', failed_count, True)} failed",
                         severity="warning",
                     )
                 elif success_count > 0:
+                    all_text = self._pluralizer.pluralize(
+                        "summary", success_count, True
+                    )
                     self.background_service.app.notify(
-                        f"All {success_count} summaries generated and saved successfully",
+                        f"All {all_text} generated and saved successfully",
                         severity="information",
                     )
                 elif failed_count > 0:
+                    failed_text = self._pluralizer.pluralize(
+                        "summary", failed_count, True
+                    )
                     self.background_service.app.notify(
-                        f"Failed to generate summaries for all {failed_count} papers",
+                        f"Failed to generate {failed_text}",
                         severity="error",
                     )
                 else:
@@ -290,4 +305,3 @@ class LLMSummaryService:
                         "Summary generation finished with no results",
                         severity="information",
                     )
-

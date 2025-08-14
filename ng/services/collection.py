@@ -1,5 +1,5 @@
 from typing import List, Optional
-from sqlalchemy.orm import joinedload
+
 from sqlalchemy import func
 
 from ng.db.database import get_db_session
@@ -119,7 +119,9 @@ class CollectionService:
     def get_or_create_collection(self, name: str) -> Collection:
         """Get existing collection or create new one."""
         with get_db_session() as session:
-            collection = session.query(Collection).filter(Collection.name == name).first()
+            collection = (
+                session.query(Collection).filter(Collection.name == name).first()
+            )
             if not collection:
                 collection = Collection(name=name)
                 session.add(collection)

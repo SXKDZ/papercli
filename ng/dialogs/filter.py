@@ -1,10 +1,10 @@
-from typing import Callable, Dict, Any, List
+from typing import Any, Callable, Dict, List
 
 from textual.app import ComposeResult
 from textual.containers import Container, HorizontalScroll, VerticalScroll
 from textual.reactive import reactive
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, RadioButton, RadioSet, Static, Select
+from textual.widgets import Button, Input, RadioButton, RadioSet, Select, Static
 
 
 class FilterDialog(ModalScreen):
@@ -115,7 +115,7 @@ class FilterDialog(ModalScreen):
                         yield RadioButton(label, value=value, id=f"field-{value}")
 
                 yield Static("Filter Value:", classes="dialog-label")
-                
+
                 # Content switcher - show input or select based on selected field
                 with Container(id="value-input-container"):
                     yield Input(placeholder="Enter filter value", id="value-input")
@@ -129,7 +129,7 @@ class FilterDialog(ModalScreen):
         self.query_one("#field-all", RadioButton).value = True
         # Set initial focus to the radio set instead of the input
         self.query_one("#field-radio-set", RadioSet).focus()
-        
+
         # Load collections from the app's database
         self._load_collections()
 
@@ -137,6 +137,7 @@ class FilterDialog(ModalScreen):
         """Load available collections from the database."""
         try:
             from ng.services import CollectionService
+
             collection_service = CollectionService()
             collections = collection_service.get_all_collections()
             self.collections = [col.name for col in collections]
@@ -148,7 +149,7 @@ class FilterDialog(ModalScreen):
         """Show appropriate widget (input or select) based on selected field."""
         value_input = self.query_one("#value-input", Input)
         value_select = self.query_one("#value-select", Select)
-        
+
         if field == "type":
             # Show select widget for paper types
             value_input.add_class("hidden")
@@ -157,7 +158,7 @@ class FilterDialog(ModalScreen):
             type_options = [(ptype.title(), ptype) for ptype in self.paper_types]
             value_select.set_options(type_options)
             value_select.focus()
-            
+
         elif field == "collection":
             if self.collections:
                 # Show select widget for collections if collections exist
@@ -171,9 +172,11 @@ class FilterDialog(ModalScreen):
                 # Fall back to input field if no collections are available
                 value_select.add_class("hidden")
                 value_input.remove_class("hidden")
-                value_input.placeholder = "Enter collection name (no collections in database)"
+                value_input.placeholder = (
+                    "Enter collection name (no collections in database)"
+                )
                 value_input.focus()
-            
+
         else:
             # Show input widget for other fields
             value_select.add_class("hidden")
@@ -190,7 +193,7 @@ class FilterDialog(ModalScreen):
 
     def action_apply_filter(self) -> None:
         field = self.selected_field
-        
+
         # Get value from appropriate widget
         if field == "type":
             # Paper type always uses select widget
@@ -202,7 +205,9 @@ class FilterDialog(ModalScreen):
             value_input = self.query_one("#value-input", Input)
             if not value_select.has_class("hidden"):
                 # Using select widget
-                value = str(value_select.value) if value_select.value is not None else ""
+                value = (
+                    str(value_select.value) if value_select.value is not None else ""
+                )
             else:
                 # Using input widget (fallback when no collections)
                 value = value_input.value.strip()
@@ -211,7 +216,7 @@ class FilterDialog(ModalScreen):
             value = self.query_one("#value-input", Input).value.strip()
 
         if not value:
-            if hasattr(self.app, 'notify'):
+            if hasattr(self.app, "notify"):
                 self.app.notify("Filter value cannot be empty", severity="warning")
             return
 

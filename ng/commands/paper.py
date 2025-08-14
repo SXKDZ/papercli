@@ -2,20 +2,18 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Dict, List
 
+from pluralizer import Pluralizer
+
 from ng.commands import CommandHandler
 from ng.db.models import Paper
 from ng.dialogs import AddDialog, ConfirmDialog, DetailDialog, EditDialog
-from ng.services import (
-    AddPaperService,
-    PaperService,
-    PDFService,
-    ValidationService,
-    format_count,
-)
+from ng.services import AddPaperService, PaperService, PDFService, ValidationService
 from ng.services.background import BackgroundOperationService
 
 if TYPE_CHECKING:
     from ng.papercli import PaperCLIApp
+
+_pluralizer = Pluralizer()
 
 
 class PaperCommandHandler(CommandHandler):
@@ -532,7 +530,8 @@ class PaperCommandHandler(CommandHandler):
             return
 
         paper_titles = [p.title for p in papers_to_delete]
-        confirm_message = f"Are you sure you want to delete {format_count(len(papers_to_delete), 'paper')}?\n\n"
+        pluralized_papers = _pluralizer.pluralize("paper", len(papers_to_delete), True)
+        confirm_message = f"Are you sure you want to delete {pluralized_papers}?\n\n"
         confirm_message += "\n".join([f"- {title}" for title in paper_titles[:5]])
         if len(paper_titles) > 5:
             confirm_message += f"\n...and {len(paper_titles) - 5} more."
@@ -544,7 +543,7 @@ class PaperCommandHandler(CommandHandler):
                     deleted_count = self.paper_service.delete_papers(paper_ids)
                     self.app.load_papers()  # Reload papers to reflect changes
                     self.app.notify(
-                        f"Successfully deleted {format_count(deleted_count, 'paper')}",
+                        f"Successfully deleted {_pluralizer.pluralize('paper', deleted_count, True)}",
                         severity="information",
                     )
                 except Exception as e:

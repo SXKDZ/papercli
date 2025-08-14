@@ -2,10 +2,10 @@ import os
 from pathlib import Path
 from typing import Any, Callable, Dict
 
-from openai import OpenAI
 from dotenv import load_dotenv, set_key
+from openai import OpenAI
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, VerticalScroll
+from textual.containers import Container, Horizontal
 from textual.screen import ModalScreen
 from textual.widgets import (
     Button,
@@ -20,6 +20,7 @@ from textual.widgets import (
     TabPane,
     TextArea,
 )
+
 from ng.services.llm_utils import is_reasoning_model
 
 
@@ -132,7 +133,7 @@ class ConfigDialog(ModalScreen):
         self.default_config = {
             "OPENAI_MODEL": "gpt-4o",
             "OPENAI_API_KEY": "",
-            "OPENAI_MAX_TOKENS": "4000", 
+            "OPENAI_MAX_TOKENS": "4000",
             "OPENAI_TEMPERATURE": "0.7",
             "PAPERCLI_REMOTE_PATH": "",
             "PAPERCLI_AUTO_SYNC": "false",
@@ -151,7 +152,7 @@ class ConfigDialog(ModalScreen):
             # Filter for chat models and separate reasoning vs standard models
             reasoning_models = []
             standard_models = []
-            
+
             for model in models_response.data:
                 model_id = model.id
                 # Include all GPT models, o1, o3 series
@@ -164,7 +165,7 @@ class ConfigDialog(ModalScreen):
             self.reasoning_models = sorted(reasoning_models)
             self.standard_models = sorted(standard_models)
             self.available_models = sorted(reasoning_models + standard_models)
-            
+
         except Exception:
             # Fallback to common models
             self.reasoning_models = [
@@ -182,15 +183,18 @@ class ConfigDialog(ModalScreen):
                 "gpt-3.5-turbo",
             ]
             self.available_models = sorted(self.reasoning_models + self.standard_models)
-    
-    
+
     def _load_available_themes(self):
         """Load available Textual themes dynamically."""
         try:
             from textual.theme import BUILTIN_THEMES
+
             # Get all available theme names
             theme_names = list(BUILTIN_THEMES.keys())
-            self.available_themes = [(name.replace('-', ' ').replace('_', ' ').title(), name) for name in sorted(theme_names)]
+            self.available_themes = [
+                (name.replace("-", " ").replace("_", " ").title(), name)
+                for name in sorted(theme_names)
+            ]
         except ImportError:
             # Fallback to common themes if BUILTIN_THEMES is not available
             self.available_themes = [
@@ -203,23 +207,23 @@ class ConfigDialog(ModalScreen):
                 ("Monokai", "monokai"),
                 ("Dracula", "dracula"),
             ]
-    
+
     def _build_model_options(self):
         """Build model options with visual separation between standard and reasoning models."""
         options = []
-        
+
         # Add standard models section
         if self.standard_models:
             options.append(("--- Standard Models ---", "SEPARATOR_STANDARD"))
             for model in self.standard_models:
                 options.append((model, model))
-        
-        # Add reasoning models section  
+
+        # Add reasoning models section
         if self.reasoning_models:
             options.append(("--- Reasoning Models ---", "SEPARATOR_REASONING"))
             for model in self.reasoning_models:
                 options.append((model, model))
-        
+
         return options
 
     def compose(self) -> ComposeResult:
@@ -235,8 +239,14 @@ class ConfigDialog(ModalScreen):
                         model_options = self._build_model_options()
                         current_model = os.getenv("OPENAI_MODEL", "gpt-4o")
                         # Ensure we have a valid default model
-                        default_model = current_model if current_model in self.available_models else (
-                            self.available_models[0] if self.available_models else "gpt-4o"
+                        default_model = (
+                            current_model
+                            if current_model in self.available_models
+                            else (
+                                self.available_models[0]
+                                if self.available_models
+                                else "gpt-4o"
+                            )
                         )
                         yield Select(
                             options=model_options,
@@ -294,9 +304,12 @@ class ConfigDialog(ModalScreen):
                     # Auto-sync radio buttons
                     with Horizontal(classes="form-row"):
                         yield Label("Auto-sync:", classes="form-label")
-                        with RadioSet(id="auto-sync-radio-set", classes="form-radio-set"):
+                        with RadioSet(
+                            id="auto-sync-radio-set", classes="form-radio-set"
+                        ):
                             auto_sync = (
-                                os.getenv("PAPERCLI_AUTO_SYNC", "false").lower() == "true"
+                                os.getenv("PAPERCLI_AUTO_SYNC", "false").lower()
+                                == "true"
                             )
                             yield RadioButton(
                                 "Enable",
@@ -401,7 +414,9 @@ class ConfigDialog(ModalScreen):
             try:
                 max_tokens = int(max_tokens_input.value)
                 if max_tokens <= 0:
-                    self.notify("Max tokens must be a positive number", severity="error")
+                    self.notify(
+                        "Max tokens must be a positive number", severity="error"
+                    )
                     return
             except ValueError:
                 self.notify("Max tokens must be a valid number", severity="error")
@@ -432,9 +447,11 @@ class ConfigDialog(ModalScreen):
 
             # Model - skip separator values
             selected_model = model_select.value
-            if (selected_model and 
-                not str(selected_model).startswith("SEPARATOR_") and 
-                selected_model != os.getenv("OPENAI_MODEL", "gpt-4o")):
+            if (
+                selected_model
+                and not str(selected_model).startswith("SEPARATOR_")
+                and selected_model != os.getenv("OPENAI_MODEL", "gpt-4o")
+            ):
                 changes["OPENAI_MODEL"] = selected_model
 
             # API Key (handle masking)
@@ -465,7 +482,11 @@ class ConfigDialog(ModalScreen):
             # Auto-sync
             auto_sync_value = "false"  # default
             if auto_sync_radio_set.pressed_button:
-                auto_sync_value = "true" if auto_sync_radio_set.pressed_button.id == "auto-sync-enable" else "false"
+                auto_sync_value = (
+                    "true"
+                    if auto_sync_radio_set.pressed_button.id == "auto-sync-enable"
+                    else "false"
+                )
             if auto_sync_value != os.getenv("PAPERCLI_AUTO_SYNC", "false"):
                 changes["PAPERCLI_AUTO_SYNC"] = auto_sync_value
 
@@ -477,14 +498,16 @@ class ConfigDialog(ModalScreen):
             selected_theme = None
             if theme_radio_set.pressed_button:
                 selected_theme = theme_radio_set.pressed_button.name
-            if selected_theme and selected_theme != os.getenv("PAPERCLI_THEME", "textual-dark"):
+            if selected_theme and selected_theme != os.getenv(
+                "PAPERCLI_THEME", "textual-dark"
+            ):
                 changes["PAPERCLI_THEME"] = selected_theme
 
             # Save changes to environment and .env file
             if changes:
                 self._save_env_changes(changes)
                 # Apply theme change after saving
-                if "PAPERCLI_THEME" in changes and hasattr(self.app, 'theme'):
+                if "PAPERCLI_THEME" in changes and hasattr(self.app, "theme"):
                     try:
                         self.app.theme = changes["PAPERCLI_THEME"]
                     except Exception:
@@ -502,15 +525,15 @@ class ConfigDialog(ModalScreen):
     def _save_env_changes(self, changes: Dict[str, str]) -> None:
         """Save environment changes to .env file using dotenv."""
         env_file_path = self._get_env_file_path()
-        
+
         # Create parent directory if it doesn't exist
         env_file_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         # Update each environment variable and save to .env file
         for key, value in changes.items():
             os.environ[key] = value
             set_key(str(env_file_path), key, value)
-        
+
     def _reload_environment(self) -> None:
         """Reload environment variables from .env file using dotenv."""
         env_file_path = self._get_env_file_path()
@@ -536,7 +559,6 @@ class ConfigDialog(ModalScreen):
         home_env = Path.home() / ".papercli" / ".env"
         return home_env
 
-
     def action_cancel(self) -> None:
         """Cancel and close dialog."""
         if self.callback:
@@ -548,15 +570,15 @@ class ConfigDialog(ModalScreen):
         try:
             # Apply default configuration to environment and save to .env
             self._save_env_changes(self.default_config)
-            
+
             # Apply theme change immediately
-            if hasattr(self.app, 'theme'):
+            if hasattr(self.app, "theme"):
                 try:
                     self.app.theme = self.default_config["PAPERCLI_THEME"]
                 except Exception:
                     # If theme doesn't exist, fall back to textual-dark
                     self.app.theme = "textual-dark"
-            
+
             # Reset UI elements to default values
             model_select = self.query_one("#model-select", Select)
             default_model = self.default_config["OPENAI_MODEL"]
@@ -581,8 +603,10 @@ class ConfigDialog(ModalScreen):
             auto_sync_radio_set = self.query_one("#auto-sync-radio-set", RadioSet)
             auto_sync_disable = self.query_one("#auto-sync-disable", RadioButton)
             auto_sync_enable = self.query_one("#auto-sync-enable", RadioButton)
-            
-            is_auto_sync_enabled = self.default_config["PAPERCLI_AUTO_SYNC"].lower() == "true"
+
+            is_auto_sync_enabled = (
+                self.default_config["PAPERCLI_AUTO_SYNC"].lower() == "true"
+            )
             auto_sync_enable.value = is_auto_sync_enabled
             auto_sync_disable.value = not is_auto_sync_enabled
 
@@ -592,17 +616,19 @@ class ConfigDialog(ModalScreen):
             # Reset theme radio buttons
             theme_radio_set = self.query_one("#theme-radio-set", RadioSet)
             default_theme = self.default_config["PAPERCLI_THEME"]
-            
+
             # Reset all theme radio buttons first
             for theme_name, theme_value in self.available_themes:
                 try:
                     theme_button = self.query_one(f"#theme-{theme_value}", RadioButton)
-                    theme_button.value = (theme_value == default_theme)
+                    theme_button.value = theme_value == default_theme
                 except Exception:
                     pass  # Skip if button not found
-            
-            self.notify("Configuration reset to defaults and applied", severity="information")
-            
+
+            self.notify(
+                "Configuration reset to defaults and applied", severity="information"
+            )
+
         except Exception as e:
             self.notify(f"Error resetting configuration: {e}", severity="error")
 

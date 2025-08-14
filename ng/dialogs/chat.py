@@ -7,6 +7,7 @@ from typing import Any, Callable, Dict, List
 
 import PyPDF2
 from openai import OpenAI
+from pluralizer import Pluralizer
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
 from textual.screen import ModalScreen
@@ -22,7 +23,8 @@ from ng.services import (
 )
 from ng.services.llm_utils import get_model_parameters
 from ng.services.prompts import ChatPrompts
-from ng.services import format_count
+
+_pluralizer = Pluralizer()
 
 
 class ChatDialog(ModalScreen):
@@ -213,9 +215,7 @@ class ChatDialog(ModalScreen):
 
     def compose(self) -> ComposeResult:
         with Container(id="chat-container"):
-            selection_text = format_count(
-                len(self.papers), "paper", include_number=True
-            )
+            selection_text = _pluralizer.pluralize("paper", len(self.papers), True)
             yield Static(f"Chat with {selection_text} selected", id="chat-title")
             with VerticalScroll(id="chat-history"):
                 pass  # Content will be dynamically added

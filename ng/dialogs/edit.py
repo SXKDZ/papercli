@@ -1,6 +1,7 @@
 import os
 from typing import Any, Callable, Dict, List
 
+from pluralizer import Pluralizer
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
 from textual.reactive import reactive
@@ -279,6 +280,7 @@ class EditDialog(ModalScreen):
         self.error_display_callback = error_display_callback
         self.read_only_fields = read_only_fields or []
         self.parent_app = app
+        self._pluralizer = Pluralizer()
 
         if self.parent_app:
             self.background_service = BackgroundOperationService(app=self.parent_app)
@@ -761,8 +763,9 @@ class EditDialog(ModalScreen):
 
             self._update_fields_with_extracted_data(extracted_data)
             if self.parent_app:
+                fields_text = self._pluralizer.pluralize("field", len(changes), True)
                 self.parent_app.notify(
-                    f"PDF metadata extracted and applied: {len(changes)} fields updated",
+                    f"PDF metadata extracted and applied: {fields_text} updated",
                     severity="information",
                 )
 

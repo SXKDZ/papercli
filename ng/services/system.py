@@ -1,10 +1,11 @@
 from __future__ import annotations
+
 import os
-import re
 import platform
+import re
 import subprocess
 import traceback
-from typing import Any, Dict, Optional, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
 import pyperclip
 
@@ -100,12 +101,18 @@ class SystemService:
         """
         try:
             if self.app:
-                self.app._add_log("system_download_start", f"SystemService.download_pdf called with source='{source}', identifier='{identifier}', download_dir='{download_dir}'")
-            
+                self.app._add_log(
+                    "system_download_start",
+                    f"SystemService.download_pdf called with source='{source}', identifier='{identifier}', download_dir='{download_dir}'",
+                )
+
             # Create download directory
             os.makedirs(download_dir, exist_ok=True)
             if self.app:
-                self.app._add_log("system_download_debug", f"Created/verified download directory: {download_dir}")
+                self.app._add_log(
+                    "system_download_debug",
+                    f"Created/verified download directory: {download_dir}",
+                )
 
             # Generate URL based on source
             if source == "arxiv":
@@ -116,11 +123,17 @@ class SystemService:
                 )  # Allow digits, dots, and 'v' for versions
                 pdf_url = f"https://arxiv.org/pdf/{clean_id}.pdf"
                 if self.app:
-                    self.app._add_log("system_download_debug", f"arXiv: original_id='{identifier}' -> clean_id='{clean_id}' -> url='{pdf_url}'")
+                    self.app._add_log(
+                        "system_download_debug",
+                        f"arXiv: original_id='{identifier}' -> clean_id='{clean_id}' -> url='{pdf_url}'",
+                    )
             elif source == "openreview":
                 pdf_url = f"https://openreview.net/pdf?id={identifier}"
                 if self.app:
-                    self.app._add_log("system_download_debug", f"OpenReview: identifier='{identifier}' -> url='{pdf_url}'")
+                    self.app._add_log(
+                        "system_download_debug",
+                        f"OpenReview: identifier='{identifier}' -> url='{pdf_url}'",
+                    )
             else:
                 error_msg = f"Unsupported source: {source}"
                 if self.app:
@@ -129,40 +142,59 @@ class SystemService:
 
             # Use PDFManager to handle everything with proper naming
             if self.app:
-                self.app._add_log("system_download_debug", f"Setting PDFManager pdf_dir to: {download_dir}")
+                self.app._add_log(
+                    "system_download_debug",
+                    f"Setting PDFManager pdf_dir to: {download_dir}",
+                )
             self.pdf_manager.pdf_dir = download_dir  # Set download directory
             # Set app reference for PDFManager logging
             self.pdf_manager.app = self.app
 
             # Download with proper temp->final naming
             if self.app:
-                self.app._add_log("system_download_debug", f"Calling PDFManager.download_pdf_from_url_with_proper_naming with url='{pdf_url}'")
-            
+                self.app._add_log(
+                    "system_download_debug",
+                    f"Calling PDFManager.download_pdf_from_url_with_proper_naming with url='{pdf_url}'",
+                )
+
             pdf_path, error_msg, download_duration = (
                 self.pdf_manager.download_pdf_from_url_with_proper_naming(
                     pdf_url, paper_data
                 )
             )
-            
+
             if self.app:
-                self.app._add_log("system_download_timing", f"PDFManager operation took {download_duration:.2f} seconds")
-            
+                self.app._add_log(
+                    "system_download_timing",
+                    f"PDFManager operation took {download_duration:.2f} seconds",
+                )
+
             if self.app:
-                self.app._add_log("system_download_result", f"PDFManager result: pdf_path='{pdf_path}', error_msg='{error_msg}'")
+                self.app._add_log(
+                    "system_download_result",
+                    f"PDFManager result: pdf_path='{pdf_path}', error_msg='{error_msg}'",
+                )
 
             if error_msg:
                 if self.app:
-                    self.app._add_log("system_download_error", f"PDF download failed: {error_msg}")
+                    self.app._add_log(
+                        "system_download_error", f"PDF download failed: {error_msg}"
+                    )
                 return None, error_msg, download_duration
 
             if self.app:
-                self.app._add_log("system_download_success", f"PDF download successful: {pdf_path}")
+                self.app._add_log(
+                    "system_download_success", f"PDF download successful: {pdf_path}"
+                )
             return pdf_path, "", download_duration
 
         except Exception as e:
             error_msg = f"Error downloading PDF: {str(e)}\n{traceback.format_exc()}"
             if self.app:
-                self.app._add_log("system_download_exception", f"Exception in SystemService.download_pdf: {error_msg}")
+                self.app._add_log(
+                    "system_download_exception",
+                    f"Exception in SystemService.download_pdf: {error_msg}",
+                )
             return None, error_msg, 0.0
 
     def open_file_location(self, file_path: str) -> Tuple[bool, str]:

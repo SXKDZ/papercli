@@ -48,6 +48,7 @@ class DatabaseHealthService:
                 "orphaned_pdfs": self._find_orphaned_pdfs(),
                 "absolute_pdf_paths": self._find_absolute_pdf_paths(),
                 "missing_pdfs": self._find_missing_pdfs(),
+                "pdf_statistics": self._get_pdf_statistics(),
                 "system_checks": self._check_system_health(),
                 "terminal_checks": self._check_terminal_capabilities(),
                 "issues_found": [],
@@ -212,9 +213,9 @@ class DatabaseHealthService:
             session = self.Session()
             try:
                 db_pdf_paths = {
-                    Path(p.file_path).name
+                    Path(p.pdf_path).name
                     for p in session.query(Paper)
-                    .filter(Paper.file_path.isnot(None))
+                    .filter(Paper.pdf_path.isnot(None))
                     .all()
                 }
                 for pdf_file in pdf_dir.glob("*.pdf"):
@@ -239,7 +240,7 @@ class DatabaseHealthService:
             papers_with_abs_paths = (
                 session.query(Paper)
                 .filter(
-                    Paper.file_path.isnot(None),
+                    Paper.pdf_path.isnot(None),
                     # This is a placeholder, actual check needs to be more robust
                 )
                 .all()
@@ -247,7 +248,7 @@ class DatabaseHealthService:
 
             # Manual check for absolute paths
             for paper in papers_with_abs_paths:
-                if paper.file_path and Path(paper.file_path).is_absolute():
+                if paper.pdf_path and Path(paper.pdf_path).is_absolute():
                     absolute_paths.append(paper.id)
 
         except Exception as e:
@@ -265,24 +266,119 @@ class DatabaseHealthService:
         """Finds papers whose linked PDF files are missing from disk."""
         session = self.Session()
         missing_pdfs = []
+        missing_pdf_details = []
         pdf_dir = Path(self.db_path).parent / "pdfs"
+        
+        self._add_log("missing_pdfs_start", f"Checking for missing PDFs in {pdf_dir}")
+        
         try:
-            papers_with_files = (
-                session.query(Paper).filter(Paper.file_path.isnot(None)).all()
-            )
-            for paper in papers_with_files:
-                if paper.file_path:
-                    full_path = pdf_dir / Path(paper.file_path).name
+            # Get all papers
+            all_papers = session.query(Paper).all()
+            papers_with_paths = [p for p in all_papers if p.pdf_path]
+            papers_without_paths = [p for p in all_papers if not p.pdf_path]
+            
+            self._add_log("missing_pdfs_info", f"Found {len(all_papers)} total papers: {len(papers_with_paths)} with PDF paths, {len(papers_without_paths)} without PDF paths")
+            
+            # Check papers without PDF paths first
+            for paper in papers_without_paths:
+                missing_pdfs.append(paper.id)
+                missing_pdf_details.append({
+                    "paper_id": paper.id,
+                    "title": paper.title[:50] + "..." if paper.title and len(paper.title) > 50 else paper.title,
+                    "pdf_path": "No PDF path set",
+                    "resolved_path": "N/A",
+                    "path_type": "none"
+                })
+                self._add_log("missing_pdfs_found", f"Paper {paper.id} has no PDF path set")
+            
+            # Then check papers with PDF paths for file existence
+            for paper in papers_with_paths:
+                if paper.pdf_path:
+                    # Handle both relative and absolute paths properly
+                    if Path(paper.pdf_path).is_absolute():
+                        # Absolute path - check directly
+                        full_path = Path(paper.pdf_path)
+                    else:
+                        # Relative path - resolve relative to PDF directory
+                        full_path = pdf_dir / paper.pdf_path
+                    
                     if not full_path.exists():
                         missing_pdfs.append(paper.id)
+                        missing_pdf_details.append({
+                            "paper_id": paper.id,
+                            "title": paper.title[:50] + "..." if paper.title and len(paper.title) > 50 else paper.title,
+                            "pdf_path": paper.pdf_path,
+                            "resolved_path": str(full_path),
+                            "path_type": "absolute" if Path(paper.pdf_path).is_absolute() else "relative"
+                        })
+                        self._add_log("missing_pdfs_found", f"Missing PDF for paper {paper.id}: {paper.pdf_path}")
+                        
         except Exception as e:
             self._add_log("missing_pdfs_error", f"Error finding missing PDFs: {e}")
         finally:
             session.close()
+            
+        self._add_log("missing_pdfs_complete", f"Found {len(missing_pdfs)} papers with missing PDF files")
+        
         return {
             "summary": {"missing_pdf_count": len(missing_pdfs)},
-            "details": missing_pdfs,
+            "details": missing_pdf_details,
         }
+
+    def _get_pdf_statistics(self) -> Dict[str, Any]:
+        """Get statistics about the PDF folder including file count and total size."""
+        pdf_dir = Path(self.db_path).parent / "pdfs"
+        
+        self._add_log("pdf_stats_start", f"Collecting PDF statistics from {pdf_dir}")
+        
+        stats = {
+            "pdf_folder_exists": False,
+            "total_pdf_files": 0,
+            "total_size_bytes": 0,
+            "total_size_formatted": "0 B",
+            "pdf_folder_path": str(pdf_dir)
+        }
+        
+        try:
+            if not pdf_dir.exists():
+                self._add_log("pdf_stats_info", "PDF folder does not exist")
+                return stats
+                
+            stats["pdf_folder_exists"] = True
+            pdf_files = list(pdf_dir.glob("*.pdf"))
+            stats["total_pdf_files"] = len(pdf_files)
+            
+            if pdf_files:
+                total_size = 0
+                for pdf_file in pdf_files:
+                    try:
+                        size = pdf_file.stat().st_size
+                        total_size += size
+                    except Exception as e:
+                        self._add_log("pdf_stats_warning", f"Error getting size for {pdf_file.name}: {e}")
+                        continue
+                
+                stats["total_size_bytes"] = total_size
+                stats["total_size_formatted"] = self._format_file_size(total_size)
+            
+            self._add_log("pdf_stats_complete", f"Found {stats['total_pdf_files']} PDF files, total size: {stats['total_size_formatted']}")
+            
+        except Exception as e:
+            self._add_log("pdf_stats_error", f"Error collecting PDF statistics: {e}")
+            stats["error"] = str(e)
+            
+        return stats
+
+    def _format_file_size(self, size_bytes: int) -> str:
+        """Format file size in human readable format."""
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        elif size_bytes < 1024 * 1024:
+            return f"{size_bytes / 1024:.1f} KB"
+        elif size_bytes < 1024 * 1024 * 1024:
+            return f"{size_bytes / (1024 * 1024):.1f} MB"
+        else:
+            return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
 
     def _check_system_health(self) -> Dict[str, Any]:
         """Checks system-level health (Python version, dependencies)."""
@@ -450,9 +546,9 @@ class DatabaseHealthService:
             session = self.Session()
             try:
                 db_pdf_paths = {
-                    Path(p.file_path).name
+                    Path(p.pdf_path).name
                     for p in session.query(Paper)
-                    .filter(Paper.file_path.isnot(None))
+                    .filter(Paper.pdf_path.isnot(None))
                     .all()
                 }
                 for pdf_file in pdf_dir.glob("*.pdf"):
@@ -490,21 +586,21 @@ class DatabaseHealthService:
             )
 
             for paper in papers_with_abs_paths:
-                if paper.file_path and Path(paper.file_path).is_absolute():
+                if paper.pdf_path and Path(paper.pdf_path).is_absolute():
                     try:
                         # Make path relative to the pdf_dir
-                        relative_path = Path(paper.file_path).relative_to(pdf_dir)
-                        paper.file_path = str(relative_path)
+                        relative_path = Path(paper.pdf_path).relative_to(pdf_dir)
+                        paper.pdf_path = str(relative_path)
                         session.add(paper)
                         fixed_count += 1
                         self._add_log(
                             "fix_path",
-                            f"Fixed absolute path for paper {paper.id}: {paper.file_path}",
+                            f"Fixed absolute path for paper {paper.id}: {paper.pdf_path}",
                         )
                     except ValueError:  # Path is not relative to pdf_dir
                         self._add_log(
                             "fix_path_warning",
-                            f"Could not make path relative for paper {paper.id}: {paper.file_path}",
+                            f"Could not make path relative for paper {paper.id}: {paper.pdf_path}",
                         )
 
             session.commit()
@@ -521,10 +617,10 @@ class DatabaseHealthService:
         renamed_count = 0
         pdf_dir = Path(self.db_path).parent / "pdfs"
         try:
-            papers = session.query(Paper).filter(Paper.file_path.isnot(None)).all()
+            papers = session.query(Paper).filter(Paper.pdf_path.isnot(None)).all()
             for paper in papers:
-                if paper.file_path:
-                    old_path = pdf_dir / Path(paper.file_path).name
+                if paper.pdf_path:
+                    old_path = pdf_dir / Path(paper.pdf_path).name
                     if old_path.exists():
                         # Generate new filename based on convention
                         new_filename = self._generate_pdf_filename(paper)
@@ -533,7 +629,7 @@ class DatabaseHealthService:
                         if old_path != new_path:
                             try:
                                 os.rename(old_path, new_path)
-                                paper.file_path = new_filename  # Update DB record
+                                paper.pdf_path = new_filename  # Update DB record
                                 session.add(paper)
                                 renamed_count += 1
                                 self._add_log(
@@ -572,8 +668,8 @@ class DatabaseHealthService:
 
         # Use a hash of the PDF content for uniqueness (if PDF exists)
         file_hash = ""
-        if paper.file_path:
-            full_path = Path(self.db_path).parent / "pdfs" / Path(paper.file_path).name
+        if paper.pdf_path:
+            full_path = Path(self.db_path).parent / "pdfs" / Path(paper.pdf_path).name
             if full_path.exists():
                 import hashlib
 

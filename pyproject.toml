@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "papercli"
-version = "1.2.3"
+version = "2.0.0"
 description = "A command-line paper management system for researchers and academics"
 readme = "README.md"
 license = {text = "MIT"}
@@ -39,7 +39,6 @@ keywords = [
 ]
 requires-python = ">=3.8"
 dependencies = [
-    "prompt-toolkit>=3.0.0",
     "SQLAlchemy>=2.0.0",
     "alembic>=1.12.0",
     "requests>=2.31.0",
@@ -58,6 +57,9 @@ dependencies = [
     "rispy",
     "packaging>=21.0",
     "pyperclip>=1.8.0",
+    "textual",
+    "textual-autocomplete",
+    "pluralizer>=2.0.0",
 ]
 
 [project.optional-dependencies]
@@ -75,14 +77,14 @@ dev = [
 "Documentation" = "https://github.com/SXKDZ/papercli#readme"
 
 [project.scripts]
-papercli = "app.papercli:main"
+papercli = "ng.papercli:main"
 
 [tool.setuptools]
-packages = ["app", "app.alembic"]
+packages = ["ng", "ng.alembic"]
 include-package-data = true
 
 [tool.setuptools.package-data]
-app = ["*.py", "*.ini", "alembic/*.py", "alembic/*.mako", "alembic/versions/*.py"]
+ng = ["*.py", "*.ini", "alembic/*.py", "alembic/*.mako", "alembic/versions/*.py"]
 
 [tool.black]
 line-length = 88

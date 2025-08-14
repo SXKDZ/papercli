@@ -286,14 +286,8 @@ class PaperList(DataTable):
         """Sets the papers for the table and updates the display."""
         self.papers = papers or []
         self.selected_paper_ids.clear()
-        old_current = self.current_paper_id
         self.current_paper_id = None
         self.in_select_mode = False
-        if hasattr(self, "app") and self.app and old_current:
-            self.app._add_log(
-                "current_paper_cleared",
-                f"set_papers cleared current_paper_id from {old_current} to None",
-            )
         self.populate_table()
         if self.papers:
             self.move_cursor(row=0)
@@ -318,36 +312,15 @@ class PaperList(DataTable):
             current_paper = self.get_current_paper()
             if current_paper:
                 current_row = self.cursor_row
-                if hasattr(self, "app") and self.app:
-                    self.app._add_log(
-                        "toggle_selection_start",
-                        f"current_row={current_row}, paper_id={current_paper.id}",
-                    )
 
                 if current_paper.id in self.selected_paper_ids:
                     self.selected_paper_ids.remove(current_paper.id)
-                    action = "removed"
                 else:
                     self.selected_paper_ids.add(current_paper.id)
-                    action = "added"
-
-                if hasattr(self, "app") and self.app:
-                    self.app._add_log(
-                        "toggle_selection_action",
-                        f"{action} paper_id={current_paper.id}",
-                    )
-
                 self.update_table()
 
                 if 0 <= current_row < len(self.papers):
                     self.move_cursor(row=current_row)
-                    if hasattr(self, "app") and self.app:
-                        self.app._add_log(
-                            "toggle_selection_end",
-                            f"restored cursor to row={current_row}, final_cursor={self.cursor_row}",
-                        )
-
-                # Notify that stats changed
                 self.post_message(self.StatsChanged())
 
     async def _async_toggle_update(self, current_row: int) -> None:
@@ -355,11 +328,6 @@ class PaperList(DataTable):
         await self.update_table_async()
         if 0 <= current_row < len(self.papers):
             self.move_cursor(row=current_row)
-            if hasattr(self, "app") and self.app:
-                self.app._add_log(
-                    "toggle_selection_end",
-                    f"restored cursor to row={current_row}, final_cursor={self.cursor_row}",
-                )
 
     def on_data_table_row_selected(self, event) -> None:
         """Handle row selection via mouse or keyboard."""
@@ -472,25 +440,10 @@ class PaperList(DataTable):
         """Update current paper based on cursor position (for keyboard navigation)."""
         if not self.in_select_mode:
             current_paper = self.get_current_paper()
-            old_current = self.current_paper_id
             if current_paper:
                 self.current_paper_id = current_paper.id
-                if (
-                    hasattr(self, "app")
-                    and self.app
-                    and old_current != current_paper.id
-                ):
-                    self.app._add_log(
-                        "current_paper_updated",
-                        f"keyboard navigation changed current_paper_id from {old_current} to {current_paper.id}",
-                    )
             else:
                 self.current_paper_id = None
-                if hasattr(self, "app") and self.app and old_current:
-                    self.app._add_log(
-                        "current_paper_cleared",
-                        f"keyboard navigation cleared current_paper_id from {old_current} to None",
-                    )
 
     class ShowDetails(Message):
         """Message to request showing paper details."""

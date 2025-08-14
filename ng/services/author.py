@@ -1,5 +1,3 @@
-from typing import List
-
 from ng.db.database import get_db_session
 from ng.db.models import Author
 

@@ -4,6 +4,7 @@ from typing import List, TYPE_CHECKING, Any, Dict
 from ng.commands import CommandHandler
 from ng.dialogs import CollectDialog
 from ng.services import CollectionService
+from pluralizer import Pluralizer
 
 if TYPE_CHECKING:
     from ng.papercli import PaperCLIApp
@@ -15,6 +16,7 @@ class CollectionCommandHandler(CommandHandler):
     def __init__(self, app: PaperCLIApp):
         super().__init__(app)
         self.collection_service = CollectionService()
+        self.pluralizer = Pluralizer()
 
     def _get_target_papers(self):
         """Helper to get selected papers from the main app's paper list."""
@@ -65,25 +67,28 @@ class CollectionCommandHandler(CommandHandler):
             if len(successful_collections) == 1:
                 count = len(papers_to_add)
                 self.app.notify(
-                    f"Added {count} {'paper' if count == 1 else 'papers'} to collection '{successful_collections[0]}'",
+                    f"Added {self.pluralizer.pluralize('paper', count, True)} to collection '{successful_collections[0]}'",
                     severity="information",
                 )
             else:
                 count = len(papers_to_add)
+                collections_text = self.pluralizer.pluralize('collection', len(successful_collections), True)
                 self.app.notify(
-                    f"Added {count} {'paper' if count == 1 else 'papers'} to {len(successful_collections)} collections: {', '.join(successful_collections)}",
+                    f"Added {self.pluralizer.pluralize('paper', count, True)} to {collections_text}: {', '.join(successful_collections)}",
                     severity="information",
                 )
 
         if failed_collections:
             if not successful_collections:
+                collections_text = self.pluralizer.pluralize('collection', len(failed_collections))
                 self.app.notify(
-                    f"Failed to add papers to collections: {', '.join(failed_collections)}",
+                    f"Failed to add papers to {collections_text}: {', '.join(failed_collections)}",
                     severity="error",
                 )
             else:
+                collections_text = self.pluralizer.pluralize('collection', len(failed_collections))
                 self.app.notify(
-                    f"Some collections failed: {', '.join(failed_collections)}",
+                    f"Some {collections_text} failed: {', '.join(failed_collections)}",
                     severity="error",
                 )
 
@@ -146,8 +151,9 @@ class CollectionCommandHandler(CommandHandler):
             #     "Remove from Collection Error",
             #     f"Encountered {len(all_errors)} error(s).\n\n{chr(10).join(all_errors)}",
             # )
+            collections_text = self.pluralizer.pluralize('collection', len(failed_collections))
             self.app.notify(
-                f"Errors removing from collections: {all_errors[0]}...",
+                f"Errors removing from {collections_text}: {all_errors[0]}...",
                 severity="error",
             )
 
@@ -156,13 +162,14 @@ class CollectionCommandHandler(CommandHandler):
             if len(successful_collections) == 1:
                 count = len(papers_to_remove)
                 self.app.notify(
-                    f"Removed {count} {'paper' if count == 1 else 'papers'} from collection '{successful_collections[0]}'",
+                    f"Removed {self.pluralizer.pluralize('paper', count, True)} from collection '{successful_collections[0]}'",
                     severity="information",
                 )
             else:
                 count = len(papers_to_remove)
+                collections_text = self.pluralizer.pluralize('collection', len(successful_collections), True)
                 self.app.notify(
-                    f"Removed {count} {'paper' if count == 1 else 'papers'} from {len(successful_collections)} collections: {', '.join(successful_collections)}",
+                    f"Removed {self.pluralizer.pluralize('paper', count, True)} from {collections_text}: {', '.join(successful_collections)}",
                     severity="information",
                 )
         elif not all_errors:
@@ -196,7 +203,7 @@ class CollectionCommandHandler(CommandHandler):
                 # self._add_log("Collection Purge", "No empty collections found") # Need to implement logging
             else:
                 self.app.notify(
-                    f"Purged {deleted_count} empty collection{'s' if deleted_count != 1 else ''}",
+                    f"Purged {self.pluralizer.pluralize('empty collection', deleted_count, True)}",
                     severity="information",
                 )
                 # self._add_log(

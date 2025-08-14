@@ -1,15 +1,17 @@
 from __future__ import annotations
+
 import os
 import platform
 import subprocess
 import traceback
 import webbrowser
-from typing import Any, Dict, List, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, List
 
 import pyperclip
+from pluralizer import Pluralizer
 
-from ng.services.prompts import ChatPrompts
 from ng.services import PDFManager
+from ng.services.prompts import ChatPrompts
 
 if TYPE_CHECKING:
     from ng.db.models import Paper
@@ -21,6 +23,7 @@ class ChatService:
     def __init__(self, app=None, pdf_dir=None):
         self.app = app
         self.pdf_manager = PDFManager()
+        self._pluralizer = Pluralizer()
 
     def copy_prompt_to_clipboard(self, papers: List[Paper]) -> Dict[str, Any]:
         """Generate and copy paper prompt to clipboard for external LLM use."""
@@ -45,7 +48,7 @@ class ChatService:
 
             return {
                 "success": True,
-                "message": f"Prompt for {len(papers)} paper{'s' if len(papers) != 1 else ''} copied to clipboard",
+                "message": f"Prompt for {self._pluralizer.pluralize('paper', len(papers), True)} copied to clipboard",
                 "prompt_length": len(full_prompt),
             }
 
@@ -124,13 +127,15 @@ class ChatService:
             # Add browser/PDF opening results
             if opened_files:
                 result_parts.append(
-                    f"Opened {provider_name} and {len(opened_files)} PDF file(s)"
+                    f"Opened {provider_name} and {self._pluralizer.pluralize('PDF file', len(opened_files), True)}"
                 )
             else:
                 result_parts.append(f"Opened {provider_name}")
 
             if failed_files:
-                result_parts.append(f"Failed to open {len(failed_files)} file(s)")
+                result_parts.append(
+                    f"Failed to open {self._pluralizer.pluralize('file', len(failed_files), True)}"
+                )
                 # Return combined results
                 return {
                     "success": True,

@@ -1,12 +1,14 @@
+import time
+from typing import Any, Callable, Dict, List
+
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Static, Input, ListView, ListItem, Label, TextArea
-from textual.events import Click
-from textual.message import Message
-from textual.screen import ModalScreen
+from textual.events import Click, MouseDown, MouseUp
 from textual.reactive import reactive
-from typing import Callable, Dict, Any, List, Optional
-from ng.db.models import Paper, Collection
+from textual.screen import ModalScreen
+from textual.widgets import Button, Input, Label, ListItem, ListView, Static
+
+from ng.db.models import Collection, Paper
 
 
 class CollectDialog(ModalScreen):
@@ -168,6 +170,9 @@ class CollectDialog(ModalScreen):
         ("enter", "edit_collection", "Edit Collection"),
     ]
 
+    # Double-click threshold in seconds
+    DOUBLE_CLICK_THRESHOLD_S = 0.5
+
     selected_collection = reactive(None)
     selected_collection_paper = reactive(None)
     selected_all_paper = reactive(None)
@@ -192,6 +197,9 @@ class CollectDialog(ModalScreen):
         self.new_collections = []  # [collection_name]
         self.deleted_collections = []  # [collection_name]
 
+        # Track last click times per item for double-click detection
+        self._last_click_time: Dict[str, float] = {}
+
     def compose(self) -> ComposeResult:
         with Container():
             yield Static("Manage Collections", classes="dialog-title")
@@ -202,25 +210,27 @@ class CollectDialog(ModalScreen):
                     # Column 1: Collections List (30%)
                     with Vertical(classes="column-30"):
                         yield Static("Collections", classes="column-title")
-                        with VerticalScroll(classes="list-container", id="collections-scroll"):
+                        with VerticalScroll(
+                            classes="list-container", id="collections-scroll"
+                        ):
                             yield ListView(id="collections-list")
                         yield Input(
-                            placeholder="New collection name", 
+                            placeholder="New collection name",
                             id="new-collection-input",
-                            classes="new-collection-input"
+                            classes="new-collection-input",
                         )
                         with Horizontal(classes="collection-buttons-row"):
                             yield Button(
-                                "+", 
-                                id="add-collection-button", 
+                                "+",
+                                id="add-collection-button",
                                 variant="success",
-                                classes="compact-collection-button"
+                                classes="compact-collection-button",
                             )
                             yield Button(
-                                "-", 
-                                id="delete-collection-button", 
+                                "-",
+                                id="delete-collection-button",
                                 variant="error",
-                                classes="compact-collection-button"
+                                classes="compact-collection-button",
                             )
 
                     # Column 2: Papers in Selected Collection (30%)
@@ -230,7 +240,9 @@ class CollectDialog(ModalScreen):
                             classes="column-title",
                             id="collection-papers-title",
                         )
-                        with VerticalScroll(classes="list-container", id="collection-papers-scroll"):
+                        with VerticalScroll(
+                            classes="list-container", id="collection-papers-scroll"
+                        ):
                             yield ListView(id="collection-papers-list")
 
                     # Action buttons (10%)
@@ -243,7 +255,9 @@ class CollectDialog(ModalScreen):
                     # Column 3: All Remaining Papers (30%)
                     with Vertical(classes="column-30"):
                         yield Static("All Papers", classes="column-title")
-                        with VerticalScroll(classes="list-container", id="all-papers-scroll"):
+                        with VerticalScroll(
+                            classes="list-container", id="all-papers-scroll"
+                        ):
                             yield ListView(id="all-papers-list")
 
             # Paper Details Panel
@@ -264,12 +278,22 @@ class CollectDialog(ModalScreen):
         self.populate_all_papers_list()
         if self.collections:
             self.select_collection(0)
-    
+
     def _is_collection_changed(self, collection_name: str) -> bool:
         """Check if a collection has been changed (renamed or is new)."""
-        return (collection_name in self.collection_changes.values() or 
-                collection_name in self.new_collections)
-    
+        return (
+            collection_name in self.collection_changes.values()
+            or collection_name in self.new_collections
+        )
+
+    def _is_double_click(self, item_id: str) -> bool:
+        """Return True if clicking the same item within threshold constitutes a double-click."""
+        current_time = time.time()
+        last_time = self._last_click_time.get(item_id, 0.0)
+        is_double = (current_time - last_time) < self.DOUBLE_CLICK_THRESHOLD_S
+        self._last_click_time[item_id] = current_time
+        return is_double
+
     def _is_paper_changed(self, paper_id: int) -> bool:
         """Check if a paper has been moved to/from collections."""
         return any(move[0] == paper_id for move in self.paper_moves)
@@ -279,7 +303,6 @@ class CollectDialog(ModalScreen):
         collections_list = self.query_one("#collections-list", ListView)
         collections_list.clear()
 
-        import time
         timestamp = int(time.time() * 1000)  # Unique timestamp for IDs
 
         for idx, collection in enumerate(self.collections):
@@ -291,19 +314,37 @@ class CollectDialog(ModalScreen):
                         self.collection_name = collection_name
                         self.edit_idx = edit_idx
                         self.edit_timestamp = edit_timestamp
-                    
+
                     def compose(self):
                         yield Static("✏️", classes="edit-symbol")
-                        yield Input(
+
+                        class EditInput(Input):
+                            def on_mouse_down(self, event: MouseDown) -> None:
+                                # Keep the event local so ListView doesn't steal focus, but allow default selection behavior
+                                event.stop()
+                                self.focus()
+
+                            def on_mouse_up(self, event: MouseUp) -> None:
+                                # Keep the event local; don't cancel default so selection works
+                                event.stop()
+
+                            def on_click(self, event: Click) -> None:
+                                # Stop propagation so ListItem/ListView doesn't handle it; allow default click behavior
+                                event.stop()
+                                self.focus()
+
+                        yield EditInput(
                             value=self.collection_name,
                             id=f"edit-collection-{self.edit_idx}-{self.edit_timestamp}",
                             classes="edit-collection-input",
                             disabled=False,
-                            placeholder="Enter collection name"
+                            placeholder="Enter collection name",
                         )
-                
+
                 edit_container = EditingContainer(collection.name, idx, timestamp)
-                item = ListItem(edit_container, id=f"collection-{collection.id}-editing-{timestamp}")
+                item = ListItem(
+                    edit_container, id=f"collection-{collection.id}-editing-{timestamp}"
+                )
             else:
                 # Show label (double-clickable to edit)
                 is_changed = self._is_collection_changed(collection.name)
@@ -311,12 +352,14 @@ class CollectDialog(ModalScreen):
                 label = Label(collection.name, classes=label_classes)
                 item = ListItem(label, id=f"collection-{collection.id}-{timestamp}")
             collections_list.append(item)
-        
+
         # Add new collections that haven't been saved yet
         for new_idx, new_collection_name in enumerate(self.new_collections):
             if new_collection_name not in [c.name for c in self.collections]:
                 label = Label(new_collection_name, classes="changed-collection")
-                item = ListItem(label, id=f"new-collection-{new_collection_name}-{timestamp}")
+                item = ListItem(
+                    label, id=f"new-collection-{new_collection_name}-{timestamp}"
+                )
                 collections_list.append(item)
 
     def populate_all_papers_list(self) -> None:
@@ -324,14 +367,13 @@ class CollectDialog(ModalScreen):
         all_papers_list = self.query_one("#all-papers-list", ListView)
         all_papers_list.clear()
 
-        import time
         timestamp = int(time.time() * 1000)  # Millisecond timestamp for uniqueness
 
         # Get papers that are not in the currently selected collection
         if self.selected_collection:
             collection_paper_ids = {p.id for p in self.selected_collection.papers}
             available_papers = []
-            
+
             for paper in self.papers:
                 if paper.id not in collection_paper_ids:
                     available_papers.append(paper)
@@ -339,8 +381,12 @@ class CollectDialog(ModalScreen):
             available_papers = self.papers
 
         # Sort available papers by modified date (newest first)
-        sorted_available_papers = sorted(available_papers, key=lambda p: p.modified_date or p.added_date, reverse=True)
-        
+        sorted_available_papers = sorted(
+            available_papers,
+            key=lambda p: p.modified_date or p.added_date,
+            reverse=True,
+        )
+
         for idx, paper in enumerate(sorted_available_papers):
             title = paper.title[:50] + "..." if len(paper.title) > 50 else paper.title
             is_changed = self._is_paper_changed(paper.id)
@@ -358,37 +404,39 @@ class CollectDialog(ModalScreen):
         title_widget = self.query_one("#collection-papers-title", Static)
         title_widget.update(f"Papers in '{collection.name}'")
 
-        import time
         timestamp = int(time.time() * 1000)  # Millisecond timestamp for uniqueness
-        
+
         # Sort papers by: 1) newly added in this session (top), 2) modified date (newest first)
         def sort_key(paper):
             # Check if this paper was added in the current session
-            is_newly_added = any(move[0] == paper.id and move[1] == collection.name and move[2] == "add" 
-                               for move in self.paper_moves)
+            is_newly_added = any(
+                move[0] == paper.id and move[1] == collection.name and move[2] == "add"
+                for move in self.paper_moves
+            )
             if is_newly_added:
                 return (0, 0)  # Highest priority - newly added papers go to top
             else:
                 # Sort by modified_date or added_date in descending order
                 date_value = paper.modified_date or paper.added_date
                 return (1, -date_value.timestamp() if date_value else 0)
-        
+
         sorted_papers = sorted(collection.papers, key=sort_key)
-        
+
         for idx, paper in enumerate(sorted_papers):
             title = paper.title[:50] + "..." if len(paper.title) > 50 else paper.title
             is_changed = self._is_paper_changed(paper.id)
             label_classes = "changed-paper" if is_changed else ""
             label = Label(title, classes=label_classes)
             item = ListItem(
-                label, id=f"collection-paper-{collection.id}-{paper.id}-{idx}-{timestamp}"
+                label,
+                id=f"collection-paper-{collection.id}-{paper.id}-{idx}-{timestamp}",
             )
             collection_papers_list.append(item)
 
     def select_collection(self, index: int) -> None:
         """Select a collection and populate its papers."""
         total_collections = len(self.collections) + len(self.new_collections)
-        
+
         if 0 <= index < total_collections:
             if index < len(self.collections):
                 # Selecting an existing collection
@@ -405,11 +453,13 @@ class CollectDialog(ModalScreen):
                             self.name = name
                             self.papers = []
                             self.id = None
-                    
-                    collection = TempCollection(self.new_collections[new_collection_index])
+
+                    collection = TempCollection(
+                        self.new_collections[new_collection_index]
+                    )
                     self.selected_collection = collection
                     self.populate_collection_papers_list(collection)
-            
+
             self.populate_all_papers_list()  # Refresh to exclude papers from selected collection
 
             # Highlight the selected collection
@@ -418,6 +468,14 @@ class CollectDialog(ModalScreen):
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Handle list selection events."""
+        # Ignore list selection changes while editing a collection name
+        if self.editing_collection_index is not None:
+            try:
+                event.prevent_default()
+                event.stop()
+            except Exception:
+                pass
+            return
         if event.list_view.id == "collections-list":
             index = event.list_view.index
             total_collections = len(self.collections) + len(self.new_collections)
@@ -435,29 +493,19 @@ class CollectDialog(ModalScreen):
         # Skip click processing if we're already in editing mode
         if self.editing_collection_index is not None:
             return
-            
+
         # Get the clicked widget
         clicked_widget = event.control
-        
+
         # Check if it's a Label widget inside a ListItem
         if isinstance(clicked_widget, Label):
             list_item = clicked_widget.parent
             if isinstance(list_item, ListItem) and list_item.id:
-                if list_item.id.startswith("collection-") and not list_item.id.endswith("-editing"):
-                    # Check if this is a double-click by detecting rapid succession
-                    import time
-                    current_time = time.time()
-                    
-                    # Store last click time as an attribute
-                    if not hasattr(self, '_last_click_time'):
-                        self._last_click_time = {}
-                    if not hasattr(self, '_last_clicked_item'):
-                        self._last_clicked_item = None
-                    
-                    # Check if this is a double-click (within 0.5 seconds on same item)
-                    if (self._last_clicked_item == list_item.id and 
-                        current_time - self._last_click_time.get(list_item.id, 0) < 0.5):
-                        
+                if list_item.id.startswith("collection-") and not list_item.id.endswith(
+                    "-editing"
+                ):
+                    if self._is_double_click(list_item.id):
+
                         # This is a double-click - start editing
                         collections_list = self.query_one("#collections-list", ListView)
                         for idx, item in enumerate(collections_list.children):
@@ -467,11 +515,8 @@ class CollectDialog(ModalScreen):
                                 # Focus the input field after a short delay
                                 self.call_after_refresh(self._focus_edit_input, idx)
                                 break
-                    
-                    # Update last click info
-                    self._last_click_time[list_item.id] = current_time
-                    self._last_clicked_item = list_item.id
-    
+
+
     def _focus_edit_input(self, idx: int) -> None:
         """Helper method to focus the edit input field."""
         try:
@@ -482,8 +527,56 @@ class CollectDialog(ModalScreen):
                     # Select all text for easy editing
                     widget.action_select_all()
                     break
-        except Exception as e:
+        except Exception:
             pass
+
+    def _is_focus_within_same_editing_row(self, input_widget: Input) -> bool:
+        """Return True if current focus is the same edit input or within the same editing row.
+
+        This guards against transient blur when clicking the edit input itself.
+        """
+        try:
+            focused = self.app.focused
+            if focused is None:
+                return False
+
+            # If focus returned to the same input, definitely ignore blur
+            if focused is input_widget:
+                return True
+
+            # If focus is another Input with the same edit index, also treat as same row
+            if isinstance(focused, Input) and focused.id and input_widget.id:
+                try:
+                    # IDs are in format: edit-collection-{idx}-{timestamp}
+                    focused_parts = focused.id.split("-")
+                    input_parts = input_widget.id.split("-")
+                    if (
+                        len(focused_parts) >= 3
+                        and len(input_parts) >= 3
+                        and focused_parts[0] == "edit"
+                        and input_parts[0] == "edit"
+                        and focused_parts[1] == "collection"
+                        and input_parts[1] == "collection"
+                        and focused_parts[2] == input_parts[2]
+                    ):
+                        return True
+                except Exception:
+                    pass
+
+            # Walk parents of focused widget to see if it's inside the same EditingContainer
+            try:
+                container = input_widget.parent
+                node = focused
+                while node is not None:
+                    if node is container:
+                        return True
+                    node = node.parent
+            except Exception:
+                pass
+
+            return False
+        except Exception:
+            return False
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Handle input submission for collection name editing."""
@@ -493,30 +586,54 @@ class CollectDialog(ModalScreen):
     def on_input_blurred(self, event: Input.Blurred) -> None:
         """Handle input losing focus - auto-exit editing mode."""
         if event.input.id and event.input.id.startswith("edit-collection-"):
-            self._save_collection_edit(event.input)
+            input_widget = event.input
+
+            # Delay handling to allow focus to settle (e.g., when clicking inside the input)
+            def delayed_handle(*_args):
+                try:
+                    is_same_row = self._is_focus_within_same_editing_row(input_widget)
+
+                    if is_same_row:
+                        # Focus stayed within the same editing row; ignore this blur
+                        # Optionally re-focus the input to keep caret visible
+                        try:
+                            input_widget.focus()
+                        except Exception:
+                            pass
+                        return
+                except Exception:
+                    pass
+                # Focus moved outside; proceed to save and exit edit mode
+                self._save_collection_edit(input_widget)
+
+            try:
+                self.app.call_later(delayed_handle, 0.05)
+            except Exception:
+                # Fallback: if scheduling fails, handle immediately
+                delayed_handle()
 
     def _save_collection_edit(self, input_widget: Input) -> None:
         """Helper method to save collection name edit and exit editing mode."""
         if not input_widget.id or not input_widget.id.startswith("edit-collection-"):
             return
-            
+
         # Extract index from ID format: edit-collection-{idx}-{timestamp}
         id_parts = input_widget.id.split("-")
-        
+
         if len(id_parts) >= 3:
             try:
                 idx = int(id_parts[2])  # Get the index part
                 new_name = input_widget.value.strip()
-                
+
                 if new_name and idx < len(self.collections):
                     old_name = self.collections[idx].name
-                    
+
                     if new_name != old_name:
                         # Track the change
                         self.collection_changes[old_name] = new_name
                         # Update the collection name locally for display
                         self.collections[idx].name = new_name
-                    
+
                 # Exit editing mode
                 self.editing_collection_index = None
                 self.populate_collections_list()
@@ -529,7 +646,7 @@ class CollectDialog(ModalScreen):
         """Edit the currently selected collection name."""
         collections_list = self.query_one("#collections-list", ListView)
         index = collections_list.index
-        
+
         if index is not None and 0 <= index < len(self.collections):
             self.editing_collection_index = index
             self.populate_collections_list()
@@ -586,11 +703,11 @@ class CollectDialog(ModalScreen):
             if index < len(self.collections):
                 # Deleting an existing collection
                 collection = self.collections[index]
-                
+
                 # Track all papers being removed from this collection
                 for paper in collection.papers:
                     self.paper_moves.append((paper.id, collection.name, "remove"))
-                
+
                 # Track the collection deletion
                 self.deleted_collections.append(collection.name)
             else:
@@ -604,7 +721,7 @@ class CollectDialog(ModalScreen):
             self.populate_collections_list()
             self.populate_all_papers_list()  # Refresh to show italic styling for moved papers
             self.query_one("#collection-papers-list", ListView).clear()
-            
+
             # Update the title to reflect no collection selected
             title_widget = self.query_one("#collection-papers-title", Static)
             title_widget.update("Papers in Collection")
@@ -626,10 +743,10 @@ class CollectDialog(ModalScreen):
             # Remove paper from collection if it's already there (to avoid duplicates)
             if paper in self.selected_collection.papers:
                 self.selected_collection.papers.remove(paper)
-            
+
             # Track the change
             self.paper_moves.append((paper_id, self.selected_collection.name, "add"))
-            
+
             # Add paper to the top of the collection for UI display
             self.selected_collection.papers.insert(0, paper)
 
@@ -653,7 +770,9 @@ class CollectDialog(ModalScreen):
         self.paper_moves.append((paper_id, self.selected_collection.name, "remove"))
 
         # Remove paper from the collection temporarily for UI display
-        paper_to_remove = next((p for p in self.selected_collection.papers if p.id == paper_id), None)
+        paper_to_remove = next(
+            (p for p in self.selected_collection.papers if p.id == paper_id), None
+        )
         if paper_to_remove:
             self.selected_collection.papers.remove(paper_to_remove)
 
@@ -670,7 +789,7 @@ class CollectDialog(ModalScreen):
                 if widget.id and widget.id.startswith("edit-collection-"):
                     self._save_collection_edit(widget)
                     break
-        
+
         result = {
             "collection_changes": self.collection_changes,
             "paper_moves": self.paper_moves,

@@ -1,1 +1,1 @@
-recursive-include app *.py *.ini *.mako
+recursive-include ng *.py *.ini *.mako
