@@ -101,8 +101,17 @@ class PaperList(DataTable):
 
         title_width = max(20, title_width)
         authors_width = max(15, authors_width)
-        venue_width = max(10, venue_width)
+        venue_width = max(10, min(20, venue_width))  # Max 20 chars for venue
         collections_width = max(10, collections_width)
+
+        # Recalculate collections_width if venue was capped
+        original_venue_width = int(remaining_width * 0.15)
+        if venue_width < original_venue_width:
+            # Add the saved space to collections
+            collections_width += original_venue_width - venue_width
+        
+        # Cap collections width and redistribute to title
+        collections_width = min(20, collections_width)  # Max 20 chars for collections
 
         total_calculated = (
             sel_width

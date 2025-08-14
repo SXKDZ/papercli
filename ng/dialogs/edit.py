@@ -82,9 +82,9 @@ class EditDialog(ModalScreen):
         height: 1fr;
         max-height: 50;
         margin: 0 1;
-        scrollbar-size: 2 1;
+        scrollbar-size: 2 2;
         scrollbar-background: $surface;
-        scrollbar-color: $accent;
+        scrollbar-color: $primary;
         overflow-y: auto;
         border: solid $border;
     }
@@ -92,15 +92,30 @@ class EditDialog(ModalScreen):
         height: 1fr;
         max-height: 35;
         margin: 0 1;
-        scrollbar-size: 2 1;
+        scrollbar-size: 2 2;
         scrollbar-background: $surface;
-        scrollbar-color: $accent;
+        scrollbar-color: $primary;
         overflow-y: auto;
         border: solid $border;
     }
     EditDialog .form-row {
         height: auto;
         margin: 0 0 1 0;
+    }
+    EditDialog #content-switcher > Container {
+        padding: 0 1 0 0;
+    }
+    EditDialog .paper-content-standard {
+        min-height: 37;
+    }
+    EditDialog .paper-content-extended {
+        min-height: 39;
+    }
+    EditDialog .paper-content-compact {
+        min-height: 29;
+    }
+    EditDialog .paper-content-full {
+        min-height: 45;
     }
     EditDialog .field-label {
         width: 15;
@@ -305,6 +320,25 @@ class EditDialog(ModalScreen):
             return "form-fields-compact"
         return "form-fields"
 
+    def _get_content_height_class(self, paper_type: str) -> str:
+        """Get the appropriate CSS class for content min-height based on field configuration."""
+        field_count = self._get_field_count_for_type(paper_type)
+        
+        # Calculate expected height: single-line fields = 2 lines each, multi-line = 9 lines each
+        # All types have 2 multi-line fields (abstract, notes) = 18 lines
+        # Remaining are single-line = (field_count - 2) * 2 lines
+        # Total = 18 + (field_count - 2) * 2 - 1 (last margin)
+        expected_height = 18 + (field_count - 2) * 2 - 1
+        
+        if field_count == 8:  # website
+            return "paper-content-compact"  # 29 lines
+        elif field_count == 13:  # journal
+            return "paper-content-extended"  # 39 lines  
+        elif field_count == 16:  # other
+            return "paper-content-full"  # 45 lines
+        else:  # conference, workshop, preprint (12 fields)
+            return "paper-content-standard"  # 37 lines
+
     def _get_full_pdf_path(self):
         """Get the full absolute path for the PDF file."""
         pdf_path = self.paper_data.get("pdf_path", "")
@@ -385,7 +419,8 @@ class EditDialog(ModalScreen):
                     initial=self.current_paper_type, id="content-switcher"
                 ):
                     for paper_type in self.paper_types.values():
-                        with Container(id=paper_type):
+                        content_class = self._get_content_height_class(paper_type)
+                        with Container(id=paper_type, classes=content_class):
                             pass  # Will be populated in on_mount
 
             with Horizontal(classes="button-row"):
