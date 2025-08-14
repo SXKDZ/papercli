@@ -193,10 +193,9 @@ class ChatDialog(ModalScreen):
         self.default_pdf_pages_limit = int(os.getenv("PAPERCLI_PDF_PAGES", "10"))
         self.pdf_start_page = 1
         self.pdf_end_page = self.default_pdf_pages_limit
-        self.total_pdf_pages = 0  # Will be calculated based on available PDFs
+        self.total_pdf_pages = 0
 
-        # Initialize services for summary generation (following app version)
-        self.paper_service = PaperService()
+        self.paper_service = PaperService(app=self.app)
         self.background_service = BackgroundOperationService(app=None)
         self.llm_service = LLMSummaryService(
             paper_service=self.paper_service,

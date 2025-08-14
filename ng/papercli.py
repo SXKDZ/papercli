@@ -62,7 +62,7 @@ class PaperCLIApp(App):
         super().__init__(*args, **kwargs)
         self.db_path = db_path  # Database path
         self.logs = []  # List to store log entries
-        self.paper_service = PaperService()  # Initialize PaperService
+        self.paper_service = PaperService(app=self)  # Initialize PaperService
         self.current_papers = []  # Initialize current_papers
         self.main_screen = None  # Reference to the main screen
 
@@ -134,14 +134,7 @@ class PaperCLIApp(App):
                         break
 
             if main_screen_to_update:
-                self._add_log(
-                    "load_papers_calling_update",
-                    f"About to call update_paper_list with {len(papers)} papers",
-                )
                 main_screen_to_update.update_paper_list(papers)
-                self._add_log(
-                    "load_papers_called_update", "update_paper_list completed"
-                )
 
         except Exception as e:
             self._add_log("load_papers_error", f"Error loading papers: {e}")

@@ -9,6 +9,9 @@ from ng.db.models import Collection, Paper, paper_collections
 class CollectionService:
     """Service for managing collections."""
 
+    def __init__(self, app=None):
+        self.app = app
+
     def get_all_collections(self) -> List[Collection]:
         """Get all collections with their papers eagerly loaded."""
         from sqlalchemy.orm import joinedload
@@ -46,6 +49,10 @@ class CollectionService:
             session.commit()
             session.refresh(collection)
             session.expunge(collection)
+            if self.app:
+                self.app._add_log(
+                    "collection_add", f"Added collection ID {collection.id}: '{name}'"
+                )
             return collection
 
     def add_papers_to_collection(
@@ -68,6 +75,12 @@ class CollectionService:
                     collection.papers.append(paper)
                     added_count += 1
             session.commit()
+            if self.app and added_count:
+                paper_list = ", ".join(str(pid) for pid in paper_ids)
+                self.app._add_log(
+                    "collection_add_papers",
+                    f"Added {added_count} paper(s) to '{collection_name}': {paper_list}",
+                )
             return added_count
 
     def remove_papers_from_collection(
@@ -95,6 +108,12 @@ class CollectionService:
                         f"Paper with ID {paper_id} is not in collection '{collection_name}'."
                     )
             session.commit()
+            if self.app and removed_count:
+                paper_list = ", ".join(str(pid) for pid in paper_ids)
+                self.app._add_log(
+                    "collection_remove_papers",
+                    f"Removed {removed_count} paper(s) from '{collection_name}': {paper_list}",
+                )
             return removed_count, errors
 
     def purge_empty_collections(self) -> int:
@@ -114,6 +133,10 @@ class CollectionService:
                 session.delete(collection)
                 deleted_count += 1
             session.commit()
+            if self.app and deleted_count:
+                self.app._add_log(
+                    "collection_purge", f"Purged {deleted_count} empty collection(s)"
+                )
             return deleted_count
 
     def get_or_create_collection(self, name: str) -> Collection:
@@ -128,6 +151,11 @@ class CollectionService:
                 session.commit()
                 session.refresh(collection)
             session.expunge(collection)
+            if self.app:
+                self.app._add_log(
+                    "collection_get_or_create",
+                    f"Retrieved or created collection ID {collection.id}: '{name}'",
+                )
             return collection
 
     def update_collection_name(self, collection_id: int, new_name: str) -> bool:
@@ -135,8 +163,14 @@ class CollectionService:
         with get_db_session() as session:
             collection = session.query(Collection).get(collection_id)
             if collection:
+                old_name = collection.name
                 collection.name = new_name
                 session.commit()
+                if self.app:
+                    self.app._add_log(
+                        "collection_rename",
+                        f"Renamed collection ID {collection_id}: '{old_name}' → '{new_name}'",
+                    )
                 return True
             return False
 
@@ -149,8 +183,14 @@ class CollectionService:
         with get_db_session() as session:
             collection = session.query(Collection).get(collection_id)
             if collection:
+                old_name = collection.name
                 session.delete(collection)
                 session.commit()
+                if self.app:
+                    self.app._add_log(
+                        "collection_delete",
+                        f"Deleted collection ID {collection_id}: '{old_name}'",
+                    )
                 return True
             return False
 
@@ -162,6 +202,11 @@ class CollectionService:
             if collection and paper and paper not in collection.papers:
                 collection.papers.append(paper)
                 session.commit()
+                if self.app:
+                    self.app._add_log(
+                        "collection_add_paper",
+                        f"Added paper {paper_id} to collection {collection_id}",
+                    )
                 return True
             return False
 
@@ -173,5 +218,10 @@ class CollectionService:
             if collection and paper and paper in collection.papers:
                 collection.papers.remove(paper)
                 session.commit()
+                if self.app:
+                    self.app._add_log(
+                        "collection_remove_paper",
+                        f"Removed paper {paper_id} from collection {collection_id}",
+                    )
                 return True
             return False

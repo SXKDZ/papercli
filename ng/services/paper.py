@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -7,16 +8,15 @@ from sqlalchemy import text
 from sqlalchemy.orm import joinedload
 
 from ng.db.database import get_db_session
-from ng.db.models import (
-    Author,
-    Collection,
-    Paper,
-    PaperAuthor,
-)
+from ng.db.models import Author, Collection, Paper, PaperAuthor
+from ng.services.pdf import PDFManager
 
 
 class PaperService:
     """Service for managing papers."""
+
+    def __init__(self, app=None):
+        self.app = app
 
     def get_all_papers(self) -> List[Paper]:
         """Get all papers ordered by added date (newest first)."""
@@ -72,6 +72,14 @@ class PaperService:
             session.add(paper)
             session.commit()
             session.refresh(paper)
+
+            if self.app:
+                title_preview = (paper.title or "").strip()
+                self.app._add_log(
+                    "paper_add",
+                    f"Added paper ID {paper.id}: '{title_preview}'",
+                )
+
             return paper
 
     def update_paper(
@@ -92,13 +100,46 @@ class PaperService:
             pdf_error = ""
 
             try:
+                # Snapshot original values for change logging
+                original_simple_fields = {
+                    key: getattr(paper, key, None)
+                    for key in [
+                        "title",
+                        "abstract",
+                        "venue_full",
+                        "venue_acronym",
+                        "year",
+                        "volume",
+                        "issue",
+                        "pages",
+                        "paper_type",
+                        "doi",
+                        "preprint_id",
+                        "category",
+                        "url",
+                        "pdf_path",
+                        "notes",
+                    ]
+                }
+                original_authors = []
+                try:
+                    original_authors = [
+                        pa.author.full_name for pa in (paper.paper_authors or [])
+                    ]
+                except Exception:
+                    original_authors = []
+                original_collections = [c.name for c in (paper.collections or [])]
                 if "pdf_path" in paper_data and paper_data["pdf_path"]:
                     # Check if this is a direct path update (relative path from background download)
                     # or needs processing (URL/local file from user input)
                     pdf_path_value = paper_data["pdf_path"]
-                    
+
                     # If it's a relative path (no slashes or protocol), assume it's already processed
-                    if not ('/' in pdf_path_value or '\\' in pdf_path_value or pdf_path_value.startswith(('http://', 'https://'))):
+                    if not (
+                        "/" in pdf_path_value
+                        or "\\" in pdf_path_value
+                        or pdf_path_value.startswith(("http://", "https://"))
+                    ):
                         # Direct relative path update - no processing needed
                         pass
                     else:
@@ -110,7 +151,10 @@ class PaperService:
                         current_paper_data = {
                             "title": paper_data.get("title", paper.title),
                             "authors": (
-                                [author.full_name for author in paper.get_ordered_authors()]
+                                [
+                                    author.full_name
+                                    for author in paper.get_ordered_authors()
+                                ]
                                 if paper.paper_authors
                                 else []
                             ),
@@ -164,10 +208,65 @@ class PaperService:
 
                 session.expunge(paper)
 
+                # Build change log details
+                changes: List[str] = []
+
+                # Compare simple fields
+                for key, old_value in original_simple_fields.items():
+                    new_value = getattr(paper, key, None)
+                    if str(old_value) != str(new_value):
+                        old_preview = str(old_value) if old_value is not None else ""
+                        new_preview = str(new_value) if new_value is not None else ""
+                        if key == "notes":
+                            if len(old_preview) > 120:
+                                old_preview = old_preview[:120] + "..."
+                            if len(new_preview) > 120:
+                                new_preview = new_preview[:120] + "..."
+                        changes.append(f"{key}: '{old_preview}' → '{new_preview}'")
+
+                # Compare authors if they changed
+                try:
+                    updated_authors = [
+                        pa.author.full_name for pa in (paper.paper_authors or [])
+                    ]
+                except Exception:
+                    updated_authors = original_authors
+                if original_authors != updated_authors:
+                    changes.append(
+                        f"authors: '{', '.join(original_authors)}' → '{', '.join(updated_authors)}'"
+                    )
+
+                # Compare collections if they changed
+                updated_collections = [c.name for c in (paper.collections or [])]
+                if original_collections != updated_collections:
+                    changes.append(
+                        f"collections: '{', '.join(original_collections)}' → '{', '.join(updated_collections)}'"
+                    )
+
+                if self.app and changes:
+                    details = f"Paper ID {paper.id}: " + "; ".join(changes)
+                    self.app._add_log("paper_update_fields", details)
+
+                if self.app:
+                    self.app._add_log(
+                        "paper_update",
+                        f"Updated paper ID {paper.id}: '{paper.title}'",
+                    )
+                    if pdf_error:
+                        self.app._add_log(
+                            "paper_update_pdf_warning",
+                            f"PDF warning for paper {paper.id}: {pdf_error}",
+                        )
+
                 return paper, pdf_error
 
             except Exception as e:
                 session.rollback()
+                if self.app:
+                    self.app._add_log(
+                        "paper_update_error",
+                        f"Failed to update paper {paper_id}: {str(e)}",
+                    )
                 return None, f"Failed to update paper: {str(e)}"
 
     def delete_paper(self, paper_id: int) -> bool:
@@ -175,6 +274,11 @@ class PaperService:
         with get_db_session() as session:
             paper = session.query(Paper).filter(Paper.id == paper_id).first()
             if paper:
+                if self.app:
+                    self.app._add_log(
+                        "paper_delete_start",
+                        f"Deleting paper ID {paper.id}: '{paper.title}'",
+                    )
                 # Delete associated PDF file if it exists
                 if paper.pdf_path:
                     try:
@@ -184,11 +288,21 @@ class PaperService:
                         full_pdf_path = pdf_manager.get_absolute_path(paper.pdf_path)
                         if os.path.exists(full_pdf_path):
                             os.remove(full_pdf_path)
+                            if self.app:
+                                self.app._add_log(
+                                    "paper_pdf_delete",
+                                    f"Deleted PDF for paper {paper.id}: {full_pdf_path}",
+                                )
                     except Exception:
                         pass
 
                 session.delete(paper)
                 session.commit()
+                if self.app:
+                    self.app._add_log(
+                        "paper_delete",
+                        f"Deleted paper ID {paper_id}",
+                    )
                 return True
             return False
 
@@ -204,17 +318,35 @@ class PaperService:
             for paper in papers_to_delete:
                 if paper.pdf_path:
                     try:
-                        from ng.services.pdf import PDFManager
 
                         pdf_manager = PDFManager()
                         full_pdf_path = pdf_manager.get_absolute_path(paper.pdf_path)
                         if os.path.exists(full_pdf_path):
                             os.remove(full_pdf_path)
+                            if self.app:
+                                self.app._add_log(
+                                    "paper_pdf_delete",
+                                    f"Deleted PDF for paper {paper.id}: {full_pdf_path}",
+                                )
                     except Exception:
                         pass
+                if self.app:
+                    self.app._add_log(
+                        "paper_delete_start",
+                        f"Deleting paper ID {paper.id}: '{paper.title}'",
+                    )
                 session.delete(paper)
 
             session.commit()
+            if self.app:
+                self.app._add_log(
+                    "paper_delete",
+                    (
+                        "Deleted "
+                        f"{len(papers_to_delete)} papers: "
+                        + ", ".join(str(p.id) for p in papers_to_delete)
+                    ),
+                )
             return len(papers_to_delete)
 
     def add_paper_from_metadata(
@@ -312,6 +444,16 @@ class PaperService:
 
             session.expunge_all()
 
+            if self.app:
+                self.app._add_log(
+                    "paper_add",
+                    (
+                        f"Added paper ID {paper_with_relationships.id}: "
+                        f"'{paper_with_relationships.title}' with "
+                        f"{len(authors)} author(s)"
+                    ),
+                )
+
             return paper_with_relationships
 
     def prepare_paper_data_for_edit(self, paper) -> dict:
@@ -377,13 +519,25 @@ class PaperService:
                             f"Paper '{updated_paper.title}' updated successfully",
                             severity="information",
                         )
+                        app._add_log(
+                            "paper_update",
+                            f"Updated paper via edit dialog ID {updated_paper.id}: '{updated_paper.title}'",
+                        )
                         return updated_paper  # Return for caller to use
                     else:
                         app.notify(
                             f"Failed to update paper: {error_message}", severity="error"
                         )
+                        app._add_log(
+                            "paper_update_error",
+                            f"Failed to update paper {paper_id}: {error_message}",
+                        )
                 except Exception as e:
                     app.notify(f"Error updating paper: {e}", severity="error")
+                    app._add_log(
+                        "paper_update_exception",
+                        f"Exception updating paper {paper_id}: {e}",
+                    )
             return None
 
         return callback

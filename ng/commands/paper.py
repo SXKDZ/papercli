@@ -21,7 +21,7 @@ class PaperCommandHandler(CommandHandler):
 
     def __init__(self, app: PaperCLIApp):
         super().__init__(app)
-        self.paper_service = PaperService()
+        self.paper_service = PaperService(app=self.app)
         self.add_paper_service = AddPaperService(
             paper_service=self.paper_service,
             metadata_extractor=self.app.metadata_extractor,  # Assuming metadata_extractor is on app

@@ -1,10 +1,12 @@
 from __future__ import annotations
-from typing import List, TYPE_CHECKING, Any, Dict
+
+from typing import TYPE_CHECKING, Any, Dict, List
+
+from pluralizer import Pluralizer
 
 from ng.commands import CommandHandler
 from ng.dialogs import CollectDialog
 from ng.services import CollectionService
-from pluralizer import Pluralizer
 
 if TYPE_CHECKING:
     from ng.papercli import PaperCLIApp
@@ -15,7 +17,7 @@ class CollectionCommandHandler(CommandHandler):
 
     def __init__(self, app: PaperCLIApp):
         super().__init__(app)
-        self.collection_service = CollectionService()
+        self.collection_service = CollectionService(app=self.app)
         self.pluralizer = Pluralizer()
 
     def _get_target_papers(self):
@@ -39,7 +41,6 @@ class CollectionCommandHandler(CommandHandler):
             return
 
         paper_ids = [p.id for p in papers_to_add]
-        paper_titles = [p.title for p in papers_to_add]
 
         successful_collections = []
         failed_collections = []
@@ -57,36 +58,47 @@ class CollectionCommandHandler(CommandHandler):
                     # ) # Need to implement logging
             except Exception as e:
                 failed_collections.append(collection_name)
-                # self._add_log(
-                #     "add_to_collection_error",
-                #     f"Failed to add papers to collection '{collection_name}': {str(e)}",
-                # ) # Need to implement logging
+                self.app._add_log(
+                    "collection_add_to_error",
+                    f"Failed to add papers to '{collection_name}': {str(e)}",
+                )
 
         if successful_collections:
             self.app.load_papers()  # Reload papers to reflect changes
             if len(successful_collections) == 1:
                 count = len(papers_to_add)
                 self.app.notify(
-                    f"Added {self.pluralizer.pluralize('paper', count, True)} to collection '{successful_collections[0]}'",
+                    (
+                        f"Added {self.pluralizer.pluralize('paper', count, True)} "
+                        f"to collection '{successful_collections[0]}'"
+                    ),
                     severity="information",
                 )
             else:
                 count = len(papers_to_add)
-                collections_text = self.pluralizer.pluralize('collection', len(successful_collections), True)
-                self.app.notify(
-                    f"Added {self.pluralizer.pluralize('paper', count, True)} to {collections_text}: {', '.join(successful_collections)}",
-                    severity="information",
+                collections_text = self.pluralizer.pluralize(
+                    "collection", len(successful_collections), True
                 )
+                joined = ", ".join(successful_collections)
+                msg = (
+                    f"Added {self.pluralizer.pluralize('paper', count, True)} to "
+                    f"{collections_text}: {joined}"
+                )
+                self.app.notify(msg, severity="information")
 
         if failed_collections:
             if not successful_collections:
-                collections_text = self.pluralizer.pluralize('collection', len(failed_collections))
+                collections_text = self.pluralizer.pluralize(
+                    "collection", len(failed_collections)
+                )
                 self.app.notify(
                     f"Failed to add papers to {collections_text}: {', '.join(failed_collections)}",
                     severity="error",
                 )
             else:
-                collections_text = self.pluralizer.pluralize('collection', len(failed_collections))
+                collections_text = self.pluralizer.pluralize(
+                    "collection", len(failed_collections)
+                )
                 self.app.notify(
                     f"Some {collections_text} failed: {', '.join(failed_collections)}",
                     severity="error",
@@ -109,7 +121,6 @@ class CollectionCommandHandler(CommandHandler):
             return
 
         paper_ids = [p.id for p in papers_to_remove]
-        paper_titles = [p.title for p in papers_to_remove]
 
         successful_collections = []
         failed_collections = []
@@ -133,17 +144,17 @@ class CollectionCommandHandler(CommandHandler):
                 if removed_count > 0:
                     total_removed += removed_count
                     successful_collections.append(collection_name)
-                    # self._add_log(
-                    #     "remove_from_collection",
-                    #     f"Removed {removed_count} paper(s) from '{collection_name}': {', '.join(paper_titles)}",
-                    # ) # Need to implement logging
+                    self.app._add_log(
+                        "remove_from_collection",
+                        f"Removed {removed_count} paper(s) from '{collection_name}'",
+                    )
             except Exception as e:
                 failed_collections.append(collection_name)
                 all_errors.append(f"{collection_name}: {str(e)}")
-                # self._add_log(
-                #     "remove_from_collection_error",
-                #     f"Failed to remove papers from collection '{collection_name}': {str(e)}",
-                # ) # Need to implement logging
+                self.app._add_log(
+                    "remove_from_collection_error",
+                    f"Failed to remove papers from collection '{collection_name}': {str(e)}",
+                )
 
         # Show errors if any
         if all_errors:
@@ -151,7 +162,9 @@ class CollectionCommandHandler(CommandHandler):
             #     "Remove from Collection Error",
             #     f"Encountered {len(all_errors)} error(s).\n\n{chr(10).join(all_errors)}",
             # )
-            collections_text = self.pluralizer.pluralize('collection', len(failed_collections))
+            collections_text = self.pluralizer.pluralize(
+                "collection", len(failed_collections)
+            )
             self.app.notify(
                 f"Errors removing from {collections_text}: {all_errors[0]}...",
                 severity="error",
@@ -162,16 +175,23 @@ class CollectionCommandHandler(CommandHandler):
             if len(successful_collections) == 1:
                 count = len(papers_to_remove)
                 self.app.notify(
-                    f"Removed {self.pluralizer.pluralize('paper', count, True)} from collection '{successful_collections[0]}'",
+                    (
+                        f"Removed {self.pluralizer.pluralize('paper', count, True)} "
+                        f"from collection '{successful_collections[0]}'"
+                    ),
                     severity="information",
                 )
             else:
                 count = len(papers_to_remove)
-                collections_text = self.pluralizer.pluralize('collection', len(successful_collections), True)
-                self.app.notify(
-                    f"Removed {self.pluralizer.pluralize('paper', count, True)} from {collections_text}: {', '.join(successful_collections)}",
-                    severity="information",
+                collections_text = self.pluralizer.pluralize(
+                    "collection", len(successful_collections), True
                 )
+                joined = ", ".join(successful_collections)
+                msg = (
+                    f"Removed {self.pluralizer.pluralize('paper', count, True)} from "
+                    f"{collections_text}: {joined}"
+                )
+                self.app.notify(msg, severity="information")
         elif not all_errors:
             self.app.notify(
                 "No papers were removed from any collection.", severity="information"
@@ -241,10 +261,16 @@ class CollectionCommandHandler(CommandHandler):
                             changes_made = True
 
                     # Process collection renames
-                    for old_name, new_name in result.get("collection_changes", {}).items():
-                        collection = self.collection_service.get_collection_by_name(old_name)
+                    for old_name, new_name in result.get(
+                        "collection_changes", {}
+                    ).items():
+                        collection = self.collection_service.get_collection_by_name(
+                            old_name
+                        )
                         if collection:
-                            self.collection_service.update_collection_name(collection.id, new_name)
+                            self.collection_service.update_collection_name(
+                                collection.id, new_name
+                            )
                             changes_made = True
 
                     # Process paper moves
@@ -269,21 +295,30 @@ class CollectionCommandHandler(CommandHandler):
                     if changes_made:
                         # Small delay to ensure database changes are fully committed
                         import time
+
                         time.sleep(0.1)
-                        
+
                         self.app.load_papers()  # Reload papers to reflect changes
-                        
+
                         # Force an explicit UI refresh to ensure collection changes are visible
                         try:
-                            if hasattr(self.app, 'main_screen') and self.app.main_screen:
+                            if (
+                                hasattr(self.app, "main_screen")
+                                and self.app.main_screen
+                            ):
                                 # Call the refresh method directly on the paper list widget
-                                paper_list = self.app.main_screen.query_one("#paper-list-view")
+                                paper_list = self.app.main_screen.query_one(
+                                    "#paper-list-view"
+                                )
                                 if paper_list:
                                     paper_list.set_papers(self.app.current_papers)
                                     self.app.main_screen.update_header_stats()
                         except Exception as e:
-                            self.app._add_log("collection_refresh_error", f"Error refreshing UI after collection changes: {e}")
-                        
+                            self.app._add_log(
+                                "collection_refresh_error",
+                                f"Error refreshing UI after collection changes: {e}",
+                            )
+
                         self.app.notify(
                             "Collections updated successfully", severity="information"
                         )

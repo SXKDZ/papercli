@@ -4,17 +4,15 @@ from fuzzywuzzy import fuzz
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import joinedload
 
-from ng.db.database import get_db_session  # Reusing existing database session manager
-from ng.db.models import (
-    Author,
-    Collection,
-    Paper,
-    PaperAuthor,
-)  # Reusing existing models
+from ng.db.database import get_db_session
+from ng.db.models import Author, Collection, Paper, PaperAuthor
 
 
 class SearchService:
     """Service for searching and filtering papers."""
+
+    def __init__(self, app=None):
+        self.app = app
 
     def search_papers(self, query: str, fields: List[str] = None) -> List[Paper]:
         """Search papers by query in specified fields with fuzzy matching."""
@@ -71,6 +69,11 @@ class SearchService:
 
                 # Expunge to make detached but accessible
                 session.expunge_all()
+                if self.app:
+                    self.app._add_log(
+                        "search_query",
+                        f"Search '{query}' in fields {fields} → {len(papers)} result(s)",
+                    )
                 return papers
             return []
 
@@ -132,7 +135,13 @@ class SearchService:
 
             # Expunge to make detached but accessible
             session.expunge_all()
-            return [paper for paper, score in scored_papers]
+            results = [paper for paper, score in scored_papers]
+            if self.app:
+                self.app._add_log(
+                    "search_fuzzy",
+                    f"Fuzzy search '{query}' (threshold={threshold}) → {len(results)} result(s)",
+                )
+            return results
 
     def filter_papers(self, filters: Dict[str, Any]) -> List[Paper]:
         """Filter papers by various criteria."""
@@ -195,4 +204,9 @@ class SearchService:
 
             # Expunge to make detached but accessible
             session.expunge_all()
+            if self.app:
+                self.app._add_log(
+                    "search_filter",
+                    f"Applied filters {filters} → {len(papers)} result(s)",
+                )
             return papers

@@ -17,7 +17,7 @@ class SearchCommandHandler(CommandHandler):
 
     def __init__(self, app: PaperCLIApp):
         super().__init__(app)
-        self.search_service = SearchService()
+        self.search_service = SearchService(app=self.app)
         self.pluralizer = Pluralizer()
 
     def _find_paper_list_view(self):
@@ -25,19 +25,19 @@ class SearchCommandHandler(CommandHandler):
         try:
             # Try current screen first
             return self.app.screen.query_one("#paper-list-view")
-        except:
+        except Exception:
             # If not found, look through screen stack for MainScreen
             for screen in reversed(self.app.screen_stack):
                 try:
                     return screen.query_one("#paper-list-view")
-                except:
+                except Exception:
                     continue
 
             # If still not found, try main_screen reference
             if hasattr(self.app, "main_screen"):
                 try:
                     return self.app.main_screen.query_one("#paper-list-view")
-                except:
+                except Exception:
                     pass
         return None
 
@@ -146,7 +146,10 @@ class SearchCommandHandler(CommandHandler):
             ]
             if field not in valid_fields:
                 self.app.notify(
-                    f"Invalid filter field '{field}'. Valid fields: {', '.join(valid_fields + ['all'])}",
+                    (
+                        f"Invalid filter field '{field}'. Valid fields: "
+                        f"{', '.join(valid_fields + ['all'])}"
+                    ),
                     severity="error",
                 )
                 return

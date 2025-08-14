@@ -58,6 +58,11 @@ class AddPaperService:
         paper = self.paper_service.add_paper_from_metadata(
             paper_data, authors, collections
         )
+        if self.app:
+            self.app._add_log(
+                "paper_add_arxiv",
+                f"Added arXiv metadata for '{paper.title}' (ID {paper.id}) before PDF",
+            )
 
         # Download PDF
         pdf_dir = get_pdf_directory()
@@ -100,6 +105,11 @@ class AddPaperService:
         paper = self.paper_service.add_paper_from_metadata(
             paper_data, authors, collections
         )
+        if self.app:
+            self.app._add_log(
+                "paper_add_arxiv_async",
+                f"Queued PDF download for arXiv '{arxiv_id}' after adding paper ID {paper.id}",
+            )
 
         return {"paper": paper, "arxiv_id": arxiv_id, "paper_data": paper_data}
 
@@ -144,7 +154,7 @@ class AddPaperService:
                 if self.app:
                     self.app._add_log(
                         "pdf_download_debug",
-                        f"system_service.download_pdf returned successfully",
+                        "system_service.download_pdf returned successfully",
                     )
             except Exception as e:
                 if self.app:
@@ -162,7 +172,10 @@ class AddPaperService:
             if self.app:
                 self.app._add_log(
                     "pdf_download_result",
-                    f"Download result: pdf_path='{pdf_path}', pdf_error='{pdf_error}', duration={download_duration:.2f}s",
+                    (
+                        f"Download result: pdf_path='{pdf_path}', pdf_error='{pdf_error}', "
+                        f"duration={download_duration:.2f}s"
+                    ),
                 )
 
             if pdf_path and not pdf_error:
@@ -180,7 +193,8 @@ class AddPaperService:
                 relative_pdf_path = os.path.relpath(pdf_path, pdf_dir)
                 if self.app:
                     self.app._add_log(
-                        "pdf_download_debug", f"Relative PDF path: {relative_pdf_path}"
+                        "pdf_download_debug",
+                        f"Relative PDF path: {relative_pdf_path}",
                     )
                     self.app._add_log(
                         "pdf_download_stage",
@@ -201,7 +215,10 @@ class AddPaperService:
                 if self.app:
                     self.app._add_log(
                         "pdf_update_result",
-                        f"Database update result: paper={updated_paper is not None}, error='{update_error}'",
+                        (
+                            f"Database update result: paper={updated_paper is not None}, "
+                            f"error='{update_error}'"
+                        ),
                     )
 
                 if update_error:
@@ -222,7 +239,10 @@ class AddPaperService:
                     )
                     self.app._add_log(
                         "pdf_download_complete",
-                        f"Successfully updated paper {paper_id} with PDF path: {relative_pdf_path}",
+                        (
+                            f"Successfully updated paper {paper_id} with PDF path: "
+                            f"{relative_pdf_path}"
+                        ),
                     )
                 return {
                     "success": True,
@@ -283,6 +303,11 @@ class AddPaperService:
         paper = self.paper_service.add_paper_from_metadata(
             paper_data, authors, collections
         )
+        if self.app:
+            self.app._add_log(
+                "paper_add_dblp",
+                f"Added DBLP paper '{paper.title}' (ID {paper.id})",
+            )
 
         return {"paper": paper, "pdf_path": None, "pdf_error": None}
 
@@ -315,6 +340,11 @@ class AddPaperService:
         paper = self.paper_service.add_paper_from_metadata(
             paper_data, authors, collections
         )
+        if self.app:
+            self.app._add_log(
+                "paper_add_openreview",
+                f"Added OpenReview metadata for '{paper.title}' (ID {paper.id})",
+            )
 
         # Download PDF
         pdf_dir = get_pdf_directory()
@@ -477,6 +507,15 @@ class AddPaperService:
                 paper = self.paper_service.add_paper_from_metadata(
                     paper_data, authors, collections
                 )
+                if self.app:
+                    self.app._add_log(
+                        "paper_add_bib_entry",
+                        (
+                            "Added paper from BIB entry '"
+                            + paper_data.get("title", "Unknown Title")[:80]
+                            + f"...' (ID {paper.id})"
+                        ),
+                    )
 
                 # Try to download PDF if URL is provided and looks like a PDF
                 if metadata.get("url"):
@@ -573,6 +612,15 @@ class AddPaperService:
                 paper = self.paper_service.add_paper_from_metadata(
                     paper_data, authors, collections
                 )
+                if self.app:
+                    self.app._add_log(
+                        "paper_add_ris_entry",
+                        (
+                            "Added paper from RIS entry '"
+                            + paper_data.get("title", "Unknown Title")[:80]
+                            + f"...' (ID {paper.id})"
+                        ),
+                    )
 
                 added_papers.append(paper)
 
@@ -612,6 +660,11 @@ class AddPaperService:
         paper = self.paper_service.add_paper_from_metadata(
             paper_data, authors, collections
         )
+        if self.app:
+            self.app._add_log(
+                "paper_add_doi",
+                f"Added DOI paper '{paper.title}' (ID {paper.id})",
+            )
 
         return {"paper": paper, "pdf_path": None, "pdf_error": None}
 
@@ -639,6 +692,11 @@ class AddPaperService:
             paper = self.paper_service.add_paper_from_metadata(
                 paper_data, authors, collections
             )
+            if self.app:
+                self.app._add_log(
+                    "paper_add_manual",
+                    f"Added manual paper '{paper.title}' (ID {paper.id})",
+                )
 
             return {"paper": paper, "pdf_path": None, "pdf_error": None}
 
