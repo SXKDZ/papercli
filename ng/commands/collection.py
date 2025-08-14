@@ -233,6 +233,13 @@ class CollectionCommandHandler(CommandHandler):
                             self.collection_service.delete_collection(collection.id)
                             changes_made = True
 
+                    # Process collection renames
+                    for old_name, new_name in result.get("collection_changes", {}).items():
+                        collection = self.collection_service.get_collection_by_name(old_name)
+                        if collection:
+                            self.collection_service.update_collection_name(collection.id, new_name)
+                            changes_made = True
+
                     # Process paper moves
                     for paper_id, collection_name, action in result.get(
                         "paper_moves", []
@@ -253,7 +260,23 @@ class CollectionCommandHandler(CommandHandler):
                                 changes_made = True
 
                     if changes_made:
+                        # Small delay to ensure database changes are fully committed
+                        import time
+                        time.sleep(0.1)
+                        
                         self.app.load_papers()  # Reload papers to reflect changes
+                        
+                        # Force an explicit UI refresh to ensure collection changes are visible
+                        try:
+                            if hasattr(self.app, 'main_screen') and self.app.main_screen:
+                                # Call the refresh method directly on the paper list widget
+                                paper_list = self.app.main_screen.query_one("#paper-list-view")
+                                if paper_list:
+                                    paper_list.set_papers(self.app.current_papers)
+                                    self.app.main_screen.update_header_stats()
+                        except Exception as e:
+                            self.app._add_log("collection_refresh_error", f"Error refreshing UI after collection changes: {e}")
+                        
                         self.app.notify(
                             "Collections updated successfully", severity="information"
                         )

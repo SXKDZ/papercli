@@ -1,9 +1,10 @@
-from textual.app import ComposeResult
-from textual.containers import Horizontal, Container
-from textual.widgets import Button, Static
-from textual.screen import ModalScreen
-from textual.events import Key
 from typing import Callable
+
+from textual.app import ComposeResult
+from textual.containers import Container, Horizontal
+from textual.events import Key
+from textual.screen import ModalScreen
+from textual.widgets import Button, Static
 
 
 class ConfirmDialog(ModalScreen):
@@ -49,7 +50,7 @@ class ConfirmDialog(ModalScreen):
         content-align: center middle;
         text-align: center;
         margin: 0 1;
-        min-width: 8;
+        min-width: 10;
     }
     """
 

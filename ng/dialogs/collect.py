@@ -1,6 +1,8 @@
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Static, Input, ListView, ListItem, Label, TextArea
+from textual.events import Click
+from textual.message import Message
 from textual.screen import ModalScreen
 from textual.reactive import reactive
 from typing import Callable, Dict, Any, List, Optional
@@ -16,90 +18,160 @@ class CollectDialog(ModalScreen):
         layer: dialog;
     }
     CollectDialog > Container {
-        width: 100;
-        height: 30;
-        max-width: 120;
-        max-height: 35;
+        width: 112;
+        height: 40;
+        max-width: 112;
+        max-height: 50;
         border: solid $accent;
         background: $panel;
     }
-    CollectDialog .dialog-title {
-        text-align: center;
-        text-style: bold;
-        background: $accent;
-        color: $text;
-        height: 1;
-        width: 100%;
-    }
-    CollectDialog .column {
-        width: 1fr;
-        height: 1fr;
-        border: solid $border;
-        margin: 0 1;
-    }
-    CollectDialog .column-title {
-        text-style: bold;
-        text-align: center;
-        height: 1;
-        background: $accent-darken-1;
-        color: $text;
-    }
-    CollectDialog .list-container {
-        height: 1fr;
-    }
-    CollectDialog .action-buttons {
-        width: 12;
-        height: 1fr;
-        align: center middle;
-    }
-    CollectDialog .action-buttons Button {
-        width: 1fr;
-        margin: 0 1;
-        height: 3;
-        content-align: center middle;
-        text-align: center;
-        min-width: 8;
-    }
-    CollectDialog .column Button {
-        height: 3;
-        content-align: center middle;
-        text-align: center;
-        margin: 0 1;
-        min-width: 8;
-    }
-    CollectDialog .paper-details {
-        height: 6;
-        border: solid $border;
-        margin: 1;
-    }
+    
+    /* All titles */
+    CollectDialog .dialog-title,
+    CollectDialog .column-title,
     CollectDialog .paper-details-title {
         text-style: bold;
         text-align: center;
         height: 1;
-        background: $accent-darken-1;
         color: $text;
+    }
+    CollectDialog .dialog-title {
+        background: $accent;
+        width: 100%;
+    }
+    CollectDialog .column-title,
+    CollectDialog .paper-details-title {
+        background: $accent-darken-1;
+    }
+    
+    /* Layout containers */
+    CollectDialog .top-panel {
+        width: 100%;
+        height: 1fr;
+        margin: 1;
+    }
+    CollectDialog .column-30 {
+        width: 31;
+        height: 1fr;
+        border: solid $border;
+        margin: 0 1 0 0;
+        align: center top;
+    }
+    CollectDialog .column-10 {
+        width: 12;
+        height: 1fr;
+        margin: 1 1;
+        align: center middle;
+    }
+    
+    /* All scroll containers */
+    CollectDialog VerticalScroll {
+        height: 1fr;
+        scrollbar-size: 1 1;
+        overflow-y: auto;
+    }
+    
+    /* Standard buttons */
+    CollectDialog Button {
+        height: 3;
+        content-align: center middle;
+    }
+    CollectDialog .action-buttons Button {
+        width: 1fr;
+        margin: 1 0;
+        min-width: 8;
     }
     CollectDialog .bottom-buttons {
         height: 5;
         align: center middle;
     }
     CollectDialog .bottom-buttons Button {
-        margin: 0 1;
-        min-width: 8;
-        height: 3;
-        content-align: center middle;
+        margin: 0 5;
+        min-width: 12;
+    }
+    
+    /* Collection buttons */
+    CollectDialog .collection-buttons-row {
+        height: 1;
+        width: 100%;
+        align: center middle;
+    }
+    CollectDialog .compact-collection-button {
+        height: 1;
+        width: 5;
+        max-width: 5;
+        margin: 0 5 0 0;
+        padding: 0;
+        border: none !important;
         text-align: center;
+        background: $surface;
+        color: $text;
+    }
+    CollectDialog .compact-collection-button:last-child {
+        margin: 0;
+    }
+    
+    /* New collection input - styled with border */
+    CollectDialog .new-collection-input {
+        height: 3;
+        border: solid $border;
+    }
+    
+    /* Edit collection input - borderless and compact */
+    CollectDialog .edit-collection-input {
+        background: $warning;
+        color: $text;
+        width: 1fr;
+        border: none;
+        height: 1;
+    }
+    CollectDialog .edit-collection-input:focus {
+        background: $warning-darken-1;
+        border: none;
+        padding: 0;
+        height: 1;
+    }
+    
+    /* Edit mode components */
+    CollectDialog .edit-symbol {
+        width: 2;
+        height: 1;
+        background: $warning;
+        color: $text;
+        content-align: center middle;
+        border: none;
+        padding: 0;
+        margin: 0;
+    }
+    CollectDialog .editing-container {
+        height: 1;
+    }
+    
+    /* Changed items styling */
+    CollectDialog .changed-collection,
+    CollectDialog .changed-paper {
+        text-style: italic;
+    }
+    
+    /* Paper details panel */
+    CollectDialog .paper-details {
+        height: 6;
+        border: solid $border;
+        margin: 1;
     }
     """
 
     BINDINGS = [
         ("escape", "cancel", "Cancel"),
         ("ctrl+s", "save", "Save"),
+        ("f2", "edit_collection", "Edit Collection"),
+        ("enter", "edit_collection", "Edit Collection"),
     ]
 
     selected_collection = reactive(None)
     selected_collection_paper = reactive(None)
     selected_all_paper = reactive(None)
+    editing_collection_index = reactive(None)
 
     def __init__(
         self,
@@ -124,54 +196,62 @@ class CollectDialog(ModalScreen):
         with Container():
             yield Static("Manage Collections", classes="dialog-title")
 
-            # Main 3-column layout
-            with Horizontal():
-                # Column 1: Collections List
-                with Vertical(classes="column"):
-                    yield Static("Collections", classes="column-title")
-                    with VerticalScroll(classes="list-container"):
-                        yield ListView(id="collections-list")
-                    yield Input(
-                        placeholder="New collection name", id="new-collection-input"
-                    )
-                    with Horizontal():
-                        yield Button(
-                            "Add", id="add-collection-button", variant="success"
+            # Main 4-section layout: 30%, 30%, 10%, 30%
+            with Vertical(classes="top-panel"):
+                with Horizontal():
+                    # Column 1: Collections List (30%)
+                    with Vertical(classes="column-30"):
+                        yield Static("Collections", classes="column-title")
+                        with VerticalScroll(classes="list-container", id="collections-scroll"):
+                            yield ListView(id="collections-list")
+                        yield Input(
+                            placeholder="New collection name", 
+                            id="new-collection-input",
+                            classes="new-collection-input"
                         )
+                        with Horizontal(classes="collection-buttons-row"):
+                            yield Button(
+                                "+", 
+                                id="add-collection-button", 
+                                variant="success",
+                                classes="compact-collection-button"
+                            )
+                            yield Button(
+                                "-", 
+                                id="delete-collection-button", 
+                                variant="error",
+                                classes="compact-collection-button"
+                            )
+
+                    # Column 2: Papers in Selected Collection (30%)
+                    with Vertical(classes="column-30"):
+                        yield Static(
+                            "Papers in Collection",
+                            classes="column-title",
+                            id="collection-papers-title",
+                        )
+                        with VerticalScroll(classes="list-container", id="collection-papers-scroll"):
+                            yield ListView(id="collection-papers-list")
+
+                    # Action buttons (10%)
+                    with Vertical(classes="column-10 action-buttons"):
+                        yield Button("← Add", id="add-paper-button", variant="primary")
                         yield Button(
-                            "Delete", id="delete-collection-button", variant="error"
+                            "Remove →", id="remove-paper-button", variant="warning"
                         )
 
-                # Column 2: Papers in Selected Collection
-                with Vertical(classes="column"):
-                    yield Static(
-                        "Papers in Collection",
-                        classes="column-title",
-                        id="collection-papers-title",
-                    )
-                    with VerticalScroll(classes="list-container"):
-                        yield ListView(id="collection-papers-list")
-
-                # Action buttons between columns 2 and 3
-                with Vertical(classes="action-buttons"):
-                    yield Button("← Add", id="add-paper-button", variant="primary")
-                    yield Button(
-                        "Remove →", id="remove-paper-button", variant="warning"
-                    )
-
-                # Column 3: All Papers
-                with Vertical(classes="column"):
-                    yield Static("All Papers", classes="column-title")
-                    with VerticalScroll(classes="list-container"):
-                        yield ListView(id="all-papers-list")
+                    # Column 3: All Remaining Papers (30%)
+                    with Vertical(classes="column-30"):
+                        yield Static("All Papers", classes="column-title")
+                        with VerticalScroll(classes="list-container", id="all-papers-scroll"):
+                            yield ListView(id="all-papers-list")
 
             # Paper Details Panel
             with Vertical(classes="paper-details"):
                 yield Static("Paper Details", classes="paper-details-title")
-                yield TextArea(
-                    text="Select a paper to view details",
-                    read_only=True,
-                    id="paper-details-area",
+                yield Static(
+                    "Select a paper to view details",
+                    id="paper-details-text",
                 )
 
             # Bottom buttons
@@ -184,24 +264,89 @@ class CollectDialog(ModalScreen):
         self.populate_all_papers_list()
         if self.collections:
             self.select_collection(0)
+    
+    def _is_collection_changed(self, collection_name: str) -> bool:
+        """Check if a collection has been changed (renamed or is new)."""
+        return (collection_name in self.collection_changes.values() or 
+                collection_name in self.new_collections)
+    
+    def _is_paper_changed(self, paper_id: int) -> bool:
+        """Check if a paper has been moved to/from collections."""
+        return any(move[0] == paper_id for move in self.paper_moves)
 
     def populate_collections_list(self) -> None:
         """Populate the collections list."""
         collections_list = self.query_one("#collections-list", ListView)
         collections_list.clear()
 
-        for collection in self.collections:
-            item = ListItem(Label(collection.name), id=f"collection-{collection.id}")
+        import time
+        timestamp = int(time.time() * 1000)  # Unique timestamp for IDs
+
+        for idx, collection in enumerate(self.collections):
+            if self.editing_collection_index == idx:
+                # Create editing UI with symbol + input field
+                class EditingContainer(Horizontal):
+                    def __init__(self, collection_name, edit_idx, edit_timestamp):
+                        super().__init__(classes="editing-container")
+                        self.collection_name = collection_name
+                        self.edit_idx = edit_idx
+                        self.edit_timestamp = edit_timestamp
+                    
+                    def compose(self):
+                        yield Static("✏️", classes="edit-symbol")
+                        yield Input(
+                            value=self.collection_name,
+                            id=f"edit-collection-{self.edit_idx}-{self.edit_timestamp}",
+                            classes="edit-collection-input",
+                            disabled=False,
+                            placeholder="Enter collection name"
+                        )
+                
+                edit_container = EditingContainer(collection.name, idx, timestamp)
+                item = ListItem(edit_container, id=f"collection-{collection.id}-editing-{timestamp}")
+            else:
+                # Show label (double-clickable to edit)
+                is_changed = self._is_collection_changed(collection.name)
+                label_classes = "changed-collection" if is_changed else ""
+                label = Label(collection.name, classes=label_classes)
+                item = ListItem(label, id=f"collection-{collection.id}-{timestamp}")
             collections_list.append(item)
+        
+        # Add new collections that haven't been saved yet
+        for new_idx, new_collection_name in enumerate(self.new_collections):
+            if new_collection_name not in [c.name for c in self.collections]:
+                label = Label(new_collection_name, classes="changed-collection")
+                item = ListItem(label, id=f"new-collection-{new_collection_name}-{timestamp}")
+                collections_list.append(item)
 
     def populate_all_papers_list(self) -> None:
-        """Populate the all papers list."""
+        """Populate the all papers list with papers not in the current collection."""
         all_papers_list = self.query_one("#all-papers-list", ListView)
         all_papers_list.clear()
 
-        for paper in self.papers:
+        import time
+        timestamp = int(time.time() * 1000)  # Millisecond timestamp for uniqueness
+
+        # Get papers that are not in the currently selected collection
+        if self.selected_collection:
+            collection_paper_ids = {p.id for p in self.selected_collection.papers}
+            available_papers = []
+            
+            for paper in self.papers:
+                if paper.id not in collection_paper_ids:
+                    available_papers.append(paper)
+        else:
+            available_papers = self.papers
+
+        # Sort available papers by modified date (newest first)
+        sorted_available_papers = sorted(available_papers, key=lambda p: p.modified_date or p.added_date, reverse=True)
+        
+        for idx, paper in enumerate(sorted_available_papers):
             title = paper.title[:50] + "..." if len(paper.title) > 50 else paper.title
-            item = ListItem(Label(title), id=f"paper-{paper.id}")
+            is_changed = self._is_paper_changed(paper.id)
+            label_classes = "changed-paper" if is_changed else ""
+            label = Label(title, classes=label_classes)
+            item = ListItem(label, id=f"all-paper-{paper.id}-{idx}-{timestamp}")
             all_papers_list.append(item)
 
     def populate_collection_papers_list(self, collection: Collection) -> None:
@@ -213,19 +358,59 @@ class CollectDialog(ModalScreen):
         title_widget = self.query_one("#collection-papers-title", Static)
         title_widget.update(f"Papers in '{collection.name}'")
 
-        for idx, paper in enumerate(collection.papers):
+        import time
+        timestamp = int(time.time() * 1000)  # Millisecond timestamp for uniqueness
+        
+        # Sort papers by: 1) newly added in this session (top), 2) modified date (newest first)
+        def sort_key(paper):
+            # Check if this paper was added in the current session
+            is_newly_added = any(move[0] == paper.id and move[1] == collection.name and move[2] == "add" 
+                               for move in self.paper_moves)
+            if is_newly_added:
+                return (0, 0)  # Highest priority - newly added papers go to top
+            else:
+                # Sort by modified_date or added_date in descending order
+                date_value = paper.modified_date or paper.added_date
+                return (1, -date_value.timestamp() if date_value else 0)
+        
+        sorted_papers = sorted(collection.papers, key=sort_key)
+        
+        for idx, paper in enumerate(sorted_papers):
             title = paper.title[:50] + "..." if len(paper.title) > 50 else paper.title
+            is_changed = self._is_paper_changed(paper.id)
+            label_classes = "changed-paper" if is_changed else ""
+            label = Label(title, classes=label_classes)
             item = ListItem(
-                Label(title), id=f"collection-paper-{collection.id}-{paper.id}-{idx}"
+                label, id=f"collection-paper-{collection.id}-{paper.id}-{idx}-{timestamp}"
             )
             collection_papers_list.append(item)
 
     def select_collection(self, index: int) -> None:
         """Select a collection and populate its papers."""
-        if 0 <= index < len(self.collections):
-            collection = self.collections[index]
-            self.selected_collection = collection
-            self.populate_collection_papers_list(collection)
+        total_collections = len(self.collections) + len(self.new_collections)
+        
+        if 0 <= index < total_collections:
+            if index < len(self.collections):
+                # Selecting an existing collection
+                collection = self.collections[index]
+                self.selected_collection = collection
+                self.populate_collection_papers_list(collection)
+            else:
+                # Selecting a new collection (it has no papers yet)
+                new_collection_index = index - len(self.collections)
+                if 0 <= new_collection_index < len(self.new_collections):
+                    # Create a temporary collection object for new collections
+                    class TempCollection:
+                        def __init__(self, name):
+                            self.name = name
+                            self.papers = []
+                            self.id = None
+                    
+                    collection = TempCollection(self.new_collections[new_collection_index])
+                    self.selected_collection = collection
+                    self.populate_collection_papers_list(collection)
+            
+            self.populate_all_papers_list()  # Refresh to exclude papers from selected collection
 
             # Highlight the selected collection
             collections_list = self.query_one("#collections-list", ListView)
@@ -235,7 +420,8 @@ class CollectDialog(ModalScreen):
         """Handle list selection events."""
         if event.list_view.id == "collections-list":
             index = event.list_view.index
-            if index is not None and 0 <= index < len(self.collections):
+            total_collections = len(self.collections) + len(self.new_collections)
+            if index is not None and 0 <= index < total_collections:
                 self.select_collection(index)
         elif event.list_view.id == "collection-papers-list":
             self.selected_collection_paper = event.item
@@ -243,6 +429,120 @@ class CollectDialog(ModalScreen):
         elif event.list_view.id == "all-papers-list":
             self.selected_all_paper = event.item
             self.update_paper_details_from_all_papers(event.item)
+
+    def on_click(self, event: Click) -> None:
+        """Handle clicks to detect double-clicks on collection labels."""
+        # Skip click processing if we're already in editing mode
+        if self.editing_collection_index is not None:
+            return
+            
+        # Get the clicked widget
+        clicked_widget = event.control
+        
+        # Check if it's a Label widget inside a ListItem
+        if isinstance(clicked_widget, Label):
+            list_item = clicked_widget.parent
+            if isinstance(list_item, ListItem) and list_item.id:
+                if list_item.id.startswith("collection-") and not list_item.id.endswith("-editing"):
+                    # Check if this is a double-click by detecting rapid succession
+                    import time
+                    current_time = time.time()
+                    
+                    # Store last click time as an attribute
+                    if not hasattr(self, '_last_click_time'):
+                        self._last_click_time = {}
+                    if not hasattr(self, '_last_clicked_item'):
+                        self._last_clicked_item = None
+                    
+                    # Check if this is a double-click (within 0.5 seconds on same item)
+                    if (self._last_clicked_item == list_item.id and 
+                        current_time - self._last_click_time.get(list_item.id, 0) < 0.5):
+                        
+                        # This is a double-click - start editing
+                        collections_list = self.query_one("#collections-list", ListView)
+                        for idx, item in enumerate(collections_list.children):
+                            if item == list_item and idx < len(self.collections):
+                                self.editing_collection_index = idx
+                                self.populate_collections_list()
+                                # Focus the input field after a short delay
+                                self.call_after_refresh(self._focus_edit_input, idx)
+                                break
+                    
+                    # Update last click info
+                    self._last_click_time[list_item.id] = current_time
+                    self._last_clicked_item = list_item.id
+    
+    def _focus_edit_input(self, idx: int) -> None:
+        """Helper method to focus the edit input field."""
+        try:
+            # Find the input field with the edit-collection prefix
+            for widget in self.query(Input):
+                if widget.id and widget.id.startswith(f"edit-collection-{idx}-"):
+                    widget.focus()
+                    # Select all text for easy editing
+                    widget.action_select_all()
+                    break
+        except Exception as e:
+            pass
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Handle input submission for collection name editing."""
+        if event.input.id and event.input.id.startswith("edit-collection-"):
+            self._save_collection_edit(event.input)
+
+    def on_input_blurred(self, event: Input.Blurred) -> None:
+        """Handle input losing focus - auto-exit editing mode."""
+        if event.input.id and event.input.id.startswith("edit-collection-"):
+            self._save_collection_edit(event.input)
+
+    def _save_collection_edit(self, input_widget: Input) -> None:
+        """Helper method to save collection name edit and exit editing mode."""
+        if not input_widget.id or not input_widget.id.startswith("edit-collection-"):
+            return
+            
+        # Extract index from ID format: edit-collection-{idx}-{timestamp}
+        id_parts = input_widget.id.split("-")
+        
+        if len(id_parts) >= 3:
+            try:
+                idx = int(id_parts[2])  # Get the index part
+                new_name = input_widget.value.strip()
+                
+                if new_name and idx < len(self.collections):
+                    old_name = self.collections[idx].name
+                    
+                    if new_name != old_name:
+                        # Track the change
+                        self.collection_changes[old_name] = new_name
+                        # Update the collection name locally for display
+                        self.collections[idx].name = new_name
+                    
+                # Exit editing mode
+                self.editing_collection_index = None
+                self.populate_collections_list()
+            except (ValueError, IndexError):
+                # Exit editing mode on error
+                self.editing_collection_index = None
+                self.populate_collections_list()
+
+    def action_edit_collection(self) -> None:
+        """Edit the currently selected collection name."""
+        collections_list = self.query_one("#collections-list", ListView)
+        index = collections_list.index
+        
+        if index is not None and 0 <= index < len(self.collections):
+            self.editing_collection_index = index
+            self.populate_collections_list()
+            # Focus the input field after refresh
+            self.call_after_refresh(self._focus_edit_input, index)
+
+    def on_key(self, event) -> None:
+        """Handle escape key to cancel editing."""
+        if event.key == "escape" and self.editing_collection_index is not None:
+            self.editing_collection_index = None
+            self.populate_collections_list()
+            event.prevent_default()
+            event.stop()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "add-collection-button":
@@ -271,12 +571,8 @@ class CollectDialog(ModalScreen):
 
         self.new_collections.append(name)
 
-        # Add to UI
-        collections_list = self.query_one("#collections-list", ListView)
-        item = ListItem(
-            Label(f"{name} (new)"), id=f"new-collection-{len(self.new_collections)-1}"
-        )
-        collections_list.append(item)
+        # Refresh the collections list to show the new collection
+        self.populate_collections_list()
 
         # Clear input
         input_widget.value = ""
@@ -286,47 +582,67 @@ class CollectDialog(ModalScreen):
         collections_list = self.query_one("#collections-list", ListView)
         index = collections_list.index
 
-        if index is not None and 0 <= index < len(self.collections):
-            collection = self.collections[index]
-            self.deleted_collections.append(collection.name)
+        if index is not None:
+            if index < len(self.collections):
+                # Deleting an existing collection
+                collection = self.collections[index]
+                
+                # Track all papers being removed from this collection
+                for paper in collection.papers:
+                    self.paper_moves.append((paper.id, collection.name, "remove"))
+                
+                # Track the collection deletion
+                self.deleted_collections.append(collection.name)
+            else:
+                # Deleting a new collection that hasn't been saved yet
+                new_collection_index = index - len(self.collections)
+                if 0 <= new_collection_index < len(self.new_collections):
+                    # Just remove it from new_collections list
+                    del self.new_collections[new_collection_index]
 
-            # Remove from UI
-            collections_list.remove_items([collections_list.highlighted_child])
-
-            # Clear collection papers
+            # Refresh the collections list and clear collection papers display
+            self.populate_collections_list()
+            self.populate_all_papers_list()  # Refresh to show italic styling for moved papers
             self.query_one("#collection-papers-list", ListView).clear()
+            
+            # Update the title to reflect no collection selected
+            title_widget = self.query_one("#collection-papers-title", Static)
+            title_widget.update("Papers in Collection")
 
     def add_paper_to_collection(self) -> None:
         """Add selected paper from all papers to the current collection."""
         if not self.selected_collection or not self.selected_all_paper:
             return
 
-        # Extract paper ID from the item ID
-        paper_id = int(self.selected_all_paper.id.replace("paper-", ""))
+        # Extract paper ID from the item ID (format: all-paper-{paper_id}-{idx}-{timestamp})
+        id_parts = self.selected_all_paper.id.split("-")
+        if len(id_parts) >= 3:
+            paper_id = int(id_parts[2])  # Get the paper_id part
+        else:
+            return  # Invalid ID format
         paper = next((p for p in self.papers if p.id == paper_id), None)
 
-        if paper and paper not in self.selected_collection.papers:
+        if paper:
+            # Remove paper from collection if it's already there (to avoid duplicates)
+            if paper in self.selected_collection.papers:
+                self.selected_collection.papers.remove(paper)
+            
             # Track the change
             self.paper_moves.append((paper_id, self.selected_collection.name, "add"))
+            
+            # Add paper to the top of the collection for UI display
+            self.selected_collection.papers.insert(0, paper)
 
-            # Add to UI
-            title = paper.title[:50] + "..." if len(paper.title) > 50 else paper.title
-            collection_papers_list = self.query_one("#collection-papers-list", ListView)
-            idx = len(
-                collection_papers_list.children
-            )  # Get current count for unique index
-            item = ListItem(
-                Label(title),
-                id=f"collection-paper-{self.selected_collection.id}-{paper.id}-{idx}",
-            )
-            collection_papers_list.append(item)
+            # Refresh UI to show the change and italic styling
+            self.populate_collection_papers_list(self.selected_collection)
+            self.populate_all_papers_list()  # Refresh to show italic styling
 
     def remove_paper_from_collection(self) -> None:
         """Remove selected paper from the current collection."""
         if not self.selected_collection or not self.selected_collection_paper:
             return
 
-        # Extract paper ID from the item ID (format: collection-paper-{collection_id}-{paper_id}-{idx})
+        # Extract paper ID from the item ID (format: collection-paper-{collection_id}-{paper_id}-{idx}-{timestamp})
         id_parts = self.selected_collection_paper.id.split("-")
         if len(id_parts) >= 4:
             paper_id = int(id_parts[3])  # Get the paper_id part
@@ -336,12 +652,25 @@ class CollectDialog(ModalScreen):
         # Track the change
         self.paper_moves.append((paper_id, self.selected_collection.name, "remove"))
 
-        # Remove from UI
-        collection_papers_list = self.query_one("#collection-papers-list", ListView)
-        collection_papers_list.remove_items([self.selected_collection_paper])
+        # Remove paper from the collection temporarily for UI display
+        paper_to_remove = next((p for p in self.selected_collection.papers if p.id == paper_id), None)
+        if paper_to_remove:
+            self.selected_collection.papers.remove(paper_to_remove)
+
+        # Refresh UI to show the change and italic styling
+        self.populate_collection_papers_list(self.selected_collection)
+        self.populate_all_papers_list()  # Refresh to show italic styling
 
     def action_save(self) -> None:
         """Save changes and close dialog."""
+        # Exit editing mode before saving to ensure changes are captured
+        if self.editing_collection_index is not None:
+            # Find the current editing input and save its changes
+            for widget in self.query(Input):
+                if widget.id and widget.id.startswith("edit-collection-"):
+                    self._save_collection_edit(widget)
+                    break
+        
         result = {
             "collection_changes": self.collection_changes,
             "paper_moves": self.paper_moves,
@@ -365,7 +694,7 @@ class CollectDialog(ModalScreen):
             self.clear_paper_details()
             return
 
-        # Extract paper ID from the item ID (format: collection-paper-{collection_id}-{paper_id}-{idx})
+        # Extract paper ID from the item ID (format: collection-paper-{collection_id}-{paper_id}-{idx}-{timestamp})
         id_parts = item.id.split("-")
         if len(id_parts) >= 4:
             try:
@@ -386,20 +715,24 @@ class CollectDialog(ModalScreen):
             self.clear_paper_details()
             return
 
-        # Extract paper ID from the item ID (format: paper-{paper_id})
+        # Extract paper ID from the item ID (format: all-paper-{paper_id}-{idx}-{timestamp})
         try:
-            paper_id = int(item.id.replace("paper-", ""))
-            paper = next((p for p in self.papers if p.id == paper_id), None)
-            if paper:
-                self.show_paper_details(paper)
+            id_parts = item.id.split("-")
+            if len(id_parts) >= 3 and id_parts[0] == "all":
+                paper_id = int(id_parts[2])  # Get the paper_id part
+                paper = next((p for p in self.papers if p.id == paper_id), None)
+                if paper:
+                    self.show_paper_details(paper)
+                else:
+                    self.clear_paper_details()
             else:
                 self.clear_paper_details()
-        except (ValueError, AttributeError):
+        except (ValueError, AttributeError, IndexError):
             self.clear_paper_details()
 
     def show_paper_details(self, paper: Paper) -> None:
         """Display paper details in the details panel."""
-        details_area = self.query_one("#paper-details-area", TextArea)
+        details_text = self.query_one("#paper-details-text", Static)
 
         # Format paper details as one-liner like the original app
         authors = paper.author_names or "Unknown Authors"
@@ -416,13 +749,13 @@ class CollectDialog(ModalScreen):
 
         # Format as citation: authors, "title," venue (year)
         if venue:
-            details_text = f'{authors}, "{title}," {venue} ({year})'
+            details_display = f'{authors}, "{title}," {venue} ({year})'
         else:
-            details_text = f'{authors}, "{title}" ({year})'
+            details_display = f'{authors}, "{title}" ({year})'
 
-        details_area.text = details_text
+        details_text.update(details_display)
 
     def clear_paper_details(self) -> None:
         """Clear the paper details panel."""
-        details_area = self.query_one("#paper-details-area", TextArea)
-        details_area.text = "Select a paper to view details"
+        details_text = self.query_one("#paper-details-text", Static)
+        details_text.update("Select a paper to view details")

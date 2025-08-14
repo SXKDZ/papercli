@@ -103,9 +103,9 @@ class CollectionService:
             # Find collections with no associated papers
             empty_collections = (
                 session.query(Collection)
-                .outerjoin(PaperCollection)
+                .outerjoin(paper_collections)
                 .group_by(Collection.id)
-                .having(func.count(PaperCollection.paper_id) == 0)
+                .having(func.count(paper_collections.c.paper_id) == 0)
                 .all()
             )
 
@@ -127,3 +127,49 @@ class CollectionService:
                 session.refresh(collection)
             session.expunge(collection)
             return collection
+
+    def update_collection_name(self, collection_id: int, new_name: str) -> bool:
+        """Update the name of an existing collection."""
+        with get_db_session() as session:
+            collection = session.query(Collection).get(collection_id)
+            if collection:
+                collection.name = new_name
+                session.commit()
+                return True
+            return False
+
+    def create_collection(self, name: str) -> Collection:
+        """Create a new collection."""
+        return self.add_collection(name)
+
+    def delete_collection(self, collection_id: int) -> bool:
+        """Delete a collection by ID."""
+        with get_db_session() as session:
+            collection = session.query(Collection).get(collection_id)
+            if collection:
+                session.delete(collection)
+                session.commit()
+                return True
+            return False
+
+    def add_paper_to_collection(self, paper_id: int, collection_id: int) -> bool:
+        """Add a single paper to a collection."""
+        with get_db_session() as session:
+            collection = session.query(Collection).get(collection_id)
+            paper = session.query(Paper).get(paper_id)
+            if collection and paper and paper not in collection.papers:
+                collection.papers.append(paper)
+                session.commit()
+                return True
+            return False
+
+    def remove_paper_from_collection(self, paper_id: int, collection_id: int) -> bool:
+        """Remove a single paper from a collection."""
+        with get_db_session() as session:
+            collection = session.query(Collection).get(collection_id)
+            paper = session.query(Paper).get(paper_id)
+            if collection and paper and paper in collection.papers:
+                collection.papers.remove(paper)
+                session.commit()
+                return True
+            return False

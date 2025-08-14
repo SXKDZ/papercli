@@ -1,7 +1,7 @@
 from textual.app import ComposeResult
-from textual.containers import VerticalScroll, Container, Vertical
-from textual.widgets import Button, Static, Markdown
+from textual.containers import Container, Vertical, VerticalScroll
 from textual.screen import ModalScreen
+from textual.widgets import Button, Markdown, Static
 
 
 class DoctorDialog(ModalScreen):
@@ -42,7 +42,7 @@ class DoctorDialog(ModalScreen):
     #doctor-ok {
         margin: 0 1;
         height: 3;
-        min-width: 8;
+        min-width: 10;
         content-align: center middle;
         text-align: center;
     }

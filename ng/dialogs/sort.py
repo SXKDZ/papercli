@@ -1,4 +1,4 @@
-from typing import Callable, Dict, Any
+from typing import Any, Callable, Dict
 
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, HorizontalScroll, Vertical

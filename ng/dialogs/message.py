@@ -42,7 +42,7 @@ class MessageDialog(ModalScreen):
     #message-ok {
         margin: 0 1;
         height: 3;
-        min-width: 8;
+        min-width: 10;
         content-align: center middle;
         text-align: center;
     }

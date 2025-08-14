@@ -224,7 +224,7 @@ class ChatDialog(ModalScreen):
                     value="",
                     id="user-input",
                     classes="chat-input",
-                    placeholder="Type your message and press Enter to send...",
+                    placeholder="❯ Type your message and press Enter to send...",
                 )
             with Horizontal(id="controls-bar"):
                 with Container(id="controls-left"):
