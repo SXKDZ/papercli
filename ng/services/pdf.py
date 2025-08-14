@@ -696,8 +696,6 @@ class PDFManager:
 
             # Check if content is actually a PDF
             content_type = response.headers.get("content-type", "").lower()
-            if self.app:
-                self.app._add_log("http_content_debug", f"Content-Type: {content_type}")
 
             if "pdf" not in content_type:
                 if self.app:

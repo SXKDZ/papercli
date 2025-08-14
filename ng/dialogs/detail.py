@@ -372,7 +372,6 @@ class DetailDialog(ModalScreen):
                         if self.callback:
                             self.callback({"action": "updated", "paper": updated_paper})
                 except Exception as e:
-                    self.app._add_log("debug", f"Error fetching fresh paper data: {e}")
                     # If there's an error fetching fresh data, just update our reference without refresh
                     self.paper = updated_paper
                     if self.callback:

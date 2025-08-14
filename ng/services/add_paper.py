@@ -131,7 +131,6 @@ class AddPaperService:
             # Download PDF
             pdf_dir = get_pdf_directory()
             if self.app:
-                self.app._add_log("pdf_download_debug", f"PDF directory: {pdf_dir}")
                 self.app._add_log(
                     "pdf_download_debug",
                     f"Paper data keys: {list(paper_data.keys()) if paper_data else 'None'}",

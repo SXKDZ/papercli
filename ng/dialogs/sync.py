@@ -45,7 +45,7 @@ class SyncDialog(ModalScreen):
     }
     SyncDialog > Container {
         width: 80%;
-        height: 25%;
+        height: 26%;
         border: solid $accent;
         background: $panel;
     }
@@ -349,11 +349,7 @@ class SyncDialog(ModalScreen):
     def _update_conflict_display(self) -> None:
         """Update the conflict display with current conflict info."""
         if not self.conflicts or self.current_conflict_index >= len(self.conflicts):
-            # Debug: log why no conflicts are displayed
-            if not self.conflicts:
-                self.app._add_log("sync_conflict_debug", "No conflicts in self.conflicts list")
-            else:
-                self.app._add_log("sync_conflict_debug", f"Conflict index {self.current_conflict_index} >= {len(self.conflicts)}")
+            # No conflicts to display
             return
 
         try:

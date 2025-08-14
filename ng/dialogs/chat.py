@@ -271,10 +271,6 @@ class ChatDialog(ModalScreen):
         # Calculate total PDF pages and update input states
         self._update_pdf_controls_state()
 
-        # Debug: Add a test message to verify the system is working
-        if self.app:
-            self.app._add_log("chat_init", "Chat dialog initialized successfully")
-
         if not self.papers:
             self._add_system_message("No papers selected for chat.")
             return

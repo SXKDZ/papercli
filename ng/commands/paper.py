@@ -311,7 +311,6 @@ class PaperCommandHandler(CommandHandler):
                         self.app.notify(
                             f"Error adding paper: {str(e)}", severity="error"
                         )
-                        # Also log the error for debugging
                         self.app._add_log(
                             "add_paper_error",
                             f"Failed to add {source} paper {path_id}: {str(e)}",
@@ -476,7 +475,6 @@ class PaperCommandHandler(CommandHandler):
 
             except Exception as e:
                 self.app.notify(f"Error adding paper: {str(e)}", severity="error")
-                # Also log the error for debugging
                 self.app._add_log(
                     "add_paper_error",
                     f"Failed to add {source} paper {path_id}: {str(e)}",
