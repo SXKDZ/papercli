@@ -645,9 +645,10 @@ class MetadataExtractor:
                     "llm_summarization_request",
                     f"Requesting paper summary for PDF: {pdf_path}",
                 )
+                prompt_preview = prompt[:100] + "..." if len(prompt) > 100 else prompt
                 self.app._add_log(
                     "llm_summarization_prompt",
-                    f"Full prompt sent to {model_name}:\n{prompt}",
+                    f"Prompt sent to {model_name}: {prompt_preview} ({len(prompt)} characters total)",
                 )
 
             # Build parameters using centralized utility
@@ -670,9 +671,10 @@ class MetadataExtractor:
                     "llm_summarization_response",
                     f"{model_name} response received ({len(summary_response)} chars)",
                 )
+                response_preview = summary_response[:100] + "..." if len(summary_response) > 100 else summary_response
                 self.app._add_log(
                     "llm_summarization_content",
-                    f"Generated summary:\n{summary_response}",
+                    f"Generated summary: {response_preview} ({len(summary_response)} characters total)",
                 )
 
             return summary_response

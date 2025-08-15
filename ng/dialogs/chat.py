@@ -7,9 +7,14 @@ from typing import Any, Callable, Dict, List
 
 import PyPDF2
 from openai import OpenAI
+try:
+    import tiktoken
+except ImportError:
+    tiktoken = None
 from pluralizer import Pluralizer
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
+from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Markdown, Static
 
@@ -29,6 +34,24 @@ _pluralizer = Pluralizer()
 
 class ChatDialog(ModalScreen):
     """A modal dialog for chat interactions with OpenAI."""
+
+    class StreamingUpdate(Message):
+        """Message sent when streaming content is updated."""
+        def __init__(self, content: str) -> None:
+            self.content = content
+            super().__init__()
+
+    class StreamingComplete(Message):
+        """Message sent when streaming is complete."""
+        def __init__(self, final_content: str) -> None:
+            self.final_content = final_content
+            super().__init__()
+
+    class StreamingError(Message):
+        """Message sent when streaming encounters an error."""
+        def __init__(self, error_message: str) -> None:
+            self.error_message = error_message
+            super().__init__()
 
     DEFAULT_CSS = """
     ChatDialog {
@@ -55,7 +78,7 @@ class ChatDialog(ModalScreen):
         height: 1fr;
         border: solid $warning;
         margin: 1;
-        scrollbar-size-vertical: 1;
+        scrollbar-size-vertical: 2;
         scrollbar-size-horizontal: 0;
     }
     
@@ -212,6 +235,45 @@ class ChatDialog(ModalScreen):
             except Exception:
                 pass
 
+        # Thread-safe state
+        self._streaming_content = ""
+        self._streaming_widget = None
+        self._input_tokens = 0
+        self._output_tokens = 0
+
+    def _estimate_tokens(self, text: str) -> int:
+        """Estimate tokens using OpenAI's tiktoken library."""
+        if tiktoken is None:
+            # Fallback to rough estimation if tiktoken not available
+            return len(text) // 4
+            
+        try:
+            # Use appropriate encoding for the model
+            if "gpt-4" in self.model_name.lower():
+                encoding = tiktoken.encoding_for_model("gpt-4")
+            elif "gpt-3.5" in self.model_name.lower():
+                encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
+            else:
+                # Default to cl100k_base for most modern models
+                encoding = tiktoken.get_encoding("cl100k_base")
+                
+            return len(encoding.encode(text))
+        except Exception:
+            # Fallback to rough estimation if tiktoken fails
+            return len(text) // 4
+
+    def _clean_pdf_text(self, text: str) -> str:
+        """Clean PDF text to remove surrogates and other problematic characters."""
+        try:
+            # Remove surrogates and other problematic unicode characters
+            cleaned = text.encode('utf-8', errors='ignore').decode('utf-8')
+            # Remove null bytes and other control characters except newlines and tabs
+            cleaned = ''.join(char for char in cleaned if ord(char) >= 32 or char in '\n\t')
+            return cleaned
+        except Exception:
+            # If all else fails, return empty string
+            return ""
+
     def compose(self) -> ComposeResult:
         with Container(id="chat-container"):
             selection_text = _pluralizer.pluralize("paper", len(self.papers), True)
@@ -341,18 +403,19 @@ class ChatDialog(ModalScreen):
         """Format paper information for display (app version logic)."""
         fields = self._get_paper_fields(paper)
 
+        # Always include basic paper metadata
+        paper_info = (
+            f"**Paper {index}: {fields['title']}**\n\n"
+            f"Authors: {fields['authors']}\n"
+            f"Venue: {fields['venue']} ({fields['year']})"
+        )
+        
         if fields["notes"]:
-            return f"**Paper {index}: {fields['title']}**\n\n{fields['notes']}"
-        else:
-            # No notes available, show basic paper info
-            paper_info = (
-                f"**Paper {index}: {fields['title']}**\n\n"
-                f"Authors: {fields['authors']}\n"
-                f"Venue: {fields['venue']} ({fields['year']})"
-            )
-            if fields["abstract"]:
-                paper_info += f"\n\nAbstract: {fields['abstract']}"
-            return paper_info
+            paper_info += f"\n\nNotes: {fields['notes']}"
+        elif fields["abstract"]:
+            paper_info += f"\n\nAbstract: {fields['abstract']}"
+            
+        return paper_info
 
     def _build_initial_chat_content(self):
         """Build initial chat content (app version logic)."""
@@ -412,7 +475,7 @@ class ChatDialog(ModalScreen):
                     role_text = f"⏵ Model ({self.model_name})"
                 elif role == "system":
                     role_color = ThemeService.get_markup_color("warning", app=self.app)
-                    role_text = f"⏵ System ({self.model_name})"
+                    role_text = "⏵ System"
                 elif role == "loading":
                     role_color = ThemeService.get_markup_color("info", app=self.app)
                     role_text = content
@@ -570,6 +633,58 @@ class ChatDialog(ModalScreen):
         elif event.button.id == "close-button":
             self.dismiss(None)
 
+    def on_streaming_update(self, message: StreamingUpdate) -> None:
+        """Handle streaming content updates."""
+        self._streaming_content = message.content
+        if self._streaming_widget:
+            self._streaming_widget.update(self._streaming_content)
+            # Scroll to end
+            chat_container = self.query_one("#chat-history", VerticalScroll)
+            chat_container.scroll_end(animate=False)
+        else:
+            if self.app:
+                self.app._add_log("chat_stream_error", "No streaming widget found for content update")
+
+    def on_streaming_complete(self, message: StreamingComplete) -> None:
+        """Handle streaming completion."""
+        # Estimate output tokens
+        self._output_tokens = self._estimate_tokens(message.final_content)
+        
+        # Add token info to response
+        final_content_with_tokens = f"{message.final_content}\n\n*(~{self._input_tokens} input tokens, ~{self._output_tokens} output tokens)*"
+        
+        # Update chat history with final content
+        if self.chat_history and self.chat_history[-1]["role"] == "assistant":
+            self.chat_history[-1]["content"] = final_content_with_tokens
+        
+        # Final widget update
+        if self._streaming_widget:
+            self._streaming_widget.update(final_content_with_tokens)
+            chat_container = self.query_one("#chat-history", VerticalScroll)
+            chat_container.scroll_end(animate=False)
+        
+        # Re-enable buttons
+        self._enable_buttons()
+        
+        # Ensure we have some response
+        if not message.final_content.strip():
+            if self.chat_history and self.chat_history[-1]["role"] == "assistant":
+                self.chat_history[-1]["content"] = "No response received from the AI model."
+                if self.app:
+                    self.app._add_log("chat_stream_warning", "Received empty response from LLM")
+            self._update_display()
+
+    def on_streaming_error(self, message: StreamingError) -> None:
+        """Handle streaming errors."""
+        if self.app:
+            self.app._add_log("chat_stream_error", f"LLM streaming failed: {message.error_message}")
+        
+        # Replace the last message with error and re-enable input
+        if self.chat_history:
+            self.chat_history[-1] = {"role": "error", "content": message.error_message}
+        self._update_display()
+        self._enable_buttons()
+
     def _handle_send(self):
         """Handle sending a message (app version logic)."""
         user_input = self.query_one("#user-input", Input)
@@ -600,11 +715,17 @@ class ChatDialog(ModalScreen):
                         pdf_info_added = True
                         break
 
+        # Estimate input tokens for the full conversation context
+        messages = self._build_conversation_messages(user_message)
+        total_input_text = " ".join([msg["content"] for msg in messages])
+        self._input_tokens = self._estimate_tokens(total_input_text)
+        
         self.chat_history.append({"role": "user", "content": user_content})
 
         # Log the user message
         if self.app:
-            self.app._add_log("chat_user", f"User: {user_message}")
+            user_preview = user_message[:100] + "..." if len(user_message) > 100 else user_message
+            self.app._add_log("chat_user", f"User: {user_preview} ({len(user_message)} characters total)")
 
         # Clear input and disable UI during response
         user_input.value = ""
@@ -624,7 +745,9 @@ class ChatDialog(ModalScreen):
                 self._streaming_widget = child
                 break
 
-        # Send request in background with streaming
+        # Send request in background with streaming using message system
+        dialog_ref = self  # Capture reference for thread
+        
         def send_request():
             try:
                 # Build messages
@@ -642,62 +765,32 @@ class ChatDialog(ModalScreen):
 
                 stream = self.openai_client.chat.completions.create(**params)
 
-                # Stream response by directly updating the widget to avoid rebuilding
+                # Stream response using message system for thread safety
                 full_response = ""
                 last_update_time = 0
-                update_interval = 0.1  # Update every 100ms maximum
+                update_interval = 0.3  # Update every 300ms to reduce UI overhead
+                chunk_count = 0
 
                 for chunk in stream:
                     if chunk.choices and chunk.choices[0].delta.content is not None:
                         full_response += chunk.choices[0].delta.content
+                        chunk_count += 1
 
-                        # Update the data
-                        self.chat_history[-1]["content"] = full_response
-
-                        # Update the widget directly without rebuilding entire UI
+                        # Send streaming update message with reduced frequency
                         current_time = time.time()
-                        if current_time - last_update_time >= update_interval:
-                            if self._streaming_widget:
-                                self.app.call_from_thread(
-                                    self._streaming_widget.update, full_response
-                                )
-                                # Scroll to end
-                                self.app.call_from_thread(
-                                    lambda: self.query_one(
-                                        "#chat-history", VerticalScroll
-                                    ).scroll_end(animate=False)
-                                )
+                        if (current_time - last_update_time >= update_interval) or (chunk_count % 10 == 0):
+                            self.app.call_from_thread(dialog_ref.on_streaming_update, dialog_ref.StreamingUpdate(full_response))
                             last_update_time = current_time
 
-                # Final update and re-enable input
-                if self._streaming_widget:
-                    self.app.call_from_thread(
-                        self._streaming_widget.update, full_response
-                    )
-                    self.app.call_from_thread(
-                        lambda: self.query_one(
-                            "#chat-history", VerticalScroll
-                        ).scroll_end(animate=False)
-                    )
-
-                # Re-enable input after successful completion
-                self.app.call_from_thread(self._enable_buttons)
-
-                # Ensure we have some response
-                if not full_response.strip():
-                    self.chat_history[-1][
-                        "content"
-                    ] = "No response received from the AI model."
-                    self.app.call_from_thread(self._update_display)
+                # Send completion message
+                self.app.call_from_thread(dialog_ref.on_streaming_complete, dialog_ref.StreamingComplete(full_response))
 
             except Exception as e:
                 error_msg = f"Chat Error: {str(e)}"
                 if self.app:
                     self.app._add_log("chat_error", f"OpenAI error: {str(e)}")
-                # Replace the last message with error and re-enable input
-                self.chat_history[-1] = {"role": "error", "content": error_msg}
-                self.app.call_from_thread(self._update_display)
-                self.app.call_from_thread(self._enable_buttons)
+                    # Send error message
+                    self.app.call_from_thread(dialog_ref.on_streaming_error, dialog_ref.StreamingError(error_msg))
 
         threading.Thread(target=send_request, daemon=True).start()
 
@@ -803,7 +896,10 @@ class ChatDialog(ModalScreen):
                     page = pdf_reader.pages[page_num]
                     page_text = page.extract_text()
                     if page_text.strip():
-                        text_parts.append(f"Page {page_num + 1}:\n{page_text.strip()}")
+                        # Clean text to remove surrogates and other problematic characters
+                        cleaned_text = self._clean_pdf_text(page_text.strip())
+                        if cleaned_text:
+                            text_parts.append(f"Page {page_num + 1}:\n{cleaned_text}")
 
                 return "\n\n".join(text_parts)
         except Exception as e:
