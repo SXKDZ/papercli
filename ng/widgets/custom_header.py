@@ -1,7 +1,8 @@
-from textual.widgets import Static
+from typing import TYPE_CHECKING, Optional
+
 from textual.containers import Horizontal
 from textual.reactive import reactive
-from typing import Optional, TYPE_CHECKING
+from textual.widgets import Static
 
 from ng.version import get_version
 
@@ -13,7 +14,7 @@ class CustomHeader(Static):
     """Custom header showing app title and paper statistics."""
 
     total_papers = reactive(0)
-    current_position = reactive(1) 
+    current_position = reactive(1)
     selected_count = reactive(0)
 
     DEFAULT_CSS = """

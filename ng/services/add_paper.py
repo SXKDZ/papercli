@@ -45,6 +45,7 @@ class AddPaperService:
             "venue_acronym": metadata.get("venue_acronym", ""),
             "paper_type": metadata.get("paper_type", "preprint"),
             "preprint_id": metadata.get("preprint_id"),
+            "category": metadata.get("category"),
             "doi": metadata.get("doi"),
             "url": f"https://arxiv.org/pdf/{arxiv_id}.pdf",
         }
@@ -92,6 +93,7 @@ class AddPaperService:
             "venue_acronym": metadata.get("venue_acronym", ""),
             "paper_type": metadata.get("paper_type", "preprint"),
             "preprint_id": metadata.get("preprint_id"),
+            "category": metadata.get("category"),
             "doi": metadata.get("doi"),
             "url": f"https://arxiv.org/pdf/{arxiv_id}.pdf",
         }

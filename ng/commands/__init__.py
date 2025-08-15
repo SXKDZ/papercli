@@ -1,9 +1,9 @@
 from .base import CommandHandler
+from .collection import CollectionCommandHandler
+from .export import ExportCommandHandler
 from .paper import PaperCommandHandler
 from .search import SearchCommandHandler
 from .system import SystemCommandHandler
-from .collection import CollectionCommandHandler
-from .export import ExportCommandHandler
 
 __all__ = [
     "CommandHandler",

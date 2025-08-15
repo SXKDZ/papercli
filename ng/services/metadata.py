@@ -671,7 +671,11 @@ class MetadataExtractor:
                     "llm_summarization_response",
                     f"{model_name} response received ({len(summary_response)} chars)",
                 )
-                response_preview = summary_response[:100] + "..." if len(summary_response) > 100 else summary_response
+                response_preview = (
+                    summary_response[:100] + "..."
+                    if len(summary_response) > 100
+                    else summary_response
+                )
                 self.app._add_log(
                     "llm_summarization_content",
                     f"Generated summary: {response_preview} ({len(summary_response)} characters total)",

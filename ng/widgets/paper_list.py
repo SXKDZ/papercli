@@ -109,7 +109,7 @@ class PaperList(DataTable):
         if venue_width < original_venue_width:
             # Add the saved space to collections
             collections_width += original_venue_width - venue_width
-        
+
         # Cap collections width and redistribute to title
         collections_width = min(20, collections_width)  # Max 20 chars for collections
 

@@ -509,35 +509,36 @@ class PaperService:
             callable: Callback function for EditDialog results
         """
 
-        def callback(result):
-            if result:
-                try:
-                    updated_paper, error_message = self.update_paper(paper_id, result)
-                    if updated_paper:
-                        app.load_papers()  # Reload papers to reflect changes
-                        app.notify(
-                            f"Paper '{updated_paper.title}' updated successfully",
-                            severity="information",
-                        )
-                        app._add_log(
-                            "paper_update",
-                            f"Updated paper via edit dialog ID {updated_paper.id}: '{updated_paper.title}'",
-                        )
-                        return updated_paper  # Return for caller to use
-                    else:
-                        app.notify(
-                            f"Failed to update paper: {error_message}", severity="error"
-                        )
-                        app._add_log(
-                            "paper_update_error",
-                            f"Failed to update paper {paper_id}: {error_message}",
-                        )
-                except Exception as e:
-                    app.notify(f"Error updating paper: {e}", severity="error")
-                    app._add_log(
-                        "paper_update_exception",
-                        f"Exception updating paper {paper_id}: {e}",
-                    )
-            return None
+        return lambda result: self._handle_edit_callback(result, app, paper_id)
 
-        return callback
+    def _handle_edit_callback(self, result, app, paper_id):
+        """Handle the edit dialog callback results."""
+        if result:
+            try:
+                updated_paper, error_message = self.update_paper(paper_id, result)
+                if updated_paper:
+                    app.load_papers()
+                    app.notify(
+                        f"Paper '{updated_paper.title}' updated successfully",
+                        severity="information",
+                    )
+                    app._add_log(
+                        "paper_update",
+                        f"Updated paper via edit dialog ID {updated_paper.id}: '{updated_paper.title}'",
+                    )
+                    return updated_paper
+                else:
+                    app.notify(
+                        f"Failed to update paper: {error_message}", severity="error"
+                    )
+                    app._add_log(
+                        "paper_update_error",
+                        f"Failed to update paper {paper_id}: {error_message}",
+                    )
+            except Exception as e:
+                app.notify(f"Error updating paper: {e}", severity="error")
+                app._add_log(
+                    "paper_update_exception",
+                    f"Exception updating paper {paper_id}: {e}",
+                )
+        return None

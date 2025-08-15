@@ -21,14 +21,14 @@ class DatabaseManager:
     def __init__(self, db_path: str):
         self.db_path = db_path
         self.engine = create_engine(f"sqlite:///{db_path}")
-        
+
         # Enable foreign key constraints for SQLite
         @event.listens_for(self.engine, "connect")
         def set_sqlite_pragma(dbapi_connection, connection_record):
             cursor = dbapi_connection.cursor()
             cursor.execute("PRAGMA foreign_keys=ON")
             cursor.close()
-        
+
         self.SessionLocal = sessionmaker(
             autocommit=False, autoflush=True, bind=self.engine
         )

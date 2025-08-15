@@ -44,12 +44,8 @@ class EditDialog(ModalScreen):
         background: $panel;
     }
     EditDialog.compact > Container {
-        width: 80%;
-        height: auto;
         max-height: 70%;
         min-height: 40%;
-        border: solid $accent;
-        background: $panel;
     }
     EditDialog .dialog-title {
         text-align: center;
@@ -78,9 +74,9 @@ class EditDialog(ModalScreen):
         height: 3;
         border: solid $border;
     }
-    EditDialog .form-fields {
+    EditDialog .form-fields,
+    EditDialog .form-fields-compact {
         height: 1fr;
-        max-height: 50;
         margin: 0 1;
         scrollbar-size: 2 2;
         scrollbar-background: $surface;
@@ -88,15 +84,11 @@ class EditDialog(ModalScreen):
         overflow-y: auto;
         border: solid $border;
     }
+    EditDialog .form-fields {
+        max-height: 50;
+    }
     EditDialog .form-fields-compact {
-        height: 1fr;
         max-height: 35;
-        margin: 0 1;
-        scrollbar-size: 2 2;
-        scrollbar-background: $surface;
-        scrollbar-color: $primary;
-        overflow-y: auto;
-        border: solid $border;
     }
     EditDialog .form-row {
         height: auto;
@@ -126,18 +118,12 @@ class EditDialog(ModalScreen):
         width: 1fr;
         padding: 0 0 0 1;
     }
-    EditDialog .single-line-input {
-        height: 1;
-        border: none;
-    }
-    EditDialog .multiline-input {
-        height: 8;
-        border: none;
-    }
+    EditDialog .single-line-input,
     EditDialog .single-line-input:focus {
         height: 1;
         border: none;
     }
+    EditDialog .multiline-input,
     EditDialog .multiline-input:focus {
         height: 8;
         border: none;
@@ -160,11 +146,9 @@ class EditDialog(ModalScreen):
         layout: horizontal;
         border: solid $border;
     }
-    EditDialog RadioButton {
-        margin: 0 1 0 0;
-        height: 1;
-    }
+    EditDialog RadioButton,
     EditDialog RadioButton:focus {
+        margin: 0 1 0 0;
         height: 1;
     }
     """
@@ -323,17 +307,17 @@ class EditDialog(ModalScreen):
     def _get_content_height_class(self, paper_type: str) -> str:
         """Get the appropriate CSS class for content min-height based on field configuration."""
         field_count = self._get_field_count_for_type(paper_type)
-        
+
         # Calculate expected height: single-line fields = 2 lines each, multi-line = 9 lines each
         # All types have 2 multi-line fields (abstract, notes) = 18 lines
         # Remaining are single-line = (field_count - 2) * 2 lines
         # Total = 18 + (field_count - 2) * 2 - 1 (last margin)
         expected_height = 18 + (field_count - 2) * 2 - 1
-        
+
         if field_count == 8:  # website
             return "paper-content-compact"  # 29 lines
         elif field_count == 13:  # journal
-            return "paper-content-extended"  # 39 lines  
+            return "paper-content-extended"  # 39 lines
         elif field_count == 16:  # other
             return "paper-content-full"  # 45 lines
         else:  # conference, workshop, preprint (12 fields)
@@ -704,7 +688,6 @@ class EditDialog(ModalScreen):
                 )
             else:
                 result[field_name] = new_value if new_value else None
-
 
         # Clear changed fields when saving
         self.changed_fields.clear()

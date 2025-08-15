@@ -1,4 +1,3 @@
-import time
 from typing import Any, Callable, Dict, List
 
 from textual.app import ComposeResult
@@ -9,6 +8,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, ListItem, ListView, Static
 
 from ng.db.models import Collection, Paper
+from ng.services import DialogUtilsService
 
 
 class CollectDialog(ModalScreen):
@@ -27,8 +27,7 @@ class CollectDialog(ModalScreen):
         border: solid $accent;
         background: $panel;
     }
-    
-    /* All titles */
+    /* Title styles */
     CollectDialog .dialog-title,
     CollectDialog .column-title,
     CollectDialog .paper-details-title {
@@ -45,7 +44,6 @@ class CollectDialog(ModalScreen):
     CollectDialog .paper-details-title {
         background: $accent-darken-1;
     }
-    
     /* Layout containers */
     CollectDialog .top-panel {
         width: 100%;
@@ -65,15 +63,12 @@ class CollectDialog(ModalScreen):
         margin: 1 1;
         align: center middle;
     }
-    
-    /* All scroll containers */
     CollectDialog VerticalScroll {
         height: 1fr;
         scrollbar-size: 1 1;
         overflow-y: auto;
     }
-    
-    /* Standard buttons */
+    /* Button styles */
     CollectDialog Button {
         height: 3;
         content-align: center middle;
@@ -91,8 +86,7 @@ class CollectDialog(ModalScreen):
         margin: 0 5;
         min-width: 12;
     }
-    
-    /* Collection buttons */
+    /* Collection button row */
     CollectDialog .collection-buttons-row {
         height: 1;
         width: 100%;
@@ -112,14 +106,11 @@ class CollectDialog(ModalScreen):
     CollectDialog .compact-collection-button:last-child {
         margin: 0;
     }
-    
-    /* New collection input - styled with border */
+    /* Input styles */
     CollectDialog .new-collection-input {
         height: 3;
         border: solid $border;
     }
-    
-    /* Edit collection input - borderless and compact */
     CollectDialog .edit-collection-input {
         background: $warning;
         color: $text;
@@ -133,8 +124,7 @@ class CollectDialog(ModalScreen):
         padding: 0;
         height: 1;
     }
-    
-    /* Edit mode components */
+    /* Edit mode */
     CollectDialog .edit-symbol {
         width: 2;
         height: 1;
@@ -148,14 +138,10 @@ class CollectDialog(ModalScreen):
     CollectDialog .editing-container {
         height: 1;
     }
-    
-    /* Changed items styling */
     CollectDialog .changed-collection,
     CollectDialog .changed-paper {
         text-style: italic;
     }
-    
-    /* Paper details panel */
     CollectDialog .paper-details {
         height: 6;
         border: solid $border;
@@ -288,11 +274,9 @@ class CollectDialog(ModalScreen):
 
     def _is_double_click(self, item_id: str) -> bool:
         """Return True if clicking the same item within threshold constitutes a double-click."""
-        current_time = time.time()
-        last_time = self._last_click_time.get(item_id, 0.0)
-        is_double = (current_time - last_time) < self.DOUBLE_CLICK_THRESHOLD_S
-        self._last_click_time[item_id] = current_time
-        return is_double
+        return DialogUtilsService.is_double_click(
+            item_id, self._last_click_time, self.DOUBLE_CLICK_THRESHOLD_S
+        )
 
     def _is_paper_changed(self, paper_id: int) -> bool:
         """Check if a paper has been moved to/from collections."""
@@ -515,7 +499,6 @@ class CollectDialog(ModalScreen):
                                 # Focus the input field after a short delay
                                 self.call_after_refresh(self._focus_edit_input, idx)
                                 break
-
 
     def _focus_edit_input(self, idx: int) -> None:
         """Helper method to focus the edit input field."""

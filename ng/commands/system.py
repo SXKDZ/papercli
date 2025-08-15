@@ -1,15 +1,16 @@
 from __future__ import annotations
+
 import os
 from pathlib import Path
-from typing import List, TYPE_CHECKING
+from typing import TYPE_CHECKING, List
 
 import requests
 from openai import OpenAI
 
 from ng.commands import CommandHandler
-from ng.version import VersionManager
-from ng.dialogs import MessageDialog, DoctorDialog, ConfigDialog, SyncDialog
+from ng.dialogs import ConfigDialog, DoctorDialog, MessageDialog, SyncDialog
 from ng.services import DatabaseHealthService, SyncService
+from ng.version import VersionManager
 
 if TYPE_CHECKING:
     from ng.papercli import PaperCLIApp
@@ -127,7 +128,9 @@ Notes:
 ```
 """
 
-                self.app.push_screen(MessageDialog("Database Doctor Help", help_markdown))
+                self.app.push_screen(
+                    MessageDialog("Database Doctor Help", help_markdown)
+                )
 
             else:
                 self.app.notify(
@@ -163,11 +166,18 @@ Notes:
             for table, count in db_checks["table_counts"].items():
                 markdown_lines.append(f"- `{table}`: {count:,} records")
 
-        markdown_lines.extend(["", "## Orphaned Records", "🔗 *Records and files without valid references*", ""])
+        markdown_lines.extend(
+            [
+                "",
+                "## Orphaned Records",
+                "🔗 *Records and files without valid references*",
+                "",
+            ]
+        )
         orphaned_records = report["orphaned_records"]["summary"]
         pc_count = orphaned_records.get("orphaned_paper_collections", 0)
         pa_count = orphaned_records.get("orphaned_paper_authors", 0)
-        
+
         orphan_items = [
             f"- **Paper-collection associations:** {pc_count:,}",
             f"- **Paper-author associations:** {pa_count:,}",
@@ -181,12 +191,16 @@ Notes:
         absolute_paths = report.get("absolute_pdf_paths", {}).get("summary", {})
         absolute_count = absolute_paths.get("absolute_path_count", 0)
         if absolute_count > 0:
-            orphan_items.append(f"- **Papers with absolute PDF paths:** {absolute_count:,}")
+            orphan_items.append(
+                f"- **Papers with absolute PDF paths:** {absolute_count:,}"
+            )
 
         missing_pdfs = report.get("missing_pdfs", {}).get("summary", {})
         missing_count = missing_pdfs.get("missing_pdf_count", 0)
         if missing_count > 0:
-            orphan_items.append(f"- **Papers with missing PDF files:** {missing_count:,}")
+            orphan_items.append(
+                f"- **Papers with missing PDF files:** {missing_count:,}"
+            )
 
         markdown_lines.extend(orphan_items)
 
@@ -202,43 +216,61 @@ Notes:
                     path_type = detail.get("path_type", "unknown")
                     markdown_lines.append(f"- **Paper {paper_id}**: {title}")
                     markdown_lines.append(f"  - Path: `{pdf_path}` ({path_type})")
-                
+
                 if len(missing_pdf_details) > 10:
                     remaining = len(missing_pdf_details) - 10
-                    markdown_lines.append(f"- ... and {remaining} more papers with missing PDFs")
+                    markdown_lines.append(
+                        f"- ... and {remaining} more papers with missing PDFs"
+                    )
 
         # Add PDF statistics section
         pdf_stats = report.get("pdf_statistics", {})
         if pdf_stats:
-            markdown_lines.extend(["", "## PDF Collection", "📁 *PDF folder statistics and information*", ""])
-            
+            markdown_lines.extend(
+                [
+                    "",
+                    "## PDF Collection",
+                    "📁 *PDF folder statistics and information*",
+                    "",
+                ]
+            )
+
             if pdf_stats.get("pdf_folder_exists", False):
                 total_files = pdf_stats.get("total_pdf_files", 0)
                 total_size = pdf_stats.get("total_size_formatted", "0 B")
-                
+
                 pdf_info = [
                     f"- **Total PDF files:** {total_files:,}",
                     f"- **Total folder size:** {total_size}",
                 ]
-                
+
                 markdown_lines.extend(pdf_info)
             else:
                 pdf_folder_path = pdf_stats.get("pdf_folder_path", "Unknown")
-                markdown_lines.append(f"- **PDF folder:** ❌ Does not exist (`{pdf_folder_path}`)")
+                markdown_lines.append(
+                    f"- **PDF folder:** ❌ Does not exist (`{pdf_folder_path}`)"
+                )
 
-        markdown_lines.extend(["", "## System Health", "💻 *Python environment and dependencies*", ""])
+        markdown_lines.extend(
+            ["", "## System Health", "💻 *Python environment and dependencies*", ""]
+        )
         sys_checks = report["system_checks"]
-        python_version = sys_checks['python_version'].split()[0] if sys_checks['python_version'] else "Unknown"
+        python_version = (
+            sys_checks["python_version"].split()[0]
+            if sys_checks["python_version"]
+            else "Unknown"
+        )
         markdown_lines.append(f"- **Python version:** `{python_version}`")
-        
+
         # Show dependencies as individual list items
         markdown_lines.extend(["", "### Dependencies", ""])
         for dep, status in sys_checks["dependencies"].items():
             status_icon = "✅" if status else "❌"
             markdown_lines.append(f"- `{dep}`: {status_icon}")
 
-
-        markdown_lines.extend(["", "## Terminal Setup", "🖥️ *Terminal capabilities and configuration*", ""])
+        markdown_lines.extend(
+            ["", "## Terminal Setup", "🖥️ *Terminal capabilities and configuration*", ""]
+        )
         term_checks = report["terminal_checks"]
         terminal_items = [
             f"- **Terminal type:** `{term_checks['terminal_type']}`",
@@ -248,44 +280,59 @@ Notes:
 
         if "terminal_size" in term_checks and "columns" in term_checks["terminal_size"]:
             size = term_checks["terminal_size"]
-            terminal_items.append(f"- **Terminal size:** {size['columns']}×{size['lines']}")
+            terminal_items.append(
+                f"- **Terminal size:** {size['columns']}×{size['lines']}"
+            )
 
         # Add Textual-specific features if available
         if "textual_features" in term_checks:
             textual_features = term_checks["textual_features"]
-            terminal_items.extend([
-                "",
-                "### Textual Application Features",
-                f"- **Rich rendering:** {'✅ Yes' if textual_features.get('rich_rendering') else '❌ No'}",
-                f"- **Mouse support:** {'✅ Yes' if textual_features.get('mouse_support') else '❌ No'}",
-                f"- **Keyboard events:** {'✅ Yes' if textual_features.get('keyboard_events') else '❌ No'}",
-                f"- **Async events:** {'✅ Yes' if textual_features.get('async_events') else '❌ No'}",
-            ])
+            terminal_items.extend(
+                [
+                    "",
+                    "### Textual Application Features",
+                    f"- **Rich rendering:** {'✅ Yes' if textual_features.get('rich_rendering') else '❌ No'}",
+                    f"- **Mouse support:** {'✅ Yes' if textual_features.get('mouse_support') else '❌ No'}",
+                    f"- **Keyboard events:** {'✅ Yes' if textual_features.get('keyboard_events') else '❌ No'}",
+                    f"- **Async events:** {'✅ Yes' if textual_features.get('async_events') else '❌ No'}",
+                ]
+            )
 
         markdown_lines.extend(terminal_items)
 
         # Issues and recommendations
         if report["issues_found"]:
-            markdown_lines.extend(["", "## Issues Found", "⚠️ *Problems detected that need attention*", ""])
+            markdown_lines.extend(
+                ["", "## Issues Found", "⚠️ *Problems detected that need attention*", ""]
+            )
             for issue in report["issues_found"]:
                 markdown_lines.append(f"- {issue}")
 
         if report["recommendations"]:
-            markdown_lines.extend(["", "## Recommendations", "💡 *Suggested actions to improve database health*", ""])
+            markdown_lines.extend(
+                [
+                    "",
+                    "## Recommendations",
+                    "💡 *Suggested actions to improve database health*",
+                    "",
+                ]
+            )
             for rec in report["recommendations"]:
                 markdown_lines.append(f"- {rec}")
 
         if pc_count > 0 or pa_count > 0 or absolute_count > 0 or pdf_count > 0:
-            markdown_lines.extend([
-                "",
-                "## Quick Fix",
-                "🧹 *Automatic cleanup command*",
-                "",
-                "To automatically clean up issues, run:",
-                "```",
-                "/doctor clean", 
-                "```"
-            ])
+            markdown_lines.extend(
+                [
+                    "",
+                    "## Quick Fix",
+                    "🧹 *Automatic cleanup command*",
+                    "",
+                    "To automatically clean up issues, run:",
+                    "```",
+                    "/doctor clean",
+                    "```",
+                ]
+            )
 
         report_markdown = "\n".join(markdown_lines)
         self.app.push_screen(DoctorDialog(report_markdown))
@@ -469,7 +516,7 @@ Notes:
         # Check if using legacy command format
         if args:
             action = args[0].lower()
-            
+
             # Handle legacy commands
             if action == "model":
                 if len(args) < 2:
@@ -579,24 +626,38 @@ Notes:
             elif action == "help":
                 self._show_config_help()
                 return
-        
+
         # Show interactive config dialog (new default behavior)
         def config_callback(changes):
             if changes:
                 changed_settings = []
                 for key, value in changes.items():
-                    setting_name = key.replace("PAPERCLI_", "").replace("OPENAI_", "").lower().replace("_", "-")
+                    setting_name = (
+                        key.replace("PAPERCLI_", "")
+                        .replace("OPENAI_", "")
+                        .lower()
+                        .replace("_", "-")
+                    )
                     if key == "OPENAI_API_KEY":
                         # Mask the API key in the message
-                        masked_value = value[:8] + "*" * (len(value) - 12) + value[-4:] if len(value) > 12 else "****"
+                        masked_value = (
+                            value[:8] + "*" * (len(value) - 12) + value[-4:]
+                            if len(value) > 12
+                            else "****"
+                        )
                         changed_settings.append(f"{setting_name}: {masked_value}")
                     else:
                         changed_settings.append(f"{setting_name}: {value}")
-                
+
                 if changed_settings:
-                    self.app.notify(f"Configuration updated: {', '.join(changed_settings)}", severity="information")
+                    self.app.notify(
+                        f"Configuration updated: {', '.join(changed_settings)}",
+                        severity="information",
+                    )
                 else:
-                    self.app.notify("No configuration changes made", severity="information")
+                    self.app.notify(
+                        "No configuration changes made", severity="information"
+                    )
 
         self.app.push_screen(ConfigDialog(callback=config_callback))
 
@@ -959,7 +1020,9 @@ gpt-3.5-turbo                   - GPT-3.5 Turbo model (faster, cheaper)"""
     def _show_current_max_tokens(self):
         """Show the current OpenAI max tokens."""
         max_tokens = int(os.getenv("OPENAI_MAX_TOKENS", "4000"))
-        self.app.notify(f"Current OpenAI max tokens: {max_tokens}", severity="information")
+        self.app.notify(
+            f"Current OpenAI max tokens: {max_tokens}", severity="information"
+        )
 
     def _set_max_tokens(self, max_tokens: int):
         """Set the OpenAI max tokens."""
@@ -984,7 +1047,9 @@ gpt-3.5-turbo                   - GPT-3.5 Turbo model (faster, cheaper)"""
     def _show_current_temperature(self):
         """Show the current OpenAI temperature."""
         temperature = os.getenv("OPENAI_TEMPERATURE", "0.7")
-        self.app.notify(f"Current OpenAI temperature: {temperature}", severity="information")
+        self.app.notify(
+            f"Current OpenAI temperature: {temperature}", severity="information"
+        )
 
     def _set_temperature(self, temperature: float):
         """Set the OpenAI temperature."""
@@ -1136,7 +1201,7 @@ gpt-3.5-turbo                   - GPT-3.5 Turbo model (faster, cheaper)"""
                     try:
                         # Refresh papers after successful sync
                         self.app.load_papers()
-                        if hasattr(self.app, 'main_screen') and self.app.main_screen:
+                        if hasattr(self.app, "main_screen") and self.app.main_screen:
                             self.app.main_screen.refresh_papers()
                     except:
                         pass
@@ -1154,4 +1219,3 @@ gpt-3.5-turbo                   - GPT-3.5 Turbo model (faster, cheaper)"""
                 self.app.notify(f"Sync error: {str(e)}", severity="error")
             except:
                 pass
-

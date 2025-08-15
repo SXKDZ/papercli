@@ -1,38 +1,40 @@
+import difflib
 import os
 import threading
-import difflib
 from typing import Callable, Dict, List
 
 from pluralizer import Pluralizer
-
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.message import Message
 from textual.reactive import reactive
 from textual.screen import ModalScreen
-from textual.widgets import Button, ProgressBar, Static, Markdown
-from textual.message import Message
+from textual.widgets import Button, Markdown, ProgressBar, Static
 
 from ng.services import SyncConflict, SyncService
 
 
 class SyncDialog(ModalScreen):
     """A modal dialog for sync progress with conflict resolution."""
-    
+
     class ConflictsFound(Message):
         """Message sent when conflicts are detected."""
+
         def __init__(self, conflicts: List[SyncConflict]) -> None:
             super().__init__()
             self.conflicts = conflicts
-    
+
     class ProgressUpdate(Message):
         """Message sent when progress updates."""
+
         def __init__(self, message: str, percentage: int) -> None:
             super().__init__()
             self.message = message
             self.percentage = percentage
-    
+
     class SyncComplete(Message):
         """Message sent when sync completes."""
+
         def __init__(self, success: bool, error_msg: str = None) -> None:
             super().__init__()
             self.success = success
@@ -108,7 +110,8 @@ class SyncDialog(ModalScreen):
         margin: 0 1 1 1;
         border: none;
     }
-    SyncDialog #progress-content, SyncDialog #conflict-content {
+    SyncDialog #progress-content, 
+    SyncDialog #conflict-content {
         padding: 0;
         height: 1fr;
     }
@@ -116,16 +119,14 @@ class SyncDialog(ModalScreen):
         height: 1fr;
         width: 100%;
     }
-    SyncDialog #local-panel, SyncDialog #remote-panel {
+    SyncDialog #local-panel, 
+    SyncDialog #remote-panel {
         width: 45%;
         padding: 0;
         border: solid $primary;
     }
-    SyncDialog #local-scroll, SyncDialog #remote-scroll {
-        height: 1fr;
-        width: 100%;
-        padding: 0 1 1 1;
-    }
+    SyncDialog #local-scroll, 
+    SyncDialog #remote-scroll,
     SyncDialog #summary-scroll {
         height: 1fr;
         width: 100%;
@@ -136,10 +137,12 @@ class SyncDialog(ModalScreen):
         align: center middle;
         padding: 1;
     }
-    SyncDialog #conflict-info, SyncDialog #detailed-info {
+    SyncDialog #conflict-info, 
+    SyncDialog #detailed-info {
         height: 1fr;
     }
-    SyncDialog #conflict-buttons, SyncDialog #main-buttons {
+    SyncDialog #conflict-buttons, 
+    SyncDialog #main-buttons {
         align: center middle;
         padding: 0;
     }
@@ -214,7 +217,9 @@ class SyncDialog(ModalScreen):
             # Progress section at top
             with Vertical(id="progress-section"):
                 with Horizontal(id="progress-container"):
-                    yield ProgressBar(total=100, show_percentage=True, id="progress-bar")
+                    yield ProgressBar(
+                        total=100, show_percentage=True, id="progress-bar"
+                    )
                 yield Static("", id="status-text")
 
             # Single content container that switches between progress and conflicts
@@ -230,21 +235,43 @@ class SyncDialog(ModalScreen):
                         with Container(id="local-panel"):
                             yield Static("Local Version", classes="column-title")
                             with VerticalScroll(id="local-scroll"):
-                                yield Markdown("_Loading conflict data..._", id="local-md")
+                                yield Markdown(
+                                    "_Loading conflict data..._", id="local-md"
+                                )
                         # Middle: Remote
                         with Container(id="remote-panel"):
                             yield Static("Remote Version", classes="column-title")
                             with VerticalScroll(id="remote-scroll"):
-                                yield Markdown("_Loading conflict data..._", id="remote-md")
+                                yield Markdown(
+                                    "_Loading conflict data..._", id="remote-md"
+                                )
                         # Right: Resolution buttons stacked vertically
                         with Container(id="resolution-panel"):
                             with Vertical(id="conflict-buttons", classes="hidden"):
-                                yield Button("Use Local", id="local-button", variant="default")
-                                yield Button("Use Remote", id="remote-button", variant="default")
-                                yield Button("Keep Both", id="keep-both-button", variant="default")
-                                yield Button("All Local", id="all-local-button", variant="warning")
-                                yield Button("All Remote", id="all-remote-button", variant="warning")
-                                yield Button("Keep All", id="all-both-button", variant="success")
+                                yield Button(
+                                    "Use Local", id="local-button", variant="default"
+                                )
+                                yield Button(
+                                    "Use Remote", id="remote-button", variant="default"
+                                )
+                                yield Button(
+                                    "Keep Both",
+                                    id="keep-both-button",
+                                    variant="default",
+                                )
+                                yield Button(
+                                    "All Local",
+                                    id="all-local-button",
+                                    variant="warning",
+                                )
+                                yield Button(
+                                    "All Remote",
+                                    id="all-remote-button",
+                                    variant="warning",
+                                )
+                                yield Button(
+                                    "Keep All", id="all-both-button", variant="success"
+                                )
 
             # Conflict resolution buttons are embedded in the middle panel now
             # Main buttons
@@ -256,7 +283,6 @@ class SyncDialog(ModalScreen):
         # Reset internal state each time the dialog is mounted
         self._reset_state()
         self.start_sync()
-
 
     def watch_progress_percentage(self, percentage: int) -> None:
         """Update progress bar when percentage changes."""
@@ -270,24 +296,28 @@ class SyncDialog(ModalScreen):
         """Update status text when it changes."""
         try:
             status_widget = self.query_one("#status-text", Static)
-            
+
             # Create detailed status like in app version
             if self.show_conflicts:
-                resolved_count = len(self.resolutions)
                 total_conflicts = len(self.conflicts)
                 current_index = self.current_conflict_index + 1
-                conflict_word = self.pluralizer.pluralize("conflict", total_conflicts)
-                status_text = f"Status: Resolving {total_conflicts} {conflict_word} - {current_index} of {total_conflicts} ({resolved_count} resolved)"
+                conflict_word = self.pluralizer.pluralize(
+                    "conflict", total_conflicts, True
+                )
+                status_text = f"Status: Resolving {current_index} of {conflict_word}"
             else:
                 status_text = f"Status: {text}"
-            
+
             status_widget.update(status_text)
         except Exception:
             pass
 
     def watch_show_conflicts(self, show: bool) -> None:
         """Show/hide conflict resolution UI."""
-        self.app._add_log("sync_show_conflicts", f"watch_show_conflicts called with show={show}, conflicts={len(self.conflicts) if self.conflicts else 0}")
+        self.app._add_log(
+            "sync_show_conflicts",
+            f"watch_show_conflicts called with show={show}, conflicts={len(self.conflicts) if self.conflicts else 0}",
+        )
         try:
             progress_content = self.query_one("#progress-content")
             conflict_content = self.query_one("#conflict-content")
@@ -297,7 +327,7 @@ class SyncDialog(ModalScreen):
                 # Switch to conflict view FIRST
                 conflict_content.remove_class("hidden")
                 progress_content.add_class("hidden")
-                
+
                 # Add conflict mode class for larger height
                 self.add_class("conflict-mode")
                 self.remove_class("summary-mode")
@@ -305,16 +335,22 @@ class SyncDialog(ModalScreen):
                 # Show conflict buttons (stacked vertically in resolution panel)
                 conflict_buttons = self.query_one("#conflict-buttons")
                 conflict_buttons.remove_class("hidden")
-                self.app._add_log("sync_ui_elements", f"Removed hidden class from conflict content and buttons")
+                self.app._add_log(
+                    "sync_ui_elements",
+                    "Removed hidden class from conflict content and buttons",
+                )
 
                 # Update conflict info AFTER making visible
                 self._update_conflict_display()
             else:
-                self.app._add_log("sync_ui_switch", f"Not switching to conflict view - show={show}, conflicts={len(self.conflicts) if self.conflicts else 0}")
+                self.app._add_log(
+                    "sync_ui_switch",
+                    f"Not switching to conflict view - show={show}, conflicts={len(self.conflicts) if self.conflicts else 0}",
+                )
                 # Switch back to progress/summary view
                 conflict_content.add_class("hidden")
                 progress_content.remove_class("hidden")
-                
+
                 # Remove conflict mode class
                 self.remove_class("conflict-mode")
 
@@ -354,45 +390,93 @@ class SyncDialog(ModalScreen):
 
         try:
             conflict = self.conflicts[self.current_conflict_index]
-            self.app._add_log("sync_conflict_display", f"Updating conflict display for conflict {self.current_conflict_index + 1} of {len(self.conflicts)}, type: {conflict.conflict_type}")
+            self.app._add_log(
+                "sync_conflict_display",
+                f"Updating conflict display for conflict {self.current_conflict_index + 1} of {len(self.conflicts)}, type: {conflict.conflict_type}",
+            )
             local_md = self.query_one("#local-md", Markdown)
             remote_md = self.query_one("#remote-md", Markdown)
-            self.app._add_log("sync_conflict_widgets", f"Found markdown widgets - local: {local_md is not None}, remote: {remote_md is not None}")
+            self.app._add_log(
+                "sync_conflict_widgets",
+                f"Found markdown widgets - local: {local_md is not None}, remote: {remote_md is not None}",
+            )
 
-            item_line = f"**Item:** {conflict.item_id}\n\n"
-            type_line = f"**Type:** {conflict.conflict_type}\n\n"
+            local_paper_id = conflict.local_data.get("id")
+            local_paper_title = conflict.local_data.get("title", "Unknown Title")
+            remote_paper_id = conflict.remote_data.get("id")
+            remote_paper_title = conflict.remote_data.get("title", "Unknown Title")
 
             if conflict.conflict_type == "paper":
-                self.app._add_log("sync_conflict_paper", f"Processing paper conflict - differences: {list(conflict.differences.keys())}")
-                
+                self.app._add_log(
+                    "sync_conflict_paper",
+                    f"Processing paper conflict - differences: {list(conflict.differences.keys())}",
+                )
+
                 def build_side_with_diffs(side: str) -> str:
-                    parts: list[str] = [item_line, type_line, "#### Differences\n"]
-                    for field, diff in conflict.differences.items():
-                        if field in {"id", "created_at", "updated_at"}:
+                    parts: list[str] = [
+                        (
+                            f"**Paper #{local_paper_id}:** {local_paper_title}\n\n"
+                            if side == "local"
+                            else f"**Paper #{remote_paper_id}:** {remote_paper_title}\n\n"
+                        ),
+                        # type_line,
+                        "#### Differences\n",
+                    ]
+
+                    # Sort fields to ensure consistent order and prioritize important fields
+                    sorted_fields = sorted(
+                        conflict.differences.items(),
+                        key=lambda x: (x[0] != "notes", x[0]),
+                    )
+
+                    for field, diff in sorted_fields:
+                        if field in {"id", "created_at"}:
                             continue
-                        
+
                         local_value = str(diff.get("local", ""))
                         remote_value = str(diff.get("remote", ""))
+
+                        # For short structured fields, just display the value without diff processing
                         current_value = str(diff.get(side, ""))
-                        
-                        # Show diff with context for this field
-                        diff_content = self._create_highlighted_diff(local_value, remote_value, side)
-                        parts.append(f"- **{field.replace('_', ' ').title()}:**\n\n{diff_content}\n")
+                        if (
+                            field
+                            in {
+                                "modified_date",
+                                "added_date",
+                                "year",
+                                "volume",
+                                "issue",
+                                "pages",
+                            }
+                            or len(current_value) < 100
+                        ):
+                            diff_content = f"    {current_value}"
+                        else:
+                            diff_content = self._create_highlighted_diff(
+                                local_value, remote_value, side
+                            )
+                        parts.append(
+                            f"- **{field.replace('_', ' ').title()}:**\n\n{diff_content}\n"
+                        )
                     return "\n".join(parts)
-                
+
                 local_content = build_side_with_diffs("local")
                 remote_content = build_side_with_diffs("remote")
-                self.app._add_log("sync_conflict_content", f"Local content length: {len(local_content)}, Remote content length: {len(remote_content)}")
+                self.app._add_log(
+                    "sync_conflict_content",
+                    f"Local content length: {len(local_content)}, Remote content length: {len(remote_content)}",
+                )
                 local_md.update(local_content)
                 remote_md.update(remote_content)
-                self.app._add_log("sync_conflict_updated", "Markdown widgets updated successfully")
+                self.app._add_log(
+                    "sync_conflict_updated", "Markdown widgets updated successfully"
+                )
             elif conflict.conflict_type == "pdf":
                 local_info = conflict.local_data
                 remote_info = conflict.remote_data
                 local_md.update(
-                    header
-                    + item_line
-                    + type_line
+                    f"**Paper #{local_paper_id}:** {local_paper_title}\n\n"
+                    + "#### PDF Differences\n"
                     + "\n".join(
                         [
                             f"- **File Size:** {local_info.get('size', 'N/A')}",
@@ -402,9 +486,8 @@ class SyncDialog(ModalScreen):
                     )
                 )
                 remote_md.update(
-                    header
-                    + item_line
-                    + type_line
+                    f"**Paper #{remote_paper_id}:** {remote_paper_title}\n\n"
+                    + "#### PDF Differences\n"
                     + "\n".join(
                         [
                             f"- **File Size:** {remote_info.get('size', 'N/A')}",
@@ -424,91 +507,118 @@ class SyncDialog(ModalScreen):
             except Exception:
                 pass
 
-    def _create_highlighted_diff(self, local_text: str, remote_text: str, side: str) -> str:
-        """Create highlighted diff showing only differences with 5 words context, max 5 lines."""
+    def _create_highlighted_diff(
+        self, local_text: str, remote_text: str, side: str
+    ) -> str:
+        """Create highlighted diff showing all differences with 5 words context, max 5 lines."""
         if local_text == remote_text:
-            return f"    {local_text[:100]}..." if len(local_text) > 100 else f"    {local_text}"
-        
+            return (
+                f"    {local_text[:100]}..."
+                if len(local_text) > 100
+                else f"    {local_text}"
+            )
+
         # Split into words for better diff granularity
         local_words = local_text.split()
         remote_words = remote_text.split()
-        
+
         # Use difflib to find differences
         matcher = difflib.SequenceMatcher(None, local_words, remote_words)
-        
         current_words = local_words if side == "local" else remote_words
-        other_words = remote_words if side == "local" else local_words
-        
-        # Find the first significant difference
+
+        # Collect all difference ranges for the current side
+        diff_ranges = []
         for tag, i1, i2, j1, j2 in matcher.get_opcodes():
             if tag != "equal":
-                # Get context around the difference (5 words before and after)
-                start_idx = max(0, min(i1, j1) - 5)
-                end_idx = min(len(current_words), max(i2, j2) + 5)
-                
-                # Build the context with highlighting
-                context_words = []
-                for i in range(start_idx, end_idx):
-                    if i < len(current_words):
-                        word = current_words[i]
-                        # Highlight if this word is in the different section
-                        if start_idx + 5 <= i < start_idx + 5 + (i2 - i1 if side == "local" else j2 - j1):
-                            # Use bold for differences (markdown doesn't support color in Textual)
-                            context_words.append(f"**{word}**")
-                        else:
-                            context_words.append(word)
-                
-                # Join words and split into lines for display (max 5 lines)
-                full_text = " ".join(context_words)
-                
-                # Split into approximately equal chunks (roughly 80 chars per line)
-                lines = []
-                words = full_text.split()
-                current_line = []
-                current_length = 0
-                
-                for word in words:
-                    # Estimate word length (accounting for bold markup)
-                    word_length = len(word.replace("**", ""))
-                    if current_length + word_length + 1 > 80 and current_line:
-                        lines.append(" ".join(current_line))
-                        current_line = [word]
-                        current_length = word_length
-                    else:
-                        current_line.append(word)
-                        current_length += word_length + 1
-                    
-                    # Stop if we have 5 lines
-                    if len(lines) >= 5:
-                        break
-                
-                # Add remaining words to last line
-                if current_line and len(lines) < 5:
-                    lines.append(" ".join(current_line))
-                
-                # Limit to 5 lines and add ellipsis if needed
-                if len(lines) > 5:
-                    lines = lines[:5]
-                    lines[-1] += " ..."
-                elif end_idx < len(current_words):
-                    if lines:
-                        lines[-1] += " ..."
-                    else:
-                        lines = ["..."]
-                
-                # Add leading ellipsis if we truncated from start
-                if start_idx > 0 and lines:
-                    lines[0] = "... " + lines[0]
-                    
-                # Format each line with indentation
-                formatted_lines = [f"    {line}" for line in lines]
-                return "\n".join(formatted_lines)
-        
-        # If no differences found, show truncated text (max 5 lines)
-        text = " ".join(current_words)
-        if len(text) > 400:  # Rough estimate for 5 lines
-            text = text[:400] + "..."
-        return f"    {text}"
+                # Determine which indices to use based on the side
+                if side == "local":
+                    diff_start, diff_end = i1, i2
+                else:
+                    diff_start, diff_end = j1, j2
+                diff_ranges.append((diff_start, diff_end))
+
+        if not diff_ranges:
+            # If no differences found, show truncated text (max 5 lines)
+            text = " ".join(current_words)
+            if len(text) > 400:  # Rough estimate for 5 lines
+                text = text[:400] + "..."
+            return f"    {text}"
+
+        # Find the overall range that encompasses all differences with context
+        min_diff = min(start for start, _ in diff_ranges)
+        max_diff = max(end for _, end in diff_ranges)
+
+        # Get context around all differences (5 words before first and after last)
+        context_start = max(0, min_diff - 5)
+        context_end = min(len(current_words), max_diff + 5)
+
+        # Build the context with highlighting for all differences
+        context_words = []
+        for i in range(context_start, context_end):
+            if i < len(current_words):
+                word = current_words[i]
+                # Check if this word is in any difference range
+                is_different = any(start <= i < end for start, end in diff_ranges)
+                if is_different:
+                    # Use bold for differences (markdown doesn't support color in Textual)
+                    context_words.append(f"**{word}**")
+                else:
+                    context_words.append(word)
+
+        # Join words and split into lines for display (max 5 lines)
+        full_text = " ".join(context_words)
+
+        # Check if text was truncated at word level
+        text_was_truncated = context_end < len(current_words)
+        text_was_truncated_start = context_start > 0
+
+        # Split into approximately equal chunks (roughly 80 chars per line)
+        lines = []
+        words = full_text.split()
+        current_line = []
+        current_length = 0
+        words_remaining = words[:]
+
+        for i, word in enumerate(words):
+            # Estimate word length (accounting for bold markup)
+            word_length = len(word.replace("**", ""))
+            if current_length + word_length + 1 > 80 and current_line:
+                lines.append(" ".join(current_line))
+                current_line = [word]
+                current_length = word_length
+            else:
+                current_line.append(word)
+                current_length += word_length + 1
+
+            # Stop if we have 5 lines
+            if len(lines) >= 5:
+                # Mark remaining words for ellipsis
+                words_remaining = words[i + 1 :]
+                break
+
+        # Add remaining words to last line if we haven't hit the line limit
+        if current_line and len(lines) < 5:
+            lines.append(" ".join(current_line))
+            words_remaining = []
+
+        # Limit to 5 lines
+        if len(lines) > 5:
+            lines = lines[:5]
+            words_remaining = True  # Mark that we truncated
+
+        # Add trailing ellipsis if ANY truncation occurred
+        needs_ellipsis = text_was_truncated or words_remaining
+
+        if lines and needs_ellipsis:
+            lines[-1] += " ..."
+
+        # Add leading ellipsis if we truncated from start
+        if text_was_truncated_start and lines:
+            lines[0] = "... " + lines[0]
+
+        # Format each line with indentation
+        formatted_lines = [f"    {line}" for line in lines]
+        return "\n".join(formatted_lines)
 
     def _update_conflict_status(self) -> None:
         """Update status text to reflect current conflict position."""
@@ -526,25 +636,15 @@ class SyncDialog(ModalScreen):
             progress_content = self.query_one("#progress-content")
             conflict_content = self.query_one("#conflict-content")
             summary_content = self.query_one("#summary-content")
-            
+
             progress_content.add_class("hidden")
             conflict_content.add_class("hidden")
             summary_content.remove_class("hidden")
-            
-            # Determine appropriate height mode based on content
-            has_changes = False
-            if self.sync_result and hasattr(self.sync_result, "detailed_changes"):
-                for change_type, items in self.sync_result.detailed_changes.items():
-                    if items:
-                        has_changes = True
-                        break
-            
-            has_errors = self.sync_result and self.sync_result.errors
-            
+
             # Always use summary-mode height when showing summary
             self.add_class("summary-mode")
             self.remove_class("conflict-mode")
-            
+
             # Update summary content
             self._update_summary_display()
         except Exception:
@@ -569,7 +669,7 @@ class SyncDialog(ModalScreen):
                     if items:
                         has_changes = True
                         break
-            
+
             if has_changes:
                 md_lines.append("### Detailed Changes\n")
                 for change_type, items in self.sync_result.detailed_changes.items():
@@ -582,13 +682,15 @@ class SyncDialog(ModalScreen):
                             "papers_updated": f"Papers Updated: {len(items)}",
                             "collections_synced": f"Collections Synced: {len(items)}",
                         }
-                        
+
                         if change_type in title_mapping:
                             display_title = title_mapping[change_type]
                         else:
                             # Fallback for any unmapped types
-                            display_title = f"{change_type.replace('_', ' ').title()}: {len(items)}"
-                        
+                            display_title = (
+                                f"{change_type.replace('_', ' ').title()}: {len(items)}"
+                            )
+
                         md_lines.append(f"- **{display_title}**\n")
                         for item in items[:5]:
                             md_lines.append(f"  - {item}\n")
@@ -611,19 +713,27 @@ class SyncDialog(ModalScreen):
             try:
 
                 def conflict_resolver(conflicts):
-                    self.app._add_log("sync_conflict_resolver", f"conflict_resolver called with {len(conflicts) if conflicts else 0} conflicts")
+                    self.app._add_log(
+                        "sync_conflict_resolver",
+                        f"conflict_resolver called with {len(conflicts) if conflicts else 0} conflicts",
+                    )
                     if conflicts:
                         if self.sync_cancelled:
                             return None
-                        self.app._add_log("sync_conflict_found", f"Found {len(conflicts)} conflicts, setting show_conflicts=True")
-                        
+                        self.app._add_log(
+                            "sync_conflict_found",
+                            f"Found {len(conflicts)} conflicts, setting show_conflicts=True",
+                        )
+
                         # Send signal to main thread
                         self.post_message(self.ConflictsFound(conflicts))
-                        
+
                         # Wait for conflict resolution
-                        self.app._add_log("sync_conflict_wait", "Waiting for conflict resolution...")
+                        self.app._add_log(
+                            "sync_conflict_wait", "Waiting for conflict resolution..."
+                        )
                         self.conflict_resolution_event.wait()
-                        
+
                         if self.sync_cancelled:
                             return None
                         return self.resolutions
@@ -665,7 +775,9 @@ class SyncDialog(ModalScreen):
                     self.post_message(self.SyncComplete(True))
                 else:
                     # Mark result as cancelled if available so UI doesn't show completed
-                    if self.sync_result is not None and hasattr(self.sync_result, "cancelled"):
+                    if self.sync_result is not None and hasattr(
+                        self.sync_result, "cancelled"
+                    ):
                         self.sync_result.cancelled = True
 
             except Exception as e:
@@ -717,14 +829,16 @@ class SyncDialog(ModalScreen):
             # Ignore cleanup failures
             pass
 
-
     def on_sync_dialog_conflicts_found(self, message: ConflictsFound) -> None:
         """Handle conflicts found signal."""
         self.conflicts = message.conflicts
         conflict_word = self.pluralizer.pluralize("conflict", len(self.conflicts))
         self.status_text = f"Found {len(self.conflicts)} {conflict_word} - resolving 1 of {len(self.conflicts)}..."
         self.show_conflicts = True
-        self.app._add_log("sync_conflict_signal", f"Conflicts signal received - conflicts={len(self.conflicts)}, show_conflicts={self.show_conflicts}")
+        self.app._add_log(
+            "sync_conflict_signal",
+            f"Conflicts signal received - conflicts={len(self.conflicts)}, show_conflicts={self.show_conflicts}",
+        )
 
     def on_sync_dialog_progress_update(self, message: ProgressUpdate) -> None:
         """Handle progress update signal."""

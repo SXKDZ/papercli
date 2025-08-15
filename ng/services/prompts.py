@@ -2,6 +2,7 @@
 # Centralized LLM Prompts for PaperCLI
 # =============================================================================
 
+
 class ChatPrompts:
     """Prompts for chat functionality."""
 

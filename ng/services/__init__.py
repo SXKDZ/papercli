@@ -17,6 +17,7 @@ from .theme import ThemeService
 
 # Import sync services (after DatabaseHealthService is available)
 from .sync import SyncOperation, SyncConflict, SyncResult, SyncService
+from .dialog_utils import DialogUtilsService
 
 # Import auto_sync after sync services
 from .auto_sync import trigger_auto_sync
@@ -39,6 +40,7 @@ __all__ = [
     "ChatService",
     "CollectionService",
     "DatabaseHealthService",
+    "DialogUtilsService",
     "ExportService",
     "HTTPClient",
     "LLMSummaryService",

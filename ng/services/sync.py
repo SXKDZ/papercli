@@ -116,15 +116,21 @@ class SyncResult:
             summary_parts.append(f"{_pluralizer.pluralize('paper', count, True)} added")
         if self.changes_applied["papers_updated"] > 0:
             count = self.changes_applied["papers_updated"]
-            summary_parts.append(f"{_pluralizer.pluralize('paper', count, True)} updated")
+            summary_parts.append(
+                f"{_pluralizer.pluralize('paper', count, True)} updated"
+            )
         if self.changes_applied["collections_added"] > 0:
-            c = self.changes_applied['collections_added']
-            summary_parts.append(f"{_pluralizer.pluralize('collection', c, True)} added")
+            c = self.changes_applied["collections_added"]
+            summary_parts.append(
+                f"{_pluralizer.pluralize('collection', c, True)} added"
+            )
         if self.changes_applied["collections_updated"] > 0:
-            c = self.changes_applied['collections_updated']
-            summary_parts.append(f"{_pluralizer.pluralize('collection', c, True)} updated")
+            c = self.changes_applied["collections_updated"]
+            summary_parts.append(
+                f"{_pluralizer.pluralize('collection', c, True)} updated"
+            )
         if self.changes_applied["pdfs_copied"] > 0:
-            c = self.changes_applied['pdfs_copied']
+            c = self.changes_applied["pdfs_copied"]
             summary_parts.append(f"{_pluralizer.pluralize('PDF', c, True)} copied")
 
         return f"Sync completed: {', '.join(summary_parts)}"
@@ -234,7 +240,9 @@ class SyncService:
 
         if not self._acquire_locks():
             if self.app:
-                self.app._add_log("sync_error", "Another sync operation is already in progress")
+                self.app._add_log(
+                    "sync_error", "Another sync operation is already in progress"
+                )
             raise Exception(
                 "Another sync operation is already in progress. Please wait for it to complete."
             )
@@ -255,13 +263,18 @@ class SyncService:
             # If remote database doesn't exist, copy from local
             if not self.remote_db_path.exists():
                 if self.app:
-                    self.app._add_log("sync_init", "Remote database not found, copying from local")
+                    self.app._add_log(
+                        "sync_init", "Remote database not found, copying from local"
+                    )
                 shutil.copy2(self.local_db_path, self.remote_db_path)
                 papers_count = self._count_papers(self.local_db_path)
                 result.changes_applied["papers_added"] = papers_count
                 self._sync_pdfs_to_remote(result)
                 if self.app:
-                    self.app._add_log("sync_complete", f"Initial sync complete: {papers_count} papers copied")
+                    self.app._add_log(
+                        "sync_complete",
+                        f"Initial sync complete: {papers_count} papers copied",
+                    )
                 return result
 
             # Step 1: Generate all operations needed
@@ -269,7 +282,9 @@ class SyncService:
                 self.progress_callback("Analyzing differences...")
             operations = self._generate_sync_operations()
             if self.app:
-                self.app._add_log("sync_operations", f"Generated {len(operations)} sync operations")
+                self.app._add_log(
+                    "sync_operations", f"Generated {len(operations)} sync operations"
+                )
             time.sleep(0.1)
 
             if not operations:
@@ -277,15 +292,23 @@ class SyncService:
                 if self.progress_callback:
                     self.progress_callback("Synchronizing collections...")
                 if self.app:
-                    self.app._add_log("sync_collections_only", "No paper/PDF changes, checking collections...")
+                    self.app._add_log(
+                        "sync_collections_only",
+                        "No paper/PDF changes, checking collections...",
+                    )
                 self._sync_collections_by_timestamp(result)
                 if self.app:
                     changes = result.changes_applied
                     total_changes = sum(changes.values())
                     if total_changes > 0:
-                        self.app._add_log("sync_complete", f"Collection sync complete: {total_changes} changes applied")
+                        self.app._add_log(
+                            "sync_complete",
+                            f"Collection sync complete: {total_changes} changes applied",
+                        )
                     else:
-                        self.app._add_log("sync_complete", "No collection changes needed")
+                        self.app._add_log(
+                            "sync_complete", "No collection changes needed"
+                        )
                 return result
 
             # Step 2: Get user confirmation for conflicting papers/PDFs
@@ -344,9 +367,14 @@ class SyncService:
                 changes = result.changes_applied
                 total_changes = sum(changes.values())
                 if total_changes > 0:
-                    self.app._add_log("sync_complete", f"Sync completed successfully: {total_changes} total changes")
+                    self.app._add_log(
+                        "sync_complete",
+                        f"Sync completed successfully: {total_changes} total changes",
+                    )
                 else:
-                    self.app._add_log("sync_complete", "Sync completed: databases already in sync")
+                    self.app._add_log(
+                        "sync_complete", "Sync completed: databases already in sync"
+                    )
 
         return result
 
@@ -705,14 +733,18 @@ class SyncService:
     def _sync_collections_by_timestamp(self, result: SyncResult):
         """Sync collections automatically using latest timestamp, exact name match only."""
         if self.app:
-            self.app._add_log("sync_collections_start", "Starting collection synchronization")
-            
+            self.app._add_log(
+                "sync_collections_start", "Starting collection synchronization"
+            )
+
         local_collections = self._get_collections_dict(self.local_db_path)
         remote_collections = self._get_collections_dict(self.remote_db_path)
-        
+
         if self.app:
-            self.app._add_log("sync_collections_info", 
-                f"Found {len(local_collections)} local collections, {len(remote_collections)} remote collections")
+            self.app._add_log(
+                "sync_collections_info",
+                f"Found {len(local_collections)} local collections, {len(remote_collections)} remote collections",
+            )
 
         # Create exact name-based lookups
         local_by_name = {
@@ -1210,12 +1242,17 @@ class SyncService:
         cursor = conn.cursor()
         try:
             # Get the collection ID to delete paper relationships first
-            cursor.execute("SELECT id FROM collections WHERE name = ?", (collection_name,))
+            cursor.execute(
+                "SELECT id FROM collections WHERE name = ?", (collection_name,)
+            )
             collection_row = cursor.fetchone()
             if collection_row:
                 collection_id = collection_row[0]
-                cursor.execute("DELETE FROM paper_collections WHERE collection_id = ?", (collection_id,))
-            
+                cursor.execute(
+                    "DELETE FROM paper_collections WHERE collection_id = ?",
+                    (collection_id,),
+                )
+
             cursor.execute("DELETE FROM collections WHERE name = ?", (collection_name,))
             cursor.execute(
                 "INSERT INTO collections (name, description, created_at, last_modified) VALUES (?, ?, ?, ?)",
@@ -1257,12 +1294,17 @@ class SyncService:
         cursor = conn.cursor()
         try:
             # Get the collection ID to delete paper relationships first
-            cursor.execute("SELECT id FROM collections WHERE name = ?", (collection_name,))
+            cursor.execute(
+                "SELECT id FROM collections WHERE name = ?", (collection_name,)
+            )
             collection_row = cursor.fetchone()
             if collection_row:
                 collection_id = collection_row[0]
-                cursor.execute("DELETE FROM paper_collections WHERE collection_id = ?", (collection_id,))
-            
+                cursor.execute(
+                    "DELETE FROM paper_collections WHERE collection_id = ?",
+                    (collection_id,),
+                )
+
             cursor.execute("DELETE FROM collections WHERE name = ?", (collection_name,))
             cursor.execute(
                 "INSERT INTO collections (name, description, created_at, last_modified) VALUES (?, ?, ?, ?)",

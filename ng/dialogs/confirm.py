@@ -15,7 +15,6 @@ class ConfirmDialog(ModalScreen):
         align: center middle;
         layer: dialog;
     }
-    
     ConfirmDialog > Container {
         width: 70%;
         height: auto;
@@ -23,7 +22,6 @@ class ConfirmDialog(ModalScreen):
         border: solid $accent;
         background: $panel;
     }
-    
     ConfirmDialog .dialog-title {
         text-align: center;
         text-style: bold;
@@ -32,20 +30,17 @@ class ConfirmDialog(ModalScreen):
         height: 1;
         width: 100%;
     }
-    
     ConfirmDialog #message-content {
         height: auto;
         margin: 1;
         padding: 1;
     }
-    
     ConfirmDialog #button-container {
         height: 5;
         align: center middle;
         margin: 0;
     }
-    
-    ConfirmDialog #button-container Button {
+    ConfirmDialog Button {
         height: 3;
         content-align: center middle;
         text-align: center;

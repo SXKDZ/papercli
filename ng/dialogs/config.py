@@ -21,6 +21,7 @@ from textual.widgets import (
     TextArea,
 )
 
+from ng.services import DialogUtilsService
 from ng.services.llm_utils import is_reasoning_model
 
 
@@ -359,20 +360,11 @@ class ConfigDialog(ModalScreen):
 
     def _mask_api_key(self, api_key: str) -> str:
         """Mask API key for display."""
-        if not api_key:
-            return ""
-        if len(api_key) <= 12:
-            return "****"
-        return api_key[:8] + "*" * (len(api_key) - 12) + api_key[-4:]
+        return DialogUtilsService.mask_api_key(api_key)
 
     def _unmask_api_key(self, masked_key: str, original_key: str) -> str:
         """Unmask API key if it hasn't been changed."""
-        if not masked_key or masked_key == "****":
-            return ""
-        if "*" not in masked_key:
-            return masked_key  # New key entered
-        # If it's still masked, return original
-        return original_key
+        return DialogUtilsService.unmask_api_key(masked_key, original_key)
 
     def on_select_changed(self, event: Select.Changed) -> None:
         """Handle model and theme selection changes."""
@@ -411,35 +403,29 @@ class ConfigDialog(ModalScreen):
             theme_radio_set = self.query_one("#theme-radio-set", RadioSet)
 
             # Validate max tokens
-            try:
-                max_tokens = int(max_tokens_input.value)
-                if max_tokens <= 0:
-                    self.notify(
-                        "Max tokens must be a positive number", severity="error"
-                    )
-                    return
-            except ValueError:
-                self.notify("Max tokens must be a valid number", severity="error")
+            is_valid, error_msg, max_tokens = DialogUtilsService.validate_numeric_input(
+                max_tokens_input.value, min_val=1, input_type="int"
+            )
+            if not is_valid:
+                self.notify(f"Max tokens error: {error_msg}", severity="error")
                 return
 
             # Validate temperature
-            try:
-                temperature = float(temperature_input.value)
-                if temperature < 0 or temperature > 2:
-                    self.notify("Temperature must be between 0 and 2", severity="error")
-                    return
-            except ValueError:
-                self.notify("Temperature must be a valid number", severity="error")
+            is_valid, error_msg, temperature = (
+                DialogUtilsService.validate_numeric_input(
+                    temperature_input.value, min_val=0, max_val=2, input_type="float"
+                )
+            )
+            if not is_valid:
+                self.notify(f"Temperature error: {error_msg}", severity="error")
                 return
 
             # Validate PDF pages
-            try:
-                pdf_pages = int(pdf_pages_input.value)
-                if pdf_pages <= 0:
-                    self.notify("PDF pages must be a positive number", severity="error")
-                    return
-            except ValueError:
-                self.notify("PDF pages must be a valid number", severity="error")
+            is_valid, error_msg, pdf_pages = DialogUtilsService.validate_numeric_input(
+                pdf_pages_input.value, min_val=1, input_type="int"
+            )
+            if not is_valid:
+                self.notify(f"PDF pages error: {error_msg}", severity="error")
                 return
 
             # Prepare changes

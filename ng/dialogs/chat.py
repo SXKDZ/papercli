@@ -6,11 +6,8 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List
 
 import PyPDF2
+import tiktoken
 from openai import OpenAI
-try:
-    import tiktoken
-except ImportError:
-    tiktoken = None
 from pluralizer import Pluralizer
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
@@ -20,6 +17,7 @@ from textual.widgets import Button, Input, Markdown, Static
 
 from ng.services import (
     BackgroundOperationService,
+    DialogUtilsService,
     LLMSummaryService,
     PaperService,
     PDFManager,
@@ -37,18 +35,21 @@ class ChatDialog(ModalScreen):
 
     class StreamingUpdate(Message):
         """Message sent when streaming content is updated."""
+
         def __init__(self, content: str) -> None:
             self.content = content
             super().__init__()
 
     class StreamingComplete(Message):
         """Message sent when streaming is complete."""
+
         def __init__(self, final_content: str) -> None:
             self.final_content = final_content
             super().__init__()
 
     class StreamingError(Message):
         """Message sent when streaming encounters an error."""
+
         def __init__(self, error_message: str) -> None:
             self.error_message = error_message
             super().__init__()
@@ -57,14 +58,12 @@ class ChatDialog(ModalScreen):
     ChatDialog {
         align: center middle;
     }
-    
     #chat-container {
         width: 95%;
         height: 85%;
         border: solid $warning;
         background: $panel;
     }
-    
     #chat-title {
         text-align: center;
         text-style: bold;
@@ -73,7 +72,6 @@ class ChatDialog(ModalScreen):
         height: 1;
         width: 100%;
     }
-    
     #chat-history {
         height: 1fr;
         border: solid $warning;
@@ -81,69 +79,56 @@ class ChatDialog(ModalScreen):
         scrollbar-size-vertical: 2;
         scrollbar-size-horizontal: 0;
     }
-    
     #chat-history:focus {
         border: solid $primary;
     }
-    
     #input-area {
         height: auto;
         margin: 0 1 0 1;
         padding: 0;
     }
-    
     .chat-input {
         height: 3;
         border: solid $warning;
         background: $surface;
         color: $text;
     }
-    
     .chat-input:focus {
         border: solid $primary;
     }
-    
-    /* Chat message containers */
     .chat-message {
         margin: 1 0;
         padding: 1;
         background: transparent;
     }
-    
     .chat-message:hover {
         background: $boost;
     }
-    
     .chat-role-header {
         text-style: bold;
         margin: 0 0 1 0;
     }
-    
     #controls-bar {
         height: auto;
         padding: 1;
         margin: 0 1 0 1;
         width: 100%;
     }
-    
-    #controls-left {
+    #controls-left, #controls-right {
         height: auto;
         width: 50%;
+    }
+    #controls-left {
         align: left middle;
     }
-    
     #controls-right {
-        height: auto;
-        width: 50%;
         align: right middle;
     }
-    
     .control-row {
         height: auto;
         margin: 0 0 1 0;
         align: left middle;
     }
-    
     .control-label {
         width: auto;
         margin: 0 1 0 0;
@@ -151,7 +136,6 @@ class ChatDialog(ModalScreen):
         height: 1;
         content-align: center middle;
     }
-    
     .compact-model-input {
         height: 1;
         width: 25;
@@ -159,7 +143,6 @@ class ChatDialog(ModalScreen):
         padding: 0;
         margin: 0 2 0 0;
     }
-    
     .compact-input {
         height: 1;
         width: 4;
@@ -167,24 +150,16 @@ class ChatDialog(ModalScreen):
         padding: 0;
         margin: 0 1 0 0;
     }
-    
     .compact-input:disabled {
         opacity: 0.5;
     }
-    
-    .compact-model-input:focus {
+    .compact-model-input:focus, .compact-input:focus {
         border: none;
     }
-    
-    .compact-input:focus {
-        border: none;
-    }
-    
     #button-bar {
         height: auto;
         align: right middle;
     }
-    
     #button-bar Button {
         height: 3;
         margin: 0 1;
@@ -243,32 +218,22 @@ class ChatDialog(ModalScreen):
 
     def _estimate_tokens(self, text: str) -> int:
         """Estimate tokens using OpenAI's tiktoken library."""
-        if tiktoken is None:
-            # Fallback to rough estimation if tiktoken not available
-            return len(text) // 4
-            
         try:
-            # Use appropriate encoding for the model
-            if "gpt-4" in self.model_name.lower():
-                encoding = tiktoken.encoding_for_model("gpt-4")
-            elif "gpt-3.5" in self.model_name.lower():
-                encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
-            else:
-                # Default to cl100k_base for most modern models
-                encoding = tiktoken.get_encoding("cl100k_base")
-                
+            encoding = tiktoken.encoding_for_model(self.model_name.lower())
             return len(encoding.encode(text))
         except Exception:
-            # Fallback to rough estimation if tiktoken fails
-            return len(text) // 4
+            encoding = tiktoken.get_encoding("cl100k_base")
+            return len(encoding.encode(text))
 
     def _clean_pdf_text(self, text: str) -> str:
         """Clean PDF text to remove surrogates and other problematic characters."""
         try:
             # Remove surrogates and other problematic unicode characters
-            cleaned = text.encode('utf-8', errors='ignore').decode('utf-8')
+            cleaned = text.encode("utf-8", errors="ignore").decode("utf-8")
             # Remove null bytes and other control characters except newlines and tabs
-            cleaned = ''.join(char for char in cleaned if ord(char) >= 32 or char in '\n\t')
+            cleaned = "".join(
+                char for char in cleaned if ord(char) >= 32 or char in "\n\t"
+            )
             return cleaned
         except Exception:
             # If all else fails, return empty string
@@ -384,37 +349,27 @@ class ChatDialog(ModalScreen):
                 operation_prefix="chat_summary",
             )
 
-        # Build initial chat content
         self._build_initial_chat_content()
 
     def _get_paper_fields(self, paper):
-        """Extract common paper fields (app version logic)."""
-        return {
-            "title": getattr(paper, "title", "Unknown Title"),
-            "authors": getattr(paper, "author_names", "Unknown Authors"),
-            "venue": getattr(paper, "venue_full", "Unknown Venue"),
-            "year": getattr(paper, "year", "Unknown Year"),
-            "abstract": getattr(paper, "abstract", "") or "",
-            "notes": (getattr(paper, "notes", "") or "").strip(),
-            "pdf_path": getattr(paper, "pdf_path", ""),
-        }
+        """Extract common paper fields using DialogUtilsService."""
+        return DialogUtilsService.get_paper_fields(paper)
 
     def _format_paper_info(self, paper, index):
         """Format paper information for display (app version logic)."""
         fields = self._get_paper_fields(paper)
 
-        # Always include basic paper metadata
         paper_info = (
             f"**Paper {index}: {fields['title']}**\n\n"
-            f"Authors: {fields['authors']}\n"
+            f"Authors: {fields['authors']}\n\n"
             f"Venue: {fields['venue']} ({fields['year']})"
         )
-        
+
         if fields["notes"]:
             paper_info += f"\n\nNotes: {fields['notes']}"
         elif fields["abstract"]:
             paper_info += f"\n\nAbstract: {fields['abstract']}"
-            
+
         return paper_info
 
     def _build_initial_chat_content(self):
@@ -643,42 +598,50 @@ class ChatDialog(ModalScreen):
             chat_container.scroll_end(animate=False)
         else:
             if self.app:
-                self.app._add_log("chat_stream_error", "No streaming widget found for content update")
+                self.app._add_log(
+                    "chat_stream_error", "No streaming widget found for content update"
+                )
 
     def on_streaming_complete(self, message: StreamingComplete) -> None:
         """Handle streaming completion."""
         # Estimate output tokens
         self._output_tokens = self._estimate_tokens(message.final_content)
-        
+
         # Add token info to response
         final_content_with_tokens = f"{message.final_content}\n\n*(~{self._input_tokens} input tokens, ~{self._output_tokens} output tokens)*"
-        
+
         # Update chat history with final content
         if self.chat_history and self.chat_history[-1]["role"] == "assistant":
             self.chat_history[-1]["content"] = final_content_with_tokens
-        
+
         # Final widget update
         if self._streaming_widget:
             self._streaming_widget.update(final_content_with_tokens)
             chat_container = self.query_one("#chat-history", VerticalScroll)
             chat_container.scroll_end(animate=False)
-        
+
         # Re-enable buttons
         self._enable_buttons()
-        
+
         # Ensure we have some response
         if not message.final_content.strip():
             if self.chat_history and self.chat_history[-1]["role"] == "assistant":
-                self.chat_history[-1]["content"] = "No response received from the AI model."
+                self.chat_history[-1][
+                    "content"
+                ] = "No response received from the AI model."
                 if self.app:
-                    self.app._add_log("chat_stream_warning", "Received empty response from LLM")
+                    self.app._add_log(
+                        "chat_stream_warning", "Received empty response from LLM"
+                    )
             self._update_display()
 
     def on_streaming_error(self, message: StreamingError) -> None:
         """Handle streaming errors."""
         if self.app:
-            self.app._add_log("chat_stream_error", f"LLM streaming failed: {message.error_message}")
-        
+            self.app._add_log(
+                "chat_stream_error", f"LLM streaming failed: {message.error_message}"
+            )
+
         # Replace the last message with error and re-enable input
         if self.chat_history:
             self.chat_history[-1] = {"role": "error", "content": message.error_message}
@@ -719,13 +682,18 @@ class ChatDialog(ModalScreen):
         messages = self._build_conversation_messages(user_message)
         total_input_text = " ".join([msg["content"] for msg in messages])
         self._input_tokens = self._estimate_tokens(total_input_text)
-        
+
         self.chat_history.append({"role": "user", "content": user_content})
 
         # Log the user message
         if self.app:
-            user_preview = user_message[:100] + "..." if len(user_message) > 100 else user_message
-            self.app._add_log("chat_user", f"User: {user_preview} ({len(user_message)} characters total)")
+            user_preview = (
+                user_message[:100] + "..." if len(user_message) > 100 else user_message
+            )
+            self.app._add_log(
+                "chat_user",
+                f"User: {user_preview} ({len(user_message)} characters total)",
+            )
 
         # Clear input and disable UI during response
         user_input.value = ""
@@ -747,7 +715,7 @@ class ChatDialog(ModalScreen):
 
         # Send request in background with streaming using message system
         dialog_ref = self  # Capture reference for thread
-        
+
         def send_request():
             try:
                 # Build messages
@@ -778,19 +746,30 @@ class ChatDialog(ModalScreen):
 
                         # Send streaming update message with reduced frequency
                         current_time = time.time()
-                        if (current_time - last_update_time >= update_interval) or (chunk_count % 10 == 0):
-                            self.app.call_from_thread(dialog_ref.on_streaming_update, dialog_ref.StreamingUpdate(full_response))
+                        if (current_time - last_update_time >= update_interval) or (
+                            chunk_count % 10 == 0
+                        ):
+                            self.app.call_from_thread(
+                                dialog_ref.on_streaming_update,
+                                dialog_ref.StreamingUpdate(full_response),
+                            )
                             last_update_time = current_time
 
                 # Send completion message
-                self.app.call_from_thread(dialog_ref.on_streaming_complete, dialog_ref.StreamingComplete(full_response))
+                self.app.call_from_thread(
+                    dialog_ref.on_streaming_complete,
+                    dialog_ref.StreamingComplete(full_response),
+                )
 
             except Exception as e:
                 error_msg = f"Chat Error: {str(e)}"
                 if self.app:
                     self.app._add_log("chat_error", f"OpenAI error: {str(e)}")
                     # Send error message
-                    self.app.call_from_thread(dialog_ref.on_streaming_error, dialog_ref.StreamingError(error_msg))
+                    self.app.call_from_thread(
+                        dialog_ref.on_streaming_error,
+                        dialog_ref.StreamingError(error_msg),
+                    )
 
         threading.Thread(target=send_request, daemon=True).start()
 
@@ -982,35 +961,8 @@ class ChatDialog(ModalScreen):
             pass
 
     def _generate_chat_filename(self) -> str:
-        """Generate a chat filename using PDF naming convention but with .md extension."""
-
-        # Use the first paper to generate filename
-        first_paper = self.papers[0]
-
-        # Reuse the same paper field extraction logic as _build_paper_context
-        fields = self._get_paper_fields(first_paper)
-
-        # Parse authors string into list (PDFManager expects list of strings)
-        authors_list = []
-        if fields["authors"] and fields["authors"] != "Unknown Authors":
-            authors_list = [name.strip() for name in fields["authors"].split(",")]
-
-        # Create paper data dict for PDF filename generation
-        paper_data = {
-            "title": fields["title"],
-            "authors": authors_list,
-            "year": fields["year"] if fields["year"] != "Unknown Year" else None,
-        }
-
-        # Use PDFManager's filename generation logic
-        pdf_filename = self.pdf_manager._generate_pdf_filename(paper_data, "")
-
-        # Remove the hash part and add timestamp
-        base_filename = pdf_filename.rsplit("_", 1)[0]  # Remove hash
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        chat_filename = f"{base_filename}_{timestamp}.md"
-
-        return chat_filename
+        """Generate a chat filename using DialogUtilsService."""
+        return DialogUtilsService.generate_filename_from_paper(self.papers[0], ".md")
 
     def _handle_save(self):
         """Handle saving the chat to a file with PDF naming convention and file opening."""
@@ -1019,31 +971,15 @@ class ChatDialog(ModalScreen):
             return
 
         try:
-            # Get data directory
-            data_dir_env = os.getenv("PAPERCLI_DATA_DIR")
-            if data_dir_env:
-                data_dir = Path(data_dir_env).expanduser().resolve()
-            else:
-                data_dir = Path.home() / ".papercli"
-
-            # Create chats directory
+            # Get data directory and create chats subdirectory
+            data_dir = DialogUtilsService.get_data_directory()
             chats_dir = data_dir / "chats"
-            chats_dir.mkdir(exist_ok=True, parents=True)
 
-            # Generate filename using PDF naming convention
+            # Generate filename and create safe filepath
             filename = self._generate_chat_filename()
-            filepath = chats_dir / filename
-
-            # Handle filename conflicts
-            counter = 1
-            base_name = filename[:-3]  # Remove .md extension
-            final_filename = filename
-            final_filepath = filepath
-
-            while final_filepath.exists():
-                final_filename = f"{base_name}_{counter:02d}.md"
-                final_filepath = chats_dir / final_filename
-                counter += 1
+            final_filepath = DialogUtilsService.create_safe_filename(
+                filename, chats_dir
+            )
 
             # Write chat to file
             content = self._format_chat_for_file()

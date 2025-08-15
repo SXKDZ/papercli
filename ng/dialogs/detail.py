@@ -247,6 +247,11 @@ class DetailDialog(ModalScreen):
             content.append("Preprint ID:\n", style=colors["header"])
             content.append(f"{paper.preprint_id}\n\n", style=colors["text"])
 
+        # Category (e.g., cs.LG for arXiv papers)
+        if paper.category:
+            content.append("Category:\n", style=colors["header"])
+            content.append(f"{paper.category}\n\n", style=colors["text"])
+
         # PDF Path and Info
         if paper.pdf_path:
             content.append("PDF:\n", style=colors["header"])

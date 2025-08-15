@@ -277,7 +277,7 @@ class MainScreen(Screen):
                 field = result["field"]
                 value = result["value"]
                 # Apply the filter using the search commands
-                if hasattr(self.app, 'search_commands'):
+                if hasattr(self.app, "search_commands"):
                     self.app.search_commands._apply_filter(field, value)
 
         self.app.push_screen(FilterDialog(filter_callback))
@@ -288,10 +288,10 @@ class MainScreen(Screen):
 
         def sort_callback(result):
             if result:
-                field = result.get('field', 'title')
-                reverse = result.get('reverse', False)
+                field = result.get("field", "title")
+                reverse = result.get("reverse", False)
                 # Apply the sort using the search commands
-                if hasattr(self.app, 'search_commands'):
+                if hasattr(self.app, "search_commands"):
                     self.app.search_commands._apply_sort(field, reverse)
 
         self.app.push_screen(SortDialog(sort_callback))
@@ -328,14 +328,14 @@ class MainScreen(Screen):
                 # Focus the input and append the character directly
                 # The CustomInput widget will handle preventing text selection
                 self.app.set_focus(actual_input)
-                
+
                 # Directly append the character to avoid selection issues
                 # Convert "slash" key name to actual "/" character
                 char_to_add = "/" if event.key == "slash" else event.key
                 current_text = actual_input.value or ""
                 new_value = current_text + char_to_add
                 actual_input.value = new_value
-                
+
                 # Position cursor at end
                 actual_input.cursor_position = len(new_value)
 

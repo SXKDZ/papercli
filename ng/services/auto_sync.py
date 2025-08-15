@@ -5,6 +5,25 @@ import os
 from .sync import SyncService
 
 
+def _auto_conflict_resolver(conflicts, app):
+    """Automatically resolve conflicts by preferring local versions."""
+    if not conflicts:
+        return {}
+
+    resolutions = {}
+    for conflict in conflicts:
+        conflict_id = f"{conflict.conflict_type}_{conflict.item_id}"
+        resolutions[conflict_id] = "local"  # Always prefer local for auto-sync
+
+    if app:
+        app._add_log(
+            "auto_sync_conflicts",
+            f"Auto-resolved {len(conflicts)} conflicts by preferring local versions",
+        )
+
+    return resolutions
+
+
 def trigger_auto_sync(app=None) -> bool:
     """
     Trigger auto-sync if enabled.
@@ -35,26 +54,10 @@ def trigger_auto_sync(app=None) -> bool:
 
         sync_service = SyncService(local_path, remote_path, app=app)
 
-        def auto_conflict_resolver(conflicts):
-            """Automatically resolve conflicts by preferring local versions."""
-            if not conflicts:
-                return {}
-
-            resolutions = {}
-            for conflict in conflicts:
-                conflict_id = f"{conflict.conflict_type}_{conflict.item_id}"
-                resolutions[conflict_id] = "local"  # Always prefer local for auto-sync
-
-            if app:
-                app._add_log(
-                    "auto_sync_conflicts",
-                    f"Auto-resolved {len(conflicts)} conflicts by preferring local versions",
-                )
-
-            return resolutions
-
-        # Perform the sync
-        result = sync_service.sync(conflict_resolver=auto_conflict_resolver)
+        # Perform the sync with auto conflict resolution
+        result = sync_service.sync(
+            conflict_resolver=lambda conflicts: _auto_conflict_resolver(conflicts, app)
+        )
 
         if app:
             if result.get("success", False):

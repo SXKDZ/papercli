@@ -36,42 +36,45 @@ class BackgroundOperationService:
         if initial_message:
             self.app.notify(initial_message, severity="information")
 
-        def background_worker():
-            try:
-                self.app._add_log(
-                    "background_ops_start",
-                    f"Started background operation: {operation_name}",
-                )
-
-                # Run the operation
-                result = operation_func()
-
-                def schedule_success():
-                    self.app._add_log(
-                        "background_ops_complete",
-                        f"Completed background operation: {operation_name}",
-                    )
-
-                    # Call completion callback with result
-                    if on_complete:
-                        on_complete(result, None)
-
-                self.app.call_from_thread(schedule_success)
-
-            except Exception as e:
-
-                def schedule_error(error=e):
-                    self.app._add_log(
-                        f"{operation_name}_error",
-                        f"Error in {operation_name}: {error}",
-                    )
-
-                    # Call completion callback with error
-                    if on_complete:
-                        on_complete(None, error)
-
-                self.app.call_from_thread(schedule_error)
-
-        thread = threading.Thread(target=background_worker, daemon=True)
+        worker_func = lambda: self._background_worker(
+            operation_func, operation_name, on_complete
+        )
+        thread = threading.Thread(target=worker_func, daemon=True)
         thread.start()
         return thread
+
+    def _background_worker(self, operation_func, operation_name, on_complete):
+        """Execute the operation in background with proper error handling."""
+        try:
+            self.app._add_log(
+                "background_ops_start",
+                f"Started background operation: {operation_name}",
+            )
+
+            result = operation_func()
+            self.app.call_from_thread(
+                lambda: self._schedule_success(operation_name, result, on_complete)
+            )
+
+        except Exception as e:
+            self.app.call_from_thread(
+                lambda: self._schedule_error(operation_name, e, on_complete)
+            )
+
+    def _schedule_success(self, operation_name, result, on_complete):
+        """Handle successful operation completion."""
+        self.app._add_log(
+            "background_ops_complete",
+            f"Completed background operation: {operation_name}",
+        )
+        if on_complete:
+            on_complete(result, None)
+
+    def _schedule_error(self, operation_name, error, on_complete):
+        """Handle operation error."""
+        self.app._add_log(
+            f"{operation_name}_error",
+            f"Error in {operation_name}: {error}",
+        )
+        if on_complete:
+            on_complete(None, error)

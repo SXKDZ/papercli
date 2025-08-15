@@ -7,10 +7,10 @@ from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, RadioButton, RadioSet, Static
 
+from ng.services.validation import ValidationService
+
 if TYPE_CHECKING:
     from ng.papercli import PaperCLIApp
-
-from ng.services.validation import ValidationService
 
 
 class AddDialog(ModalScreen):
