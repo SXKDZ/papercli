@@ -25,6 +25,7 @@ from ng.services import (
     PDFManager,
     normalize_paper_data,
 )
+from ng.services.pdf import PDFExtractionHandler
 
 
 class EditDialog(ModalScreen):
@@ -740,31 +741,10 @@ class EditDialog(ModalScreen):
         title = self.paper_data.get("title", "Unknown Title")
         paper_id = self.paper_data.get("id", "unknown")
 
-        def extract_operation():
-            extractor = MetadataExtractor(
-                pdf_manager=self.pdf_manager, app=self.parent_app
-            )
-            extracted_data = extractor.extract_from_pdf(pdf_path)
-            if not extracted_data:
-                raise Exception("No metadata could be extracted from PDF")
-            return extracted_data
+        # Use extraction handler to manage the operation
+        extraction_handler = PDFExtractionHandler(self.parent_app, self.pdf_manager)
 
-        def on_extract_complete(extracted_data, error):
-            if error:
-                if self.parent_app:
-                    self.parent_app.notify(
-                        f"Failed to extract metadata: {error}", severity="error"
-                    )
-                return
-
-            if not extracted_data:
-                if self.parent_app:
-                    self.parent_app.notify(
-                        "Failed to extract metadata: No data extracted",
-                        severity="error",
-                    )
-                return
-
+        def on_extraction_success(extracted_data):
             changes = self._compare_extracted_with_current_form(extracted_data)
             if not changes:
                 if self.parent_app:
@@ -773,14 +753,12 @@ class EditDialog(ModalScreen):
                         severity="information",
                     )
                 return
-
             self._update_fields_with_extracted_data(extracted_data)
-            if self.parent_app:
-                fields_text = self._pluralizer.pluralize("field", len(changes), True)
-                self.parent_app.notify(
-                    f"PDF metadata extracted and applied: {fields_text} updated",
-                    severity="information",
-                )
+
+        extract_operation = extraction_handler.create_extraction_task(pdf_path)
+        on_extract_complete = extraction_handler.create_extraction_completion_callback(
+            on_extraction_success
+        )
 
         if self.background_service:
             self.background_service.run_operation(

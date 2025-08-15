@@ -36,10 +36,12 @@ class BackgroundOperationService:
         if initial_message:
             self.app.notify(initial_message, severity="information")
 
-        worker_func = lambda: self._background_worker(
-            operation_func, operation_name, on_complete
+        thread = threading.Thread(
+            target=lambda: self._background_worker(
+                operation_func, operation_name, on_complete
+            ),
+            daemon=True,
         )
-        thread = threading.Thread(target=worker_func, daemon=True)
         thread.start()
         return thread
 

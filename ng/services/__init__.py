@@ -6,7 +6,13 @@ from .utils import fix_broken_lines, normalize_paper_data
 from .database import DatabaseHealthService
 
 # Import services with minimal dependencies
-from .pdf import PDFManager, PDFService
+from .pdf import (
+    PDFManager,
+    PDFService,
+    PDFDownloadHandler,
+    PDFExtractionHandler,
+    PDFDownloadTaskFactory,
+)
 from .background import BackgroundOperationService
 from .validation import ValidationService
 from .author import AuthorService
@@ -31,6 +37,19 @@ from .system import SystemService
 from .chat import ChatService
 from .llm import LLMSummaryService
 from .add_paper import AddPaperService
+
+# Import new utility services
+from .formatting import (
+    format_file_size,
+    format_authors_list,
+    format_paper_title_preview,
+    format_field_change,
+    format_collections_list,
+    format_download_speed,
+    format_download_summary,
+)
+from .path_utils import PDFPathHandler
+from .paper_tracker import PaperChangeTracker
 
 __all__ = [
     "AddPaperService",
@@ -58,4 +77,17 @@ __all__ = [
     "ThemeService",
     "ValidationService",
     "PDFService",
+    # New utility services
+    "format_file_size",
+    "format_authors_list",
+    "format_paper_title_preview",
+    "format_field_change",
+    "format_collections_list",
+    "format_download_speed",
+    "format_download_summary",
+    "PDFPathHandler",
+    "PDFDownloadHandler",
+    "PDFExtractionHandler",
+    "PDFDownloadTaskFactory",
+    "PaperChangeTracker",
 ]

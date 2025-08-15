@@ -11,6 +11,7 @@ from ng.db.models import Paper
 from ng.dialogs import AddDialog, ConfirmDialog, DetailDialog, EditDialog
 from ng.services import AddPaperService, PaperService, PDFService, ValidationService
 from ng.services.background import BackgroundOperationService
+from ng.services.pdf import PDFDownloadHandler, PDFDownloadTaskFactory
 
 if TYPE_CHECKING:
     from ng.papercli import PaperCLIApp
@@ -32,6 +33,7 @@ class PaperCommandHandler(CommandHandler):
         )
         self.background_service = BackgroundOperationService(self.app)
         self.pdf_service = PDFService(app=self.app)
+        self.pdf_download_handler = PDFDownloadHandler(self.app, self.pdf_service)
 
     def _get_target_papers(self) -> List[Paper]:
         """Helper to get selected papers from the main app's paper list."""
@@ -44,53 +46,6 @@ class PaperCommandHandler(CommandHandler):
             self.app.notify(f"Validation Error: {error_message}", severity="error")
             return False
         return True
-
-    def _create_pdf_download_callback(self, path_id: str, source: str) -> callable:
-        """Create a standardized PDF download completion callback."""
-
-        def on_pdf_complete(download_result, error):
-            if error:
-                self.app.notify(
-                    f"PDF download failed for {path_id}: {error}",
-                    severity="error",
-                )
-            elif download_result and download_result.get("success"):
-                try:
-                    pdf_path = download_result.get("pdf_path", "")
-                    download_duration = download_result.get("download_duration", 0.0)
-                    if pdf_path and download_duration > 0:
-                        pdf_dir = get_pdf_directory()
-                        abs_pdf_path = os.path.join(pdf_dir, pdf_path)
-                        summary = self.pdf_service.create_download_summary(
-                            abs_pdf_path, download_duration
-                        )
-                        self.app.notify(
-                            f"{source.title()} PDF {path_id}: {summary}",
-                            severity="information",
-                        )
-                    else:
-                        self.app.notify(
-                            f"PDF downloaded for {source}: {path_id}",
-                            severity="information",
-                        )
-                except Exception:
-                    self.app.notify(
-                        f"PDF downloaded for {source}: {path_id}",
-                        severity="information",
-                    )
-                self.app.load_papers()  # Reload to show PDF indicator
-            else:
-                error_msg = (
-                    download_result.get("error", "Unknown error")
-                    if download_result
-                    else "Unknown error"
-                )
-                self.app.notify(
-                    f"PDF download failed for {path_id}: {error_msg}",
-                    severity="warning",
-                )
-
-        return on_pdf_complete
 
     def _handle_async_paper_with_pdf(
         self, source: str, path_id: str, add_method: callable
@@ -107,16 +62,25 @@ class PaperCommandHandler(CommandHandler):
                 self.app.load_papers()  # Reload papers to show new entry
 
                 # Start background PDF download
-                def pdf_download_task():
-                    return self.add_paper_service.download_and_update_pdf(
-                        paper.id, source, path_id, result["paper_data"]
+                download_task = PDFDownloadTaskFactory.create_download_task(
+                    self.add_paper_service,
+                    paper.id,
+                    source,
+                    path_id,
+                    result["paper_data"],
+                )
+
+                completion_callback = (
+                    self.pdf_download_handler.create_download_completion_callback(
+                        path_id, source
                     )
+                )
 
                 self.background_service.run_operation(
-                    pdf_download_task,
+                    download_task,
                     f"{source}_pdf_download_{path_id}",
                     f"Downloading PDF for {source.title()}: {path_id}...",
-                    self._create_pdf_download_callback(path_id, source),
+                    completion_callback,
                 )
                 return True
             else:

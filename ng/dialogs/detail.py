@@ -2,18 +2,18 @@ import os
 import webbrowser
 from typing import Any, Callable, Dict
 
+from ng.db.models import Paper
+from ng.dialogs.chat import ChatDialog
+from ng.dialogs.confirm import ConfirmDialog
+from ng.dialogs.edit import EditDialog
+from ng.services import PDFManager, PDFService, SystemService, ThemeService
+from ng.services.formatting import format_file_size
 from pluralizer import Pluralizer
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static
-
-from ng.db.models import Paper
-from ng.dialogs.chat import ChatDialog
-from ng.dialogs.confirm import ConfirmDialog
-from ng.dialogs.edit import EditDialog
-from ng.services import PDFManager, PDFService, SystemService, ThemeService
 
 _pluralizer = Pluralizer()
 
@@ -266,11 +266,9 @@ class DetailDialog(ModalScreen):
             if pdf_info["exists"]:
                 info_parts = []
 
-                # Use PDFService for better formatting
+                # Use formatting utility for better formatting
                 if pdf_info["size_bytes"] > 0:
-                    formatted_size = pdf_service.calculate_file_size_formatted(
-                        pdf_info["size_bytes"]
-                    )
+                    formatted_size = format_file_size(pdf_info["size_bytes"])
                     info_parts.append(f"Size: {formatted_size}")
 
                 # Get page count using PDFService
