@@ -30,7 +30,7 @@ A powerful command-line paper management system for researchers and academics. P
 - **Enhanced Metadata**: AI-powered metadata extraction and improvement
 
 ### 📊 Export & Integration
-- **Multiple Export Formats**: Export to BibTeX, Markdown, HTML, and JSON
+- **Multiple Export Formats**: Export to BibTeX, IEEE references, Markdown, HTML, and JSON
 - **Clipboard Support**: Copy paper data directly to clipboard
 - **PDF Management**: Automatic PDF downloading and organization
 
@@ -74,7 +74,7 @@ cd papercli
 pip install -r requirements.txt
 
 # Run the application
-python -m app.papercli
+python -m ng.papercli
 ```
 
 ## Quick Start
@@ -85,7 +85,7 @@ python -m app.papercli
    papercli
    
    # Or if running from source
-   python -m app.papercli
+   python -m ng.papercli
    ```
 
 2. **Set up OpenAI API key** (prompted on first run if missing):
@@ -116,9 +116,30 @@ python -m app.papercli
 ## Commands Reference
 
 ### Core Commands
-- `/add` - Open add dialog or add paper directly (e.g., `/add arxiv 2307.10635`)
-- `/filter` - Filter papers by criteria or search all fields (e.g., `/filter all keyword`)
-- `/sort` - Open sort dialog or sort directly (e.g., `/sort title asc`)
+- `/add` - Open add dialog or add paper directly
+  - `/add arxiv <id>` - Add from an arXiv ID (e.g., 2307.10635)
+  - `/add dblp <url>` - Add from a DBLP URL
+  - `/add openreview <id>` - Add from an OpenReview ID
+  - `/add doi <id>` - Add from a DOI
+  - `/add pdf <path>` - Add from a local PDF file
+  - `/add bib <path>` - Add papers from a BibTeX file
+  - `/add ris <path>` - Add papers from a RIS file
+  - `/add manual` - Add a paper with manual entry
+- `/filter` - Filter papers by criteria or search all fields
+  - `/filter all <keyword>` - Search across all fields
+  - `/filter title <keyword>` - Search in paper titles
+  - `/filter abstract <keyword>` - Search in paper abstracts
+  - `/filter notes <keyword>` - Search in paper notes
+  - `/filter year <year>` - Filter by publication year
+  - `/filter author <name>` - Filter by author name
+  - `/filter venue <name>` - Filter by venue name
+  - `/filter type <type>` - Filter by paper type
+  - `/filter collection <name>` - Filter by collection name
+- `/sort` - Open sort dialog or sort directly
+  - `/sort title` - Sort by title
+  - `/sort authors` - Sort by author names
+  - `/sort venue` - Sort by venue
+  - `/sort year` - Sort by publication year
 - `/all` - Show all papers in the database
 - `/select` - Enter multi-selection mode to act on multiple papers
 - `/clear` - Clear all selected papers
@@ -133,10 +154,28 @@ Work on the paper under the cursor ► or selected papers ✓:
   - `/chat claude` - Open Claude AI in browser
   - `/chat chatgpt` - Open ChatGPT in browser  
   - `/chat gemini` - Open Google Gemini in browser
-- `/edit` - Open edit dialog or edit field directly (e.g., `/edit title ...`)
+- `/edit` - Open edit dialog or edit field directly
+  - `/edit extract-pdf` - Extract metadata from PDF
+  - `/edit summarize` - Generate LLM summary
+  - `/edit title <text>` - Edit the title
+  - `/edit abstract <text>` - Edit the abstract
+  - `/edit notes <text>` - Edit personal notes
+  - `/edit venue_full <text>` - Edit full venue name
+  - `/edit venue_acronym <text>` - Edit venue acronym
+  - `/edit year <number>` - Edit publication year
+  - `/edit paper_type <type>` - Edit paper type
+  - `/edit doi <text>` - Edit DOI
+  - `/edit pages <text>` - Edit page numbers
+  - `/edit preprint_id <text>` - Edit preprint ID
+  - `/edit url <text>` - Edit paper URL
 - `/open` - Open the PDF for the paper(s)
 - `/detail` - Show detailed metadata for the paper(s)
-- `/export` - Export paper(s) to a file or clipboard (BibTeX, Markdown, etc.)
+- `/export` - Export paper(s) to a file or clipboard
+  - `/export bibtex` - Export to BibTeX format
+  - `/export ieee` - Export to IEEE reference format
+  - `/export markdown` - Export to Markdown format
+  - `/export html` - Export to HTML format
+  - `/export json` - Export to JSON format
 - `/copy-prompt` - Copy paper prompt to clipboard for use with any LLM
 - `/delete` - Delete the paper(s) from the library
 
@@ -152,11 +191,15 @@ Work on the paper under the cursor ► or selected papers ✓:
   - `/doctor clean` - Clean orphaned database records and PDF files
   - `/doctor help` - Show doctor command help
 - `/config` - Configuration management for models, API keys, and sync settings
-  - `/config model <model>` - Set OpenAI model (gpt-4o, gpt-3.5-turbo, etc.)
+  - `/config show` - Show all current configuration
+  - `/config model <model>` - Set OpenAI model (gpt-4o, gpt-4o-mini, gpt-3.5-turbo, etc.)
   - `/config openai_api_key <key>` - Set OpenAI API key
+  - `/config max-tokens <number>` - Set OpenAI max tokens (default: 4000)
+  - `/config temperature <number>` - Set OpenAI temperature (default: 0.7)
   - `/config remote <path>` - Set remote sync path for OneDrive
   - `/config auto-sync enable|disable` - Enable/disable automatic sync after edits
   - `/config pdf-pages <number>` - Set PDF pages limit for chat/summarize operations
+  - `/config help` - Show configuration help
 - `/version` - Version management and updates
   - `/version check` - Check for available updates
   - `/version update` - Update to the latest version (if possible)
@@ -187,8 +230,13 @@ export OPENAI_API_KEY=your_openai_api_key_here
 
 # Optional settings
 export OPENAI_MODEL=gpt-4o  # defaults to gpt-4o
+export OPENAI_MAX_TOKENS=4000  # defaults to 4000
+export OPENAI_TEMPERATURE=0.7  # defaults to 0.7
 export PAPERCLI_DATA_DIR=/path/to/data  # defaults to ~/.papercli
 export PAPERCLI_PDF_PAGES=10  # defaults to 10 pages for chat/summarize
+export PAPERCLI_THEME=textual-dark  # defaults to textual-dark
+export PAPERCLI_REMOTE_PATH=/path/to/remote  # OneDrive sync path
+export PAPERCLI_AUTO_SYNC=true  # defaults to false
 ```
 
 ### Method 2: .env File
@@ -201,11 +249,22 @@ OPENAI_API_KEY=your_openai_api_key_here
 # OpenAI model for chat and summarization (optional, defaults to gpt-4o)
 OPENAI_MODEL=gpt-4o
 
+# OpenAI API settings (optional)
+OPENAI_MAX_TOKENS=4000
+OPENAI_TEMPERATURE=0.7
+
 # Data directory for database and PDFs (optional, defaults to ~/.papercli)
 PAPERCLI_DATA_DIR=/path/to/your/papercli/data
 
 # PDF pages limit for chat and summarization (optional, defaults to 10)
 PAPERCLI_PDF_PAGES=10
+
+# UI theme (optional, defaults to textual-dark)
+PAPERCLI_THEME=textual-dark
+
+# OneDrive sync settings (optional)
+PAPERCLI_REMOTE_PATH=/path/to/onedrive/folder
+PAPERCLI_AUTO_SYNC=false
 ```
 
 ### Data Storage
@@ -233,7 +292,8 @@ PaperCLI uses a SQLite database with the following main entities:
 - **PageUp/PageDown** - Scroll panels by a full page
 - **Space** - Toggle selection for a paper (only in `/select` mode)
 - **Enter** - Execute a command from the input bar
-- **ESC** - Close panels, exit selection mode, or clear input
+- **ESC** - Close panels
+- **Ctrl+C** - Clear input or exit application
 - **Tab** - Trigger and cycle through auto-completions
 
 ### Function Keys (Quick Actions)
@@ -253,11 +313,9 @@ PaperCLI uses a SQLite database with the following main entities:
 ### Chat Interface Shortcuts
 When using the local chat interface (`/chat`):
 - **Enter** - Send message
-- **Ctrl+J** - Insert newline in message
-- **↑/↓** - Navigate input history (when focused on input)
-- **↑/↓** - Scroll chat display (when focused on chat)
+- **↑/↓** - Scroll chat display
 - **PageUp/PageDown** - Scroll chat display by page
-- **Ctrl+S** - Send message (alternative)
+- **Ctrl+S** - Save chat to file
 - **Esc** - Close chat interface
 
 ## Troubleshooting
@@ -302,16 +360,6 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - **Issues**: Report bugs and request features on [GitHub Issues](https://github.com/SXKDZ/papercli/issues)
 - **Documentation**: Run `/help` within the application
 - **Discussions**: Join discussions on [GitHub Discussions](https://github.com/SXKDZ/papercli/discussions)
-
-## Roadmap
-
-- [x] Package distribution via pipx and pip
-- [x] Version management and auto-updates
-- [ ] Package distribution via PyPI
-- [ ] Plugin system for custom metadata extractors
-- [ ] Cloud synchronization support
-- [ ] Advanced citation analysis
-- [ ] Integration with reference managers
 
 ---
 

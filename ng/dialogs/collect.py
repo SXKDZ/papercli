@@ -1,3 +1,4 @@
+import time
 from typing import Any, Callable, Dict, List
 
 from textual.app import ComposeResult

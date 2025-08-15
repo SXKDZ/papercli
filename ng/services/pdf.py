@@ -14,6 +14,7 @@ from pluralizer import Pluralizer
 
 from ng.db.database import get_pdf_directory
 from ng.services import HTTPClient
+from ng.services.formatting import format_download_summary, format_file_size
 
 
 class PDFService:
@@ -23,17 +24,6 @@ class PDFService:
         self.pdf_dir = get_pdf_directory()
         self.app = app
         self._pluralizer = Pluralizer()
-
-    def calculate_file_size_formatted(self, size_bytes: int) -> str:
-        """Format file size in human readable format."""
-        if size_bytes < 1024:
-            return f"{size_bytes} B"
-        elif size_bytes < 1024 * 1024:
-            return f"{size_bytes / 1024:.1f} KB"
-        elif size_bytes < 1024 * 1024 * 1024:
-            return f"{size_bytes / (1024 * 1024):.1f} MB"
-        else:
-            return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
 
     def get_pdf_page_count(self, pdf_path: str) -> int:
         """Get page count from PDF file."""
@@ -60,7 +50,7 @@ class PDFService:
                 return "Download completed"
 
             file_size = os.path.getsize(pdf_path)
-            size_formatted = self.calculate_file_size_formatted(file_size)
+            size_formatted = format_file_size(file_size)
             duration_formatted = self.format_download_duration(duration_seconds)
             page_count = self.get_pdf_page_count(pdf_path)
 
@@ -330,14 +320,7 @@ class PDFManager:
             info["exists"] = True
 
             # Format file size
-            if file_size < 1024:
-                info["size_formatted"] = f"{file_size} B"
-            elif file_size < 1024 * 1024:
-                info["size_formatted"] = f"{file_size / 1024:.1f} KB"
-            elif file_size < 1024 * 1024 * 1024:
-                info["size_formatted"] = f"{file_size / (1024 * 1024):.1f} MB"
-            else:
-                info["size_formatted"] = f"{file_size / (1024 * 1024 * 1024):.1f} GB"
+            info["size_formatted"] = format_file_size(file_size)
 
             # Get page count using PyPDF2
             try:
@@ -833,3 +816,143 @@ class PDFManager:
                     "http_download_traceback", f"Traceback: {traceback.format_exc()}"
                 )
             return "", error_msg
+
+
+class PDFDownloadHandler:
+    """Handles PDF download completion callbacks."""
+
+    def __init__(self, app, pdf_service: Optional[PDFService] = None):
+        self.app = app
+        self.pdf_service = pdf_service or PDFService(app=app)
+
+    def create_download_completion_callback(
+        self, path_id: str, source: str
+    ) -> Callable:
+        """Create a standardized PDF download completion callback."""
+
+        def handle_download_completion(
+            download_result: Dict[str, Any], error: Optional[str]
+        ):
+            if error:
+                self.app.notify(
+                    f"PDF download failed for {path_id}: {error}",
+                    severity="error",
+                )
+                return
+
+            if not download_result or not download_result.get("success"):
+                error_msg = (
+                    download_result.get("error", "Unknown error")
+                    if download_result
+                    else "Unknown error"
+                )
+                self.app.notify(
+                    f"PDF download failed for {path_id}: {error_msg}",
+                    severity="warning",
+                )
+                return
+
+            self._handle_successful_download(download_result, path_id, source)
+
+        return handle_download_completion
+
+    def _handle_successful_download(
+        self, download_result: Dict[str, Any], path_id: str, source: str
+    ):
+        """Handle successful PDF download with detailed reporting."""
+        try:
+            pdf_path = download_result.get("pdf_path", "")
+            download_duration = download_result.get("download_duration", 0.0)
+
+            if pdf_path and download_duration > 0:
+                pdf_dir = get_pdf_directory()
+                abs_pdf_path = os.path.join(pdf_dir, pdf_path)
+                summary = self.pdf_service.create_download_summary(
+                    abs_pdf_path, download_duration
+                )
+                self.app.notify(
+                    f"{source.title()} PDF {path_id}: {summary}",
+                    severity="information",
+                )
+            else:
+                self.app.notify(
+                    f"PDF downloaded for {source}: {path_id}",
+                    severity="information",
+                )
+        except Exception:
+            self.app.notify(
+                f"PDF downloaded for {source}: {path_id}",
+                severity="information",
+            )
+
+        self.app.load_papers()  # Reload to show PDF indicator
+
+
+class PDFExtractionHandler:
+    """Handles PDF metadata extraction operations."""
+
+    def __init__(self, app, pdf_manager):
+        self.app = app
+        self.pdf_manager = pdf_manager
+
+    def create_extraction_task(self, pdf_path: str) -> Callable:
+        """Create a PDF metadata extraction task."""
+
+        def extract_metadata_operation():
+            from ng.services.metadata import MetadataExtractor
+
+            extractor = MetadataExtractor(pdf_manager=self.pdf_manager, app=self.app)
+            extracted_data = extractor.extract_from_pdf(pdf_path)
+            if not extracted_data:
+                raise Exception("No metadata could be extracted from PDF")
+            return extracted_data
+
+        return extract_metadata_operation
+
+    def create_extraction_completion_callback(
+        self, on_success: Callable[[Dict[str, Any]], None]
+    ) -> Callable:
+        """Create a callback for handling extraction completion."""
+
+        def handle_extraction_completion(
+            extracted_data: Optional[Dict[str, Any]], error: Optional[str]
+        ):
+            if error:
+                if self.app:
+                    self.app.notify(
+                        f"Failed to extract metadata: {error}", severity="error"
+                    )
+                return
+
+            if not extracted_data:
+                if self.app:
+                    self.app.notify(
+                        "Failed to extract metadata: No data extracted",
+                        severity="error",
+                    )
+                return
+
+            on_success(extracted_data)
+
+        return handle_extraction_completion
+
+
+class PDFDownloadTaskFactory:
+    """Factory for creating PDF download tasks."""
+
+    @staticmethod
+    def create_download_task(
+        add_paper_service,
+        paper_id: int,
+        source: str,
+        path_id: str,
+        paper_data: Dict[str, Any],
+    ) -> Callable:
+        """Create a PDF download task function."""
+
+        def download_task():
+            return add_paper_service.download_and_update_pdf(
+                paper_id, source, path_id, paper_data
+            )
+
+        return download_task

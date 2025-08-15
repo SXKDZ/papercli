@@ -9,6 +9,7 @@ from sqlalchemy.orm import joinedload
 
 from ng.db.database import get_db_session
 from ng.db.models import Author, Collection, Paper, PaperAuthor
+from ng.services.paper_tracker import PaperChangeTracker
 from ng.services.pdf import PDFManager
 
 
@@ -100,35 +101,13 @@ class PaperService:
             pdf_error = ""
 
             try:
-                # Snapshot original values for change logging
-                original_simple_fields = {
-                    key: getattr(paper, key, None)
-                    for key in [
-                        "title",
-                        "abstract",
-                        "venue_full",
-                        "venue_acronym",
-                        "year",
-                        "volume",
-                        "issue",
-                        "pages",
-                        "paper_type",
-                        "doi",
-                        "preprint_id",
-                        "category",
-                        "url",
-                        "pdf_path",
-                        "notes",
-                    ]
-                }
-                original_authors = []
-                try:
-                    original_authors = [
-                        pa.author.full_name for pa in (paper.paper_authors or [])
-                    ]
-                except Exception:
-                    original_authors = []
-                original_collections = [c.name for c in (paper.collections or [])]
+                # Use change tracker to capture original state
+                change_tracker = PaperChangeTracker()
+                original_simple_fields = change_tracker.extract_original_fields(paper)
+                original_authors = change_tracker.extract_original_authors(paper)
+                original_collections = change_tracker.extract_original_collections(
+                    paper
+                )
                 if "pdf_path" in paper_data and paper_data["pdf_path"]:
                     # Check if this is a direct path update (relative path from background download)
                     # or needs processing (URL/local file from user input)
@@ -208,43 +187,18 @@ class PaperService:
 
                 session.expunge(paper)
 
-                # Build change log details
-                changes: List[str] = []
-
-                # Compare simple fields
-                for key, old_value in original_simple_fields.items():
-                    new_value = getattr(paper, key, None)
-                    if str(old_value) != str(new_value):
-                        old_preview = str(old_value) if old_value is not None else ""
-                        new_preview = str(new_value) if new_value is not None else ""
-                        if key == "notes":
-                            if len(old_preview) > 120:
-                                old_preview = old_preview[:120] + "..."
-                            if len(new_preview) > 120:
-                                new_preview = new_preview[:120] + "..."
-                        changes.append(f"{key}: '{old_preview}' → '{new_preview}'")
-
-                # Compare authors if they changed
-                try:
-                    updated_authors = [
-                        pa.author.full_name for pa in (paper.paper_authors or [])
-                    ]
-                except Exception:
-                    updated_authors = original_authors
-                if original_authors != updated_authors:
-                    changes.append(
-                        f"authors: '{', '.join(original_authors)}' → '{', '.join(updated_authors)}'"
-                    )
-
-                # Compare collections if they changed
-                updated_collections = [c.name for c in (paper.collections or [])]
-                if original_collections != updated_collections:
-                    changes.append(
-                        f"collections: '{', '.join(original_collections)}' → '{', '.join(updated_collections)}'"
-                    )
+                # Build change log using change tracker
+                changes = change_tracker.build_complete_change_log(
+                    original_simple_fields,
+                    original_authors,
+                    original_collections,
+                    paper,
+                )
 
                 if self.app and changes:
-                    details = f"Paper ID {paper.id}: " + "; ".join(changes)
+                    details = change_tracker.format_change_log_details(
+                        paper.id, changes
+                    )
                     self.app._add_log("paper_update_fields", details)
 
                 if self.app:

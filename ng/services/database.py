@@ -13,6 +13,7 @@ from sqlalchemy.orm import sessionmaker
 
 from ng.db.database import get_pdf_directory
 from ng.db.models import Author, Paper, PaperAuthor
+from ng.services.formatting import format_file_size
 from ng.services.pdf import PDFManager
 
 
@@ -419,7 +420,7 @@ class DatabaseHealthService:
                         continue
 
                 stats["total_size_bytes"] = total_size
-                stats["total_size_formatted"] = self._format_file_size(total_size)
+                stats["total_size_formatted"] = format_file_size(total_size)
 
             self._add_log(
                 "pdf_stats_complete",
@@ -431,17 +432,6 @@ class DatabaseHealthService:
             stats["error"] = str(e)
 
         return stats
-
-    def _format_file_size(self, size_bytes: int) -> str:
-        """Format file size in human readable format."""
-        if size_bytes < 1024:
-            return f"{size_bytes} B"
-        elif size_bytes < 1024 * 1024:
-            return f"{size_bytes / 1024:.1f} KB"
-        elif size_bytes < 1024 * 1024 * 1024:
-            return f"{size_bytes / (1024 * 1024):.1f} MB"
-        else:
-            return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
 
     def _check_system_health(self) -> Dict[str, Any]:
         """Checks system-level health (Python version, dependencies)."""

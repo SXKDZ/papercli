@@ -355,6 +355,6 @@ class SearchCommandHandler(CommandHandler):
             # Enter select mode
             paper_list.set_in_select_mode(True)
             self.app.notify(
-                "Entered multi-selection mode. Use Space to select, F11 or ESC to exit.",
+                "Entered multi-selection mode. Use Space to select, F11 to exit.",
                 severity="information",
             )
