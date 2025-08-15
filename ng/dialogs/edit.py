@@ -705,11 +705,6 @@ class EditDialog(ModalScreen):
             else:
                 result[field_name] = new_value if new_value else None
 
-        if changes_made and self.parent_app:
-            paper_id = self.paper_data.get("id", "New Paper")
-            changes_text = "  \n".join(changes_made)
-            log_message = f"Paper '{self.paper_data.get('title')}' (ID: {paper_id}) updated: \n{changes_text}"
-            self.parent_app._add_log("edit", log_message)
 
         # Clear changed fields when saving
         self.changed_fields.clear()
