@@ -25,12 +25,9 @@ class PaperList(DataTable):
         color: $text;
     }
     PaperList > .datatable--cursor {
-        background: transparent;
-    }
-    PaperList > .datatable--cursor-row {
-        background: $accent;
+        background: $primary !important;
+        color: $text !important;
         text-style: bold;
-        color: $text;
     }
     PaperList > .datatable--hover {
         background: $primary-background-lighten-1;
@@ -53,7 +50,6 @@ class PaperList(DataTable):
             None  # For single selection (non-select mode)
         )
         self.can_focus = True
-        self._is_focused: bool = False  # Manual focus tracking
 
     def _get_selection_style(self) -> str:
         """Get the theme-appropriate selection style."""
@@ -138,108 +134,134 @@ class PaperList(DataTable):
         except Exception:
             pass
 
+    def _prepare_row_data(self, paper: "Paper") -> tuple:
+        """Prepare formatted row data for a paper."""
+        is_selected = paper.id in self.selected_paper_ids
+        should_highlight = self.in_select_mode and is_selected
+
+        # Selection indicator - use theme-appropriate colors
+        if is_selected:
+            selection_indicator = Text("✓", style=self._get_selection_style())
+        elif self.in_select_mode:
+            selection_indicator = "☐"
+        else:
+            selection_indicator = ""
+
+        # Get column widths for text truncation
+        try:
+            column_list = list(self.columns.values())
+            title_width = column_list[1].width - 1 if len(column_list) > 1 else 40
+            authors_width = column_list[2].width - 1 if len(column_list) > 2 else 25
+            venue_width = column_list[4].width - 1 if len(column_list) > 4 else 15
+            collections_width = (
+                column_list[5].width - 1 if len(column_list) > 5 else 20
+            )
+        except (IndexError, KeyError, AttributeError):
+            title_width = 40
+            authors_width = 25
+            venue_width = 15
+            collections_width = 20
+
+        # Title
+        title_text = paper.title
+        if len(title_text) > title_width:
+            title_text = title_text[: title_width - 3] + "..."
+        title = (
+            Text(str(title_text), style=self._get_selection_style())
+            if should_highlight
+            else title_text
+        )
+
+        # Authors
+        authors_text = paper.author_names or "Unknown Authors"
+        if len(authors_text) > authors_width:
+            authors_text = authors_text[: authors_width - 3] + "..."
+        authors = (
+            Text(str(authors_text), style=self._get_selection_style())
+            if should_highlight
+            else authors_text
+        )
+
+        # Year
+        year_text = str(paper.year) if paper.year else "—"
+        year = (
+            Text(str(year_text), style=self._get_selection_style())
+            if should_highlight
+            else year_text
+        )
+
+        # Venue
+        venue_text = paper.venue_acronym or paper.venue_full or "—"
+        if len(venue_text) > venue_width:
+            venue_text = venue_text[: venue_width - 3] + "..."
+        venue = (
+            Text(str(venue_text), style=self._get_selection_style())
+            if should_highlight
+            else venue_text
+        )
+
+        # Collections
+        collections = ""
+        try:
+            if hasattr(paper, "collections") and paper.collections:
+                collection_names = [c.name for c in paper.collections]
+                collections = ", ".join(collection_names)
+                if len(collections) > collections_width:
+                    collections = collections[: collections_width - 3] + "..."
+        except Exception:
+            collections = "—"
+
+        if not collections:
+            collections = "—"
+
+        collections = (
+            Text(str(collections), style=self._get_selection_style())
+            if should_highlight
+            else collections
+        )
+
+        return selection_indicator, title, authors, year, venue, collections
+
+    def _update_row_cells(self, row_index: int, paper: "Paper") -> None:
+        """Update cells for a specific row without rebuilding the entire table."""
+        try:
+            if not (0 <= row_index < len(self.papers)):
+                return
+                
+            # Prepare row data using shared logic
+            selection_indicator, title, authors, year, venue, collections = self._prepare_row_data(paper)
+            
+            # Update the row cells using proper key objects
+            row_keys = list(self.rows.keys())
+            if 0 <= row_index < len(row_keys):
+                actual_row_key = row_keys[row_index]
+                
+                # Get column key objects
+                column_keys = list(self.columns.keys())
+                if len(column_keys) >= 6:
+                    self.update_cell(actual_row_key, column_keys[0], selection_indicator)  # ✓
+                    self.update_cell(actual_row_key, column_keys[1], title)               # Title
+                    self.update_cell(actual_row_key, column_keys[2], authors)             # Authors
+                    self.update_cell(actual_row_key, column_keys[3], year)                # Year
+                    self.update_cell(actual_row_key, column_keys[4], venue)               # Venue
+                    self.update_cell(actual_row_key, column_keys[5], collections)         # Collections
+                else:
+                    raise ValueError("Not enough columns")
+            else:
+                raise ValueError(f"Row index {row_index} out of range")
+            
+        except Exception:
+            # If individual row update fails, fall back to full table update
+            self.populate_table()
+
     def populate_table(self) -> None:
         """Populate the DataTable with papers."""
+        # Save cursor position before clear() which resets it to 0
+        saved_cursor = self.cursor_row
         self.clear(columns=False)
 
         for paper in self.papers:
-            is_selected = paper.id in self.selected_paper_ids
-            is_current = paper.id == self.current_paper_id
-
-            # Determine styling
-            should_highlight = False
-            if self.in_select_mode:
-                # In select mode: highlight selected papers regardless of focus
-                should_highlight = is_selected
-            else:
-                # In single selection mode: highlight current paper only when not focused
-                should_highlight = is_current and not self._is_focused
-
-            # Selection indicator - use theme-appropriate colors
-            if is_selected:
-                selection_indicator = Text("✓", style=self._get_selection_style())
-            elif self.in_select_mode:
-                selection_indicator = "☐"
-            else:
-                selection_indicator = ""
-
-            # Get column widths for text truncation
-            try:
-                column_list = list(self.columns.values())
-                title_width = column_list[1].width - 1 if len(column_list) > 1 else 40
-                authors_width = column_list[2].width - 1 if len(column_list) > 2 else 25
-                venue_width = column_list[4].width - 1 if len(column_list) > 4 else 15
-                collections_width = (
-                    column_list[5].width - 1 if len(column_list) > 5 else 20
-                )
-            except (IndexError, KeyError, AttributeError):
-                title_width = 40
-                authors_width = 25
-                venue_width = 15
-                collections_width = 20
-
-            # Title - try multiple color approaches
-            title_text = paper.title
-            if len(title_text) > title_width:
-                title_text = title_text[: title_width - 3] + "..."
-            if should_highlight:
-                # Use theme-appropriate selection color
-                title = Text(str(title_text), style=self._get_selection_style())
-            # Removed noisy color_approach log
-            else:
-                title = title_text
-
-            # Authors - use theme-appropriate colors
-            authors_text = paper.author_names or "Unknown Authors"
-            if len(authors_text) > authors_width:
-                authors_text = authors_text[: authors_width - 3] + "..."
-            authors = (
-                Text(str(authors_text), style=self._get_selection_style())
-                if should_highlight
-                else authors_text
-            )
-
-            # Year - use theme-appropriate colors
-            year_text = str(paper.year) if paper.year else "—"
-            year = (
-                Text(str(year_text), style=self._get_selection_style())
-                if should_highlight
-                else year_text
-            )
-
-            # Venue - use theme-appropriate colors
-            venue_text = paper.venue_acronym or paper.venue_full or "—"
-            if len(venue_text) > venue_width:
-                venue_text = venue_text[: venue_width - 3] + "..."
-            venue = (
-                Text(str(venue_text), style=self._get_selection_style())
-                if should_highlight
-                else venue_text
-            )
-
-            # Collections
-            collections = ""
-            try:
-                if hasattr(paper, "collections") and paper.collections:
-                    collection_names = [c.name for c in paper.collections]
-                    collections = ", ".join(collection_names)
-                    if len(collections) > collections_width:
-                        collections = collections[: collections_width - 3] + "..."
-            except Exception:
-                collections = "—"
-
-            if not collections:
-                collections = "—"
-
-            # Collections - use theme-appropriate colors
-            collections = (
-                Text(str(collections), style=self._get_selection_style())
-                if should_highlight
-                else collections
-            )
-
-            # Removed noisy add_row_debug log
-
+            selection_indicator, title, authors, year, venue, collections = self._prepare_row_data(paper)
             self.add_row(
                 selection_indicator,
                 title,
@@ -249,6 +271,10 @@ class PaperList(DataTable):
                 collections,
                 key=str(paper.id),
             )
+        
+        # Restore cursor position after rebuild
+        if 0 <= saved_cursor < len(self.papers):
+            self.move_cursor(row=saved_cursor)
 
     def update_table(self) -> None:
         """Update the DataTable display to reflect current selection state."""
@@ -326,10 +352,7 @@ class PaperList(DataTable):
                     self.selected_paper_ids.remove(current_paper.id)
                 else:
                     self.selected_paper_ids.add(current_paper.id)
-                self.update_table()
-
-                if 0 <= current_row < len(self.papers):
-                    self.move_cursor(row=current_row)
+                self._update_row_cells(current_row, current_paper)
                 self.post_message(self.StatsChanged())
 
     async def _async_toggle_update(self, current_row: int) -> None:
@@ -344,19 +367,18 @@ class PaperList(DataTable):
             paper = self.papers[event.cursor_row]
             clicked_row = event.cursor_row
 
-            self.move_cursor(row=clicked_row)
             if self.in_select_mode:
                 # In select mode: toggle selection
                 if paper.id in self.selected_paper_ids:
                     self.selected_paper_ids.remove(paper.id)
                 else:
                     self.selected_paper_ids.add(paper.id)
-                self.update_table()
-                if 0 <= clicked_row < len(self.papers):
-                    self.move_cursor(row=clicked_row)
+                # Update just the clicked row to avoid visual flicker
+                self._update_row_cells(clicked_row, paper)
             else:
-                # In single selection mode: set current paper
+                # In single selection mode: set current paper and move cursor
                 self.current_paper_id = paper.id
+                self.move_cursor(row=clicked_row)
 
             # Notify that stats changed for any cursor/selection change
             self.post_message(self.StatsChanged())
@@ -386,15 +408,6 @@ class PaperList(DataTable):
             if current_paper:
                 self.current_paper_id = current_paper.id
 
-    def on_focus(self) -> None:
-        """When the list regains focus, show normal DataTable cursor styling."""
-        self._is_focused = True
-        self.update_table()
-
-    def on_blur(self) -> None:
-        """When the list loses focus, apply bold/green styling to current/selected papers."""
-        self._is_focused = False
-        self.update_table()
 
     # Movement methods
     def move_up(self) -> None:
