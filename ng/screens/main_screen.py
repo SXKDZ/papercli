@@ -23,6 +23,7 @@ class MainScreen(Screen):
     }
     #paper-list-view {
         width: 100%;
+        height: 1fr;
         margin: 0;
         padding: 0;
         content-align: left top;

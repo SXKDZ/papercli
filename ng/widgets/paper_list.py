@@ -60,71 +60,173 @@ class PaperList(DataTable):
     def on_mount(self) -> None:
         self._setup_columns()
         self.populate_table()
+        self._setup_complete = True
 
     def _get_available_width(self) -> int:
-        """Return the available width for columns based on the widget's actual size."""
-        widget_width = 0
+        """Return the available width for columns based on actual widget measurements."""
+        # Get raw widget dimensions
+        raw_width = 0
+        width_source = "unknown"
+        
         try:
-            if getattr(self, "size", None) and self.size.width:
-                widget_width = self.size.width
-            elif getattr(self, "region", None) and self.region.width:
-                widget_width = self.region.width
+            # Priority 1: Region width (actual allocated space)
+            if getattr(self, "region", None) and self.region.width > 0:
+                raw_width = self.region.width
+                width_source = "region"
+            # Priority 2: Widget size
+            elif getattr(self, "size", None) and self.size.width > 0:
+                raw_width = self.size.width
+                width_source = "widget_size"
+            # Priority 3: Content size
+            elif hasattr(self, 'content_size') and self.content_size.width > 0:
+                raw_width = self.content_size.width
+                width_source = "content_size"
+            # Fallback: App size
+            elif getattr(self.app, "size", None) and self.app.size.width > 0:
+                raw_width = self.app.size.width
+                width_source = "app_size"
         except Exception:
-            widget_width = 0
-
-        if widget_width <= 0:
-            try:
-                widget_width = (
-                    self.app.size.width if getattr(self.app, "size", None) else 120
-                )
-            except Exception:
-                widget_width = 120
-
-        return max(40, widget_width - 2)
+            raw_width = 0
+        
+        if raw_width <= 0:
+            return 80  # Minimal fallback
+        
+        # Detect actual scrollbar presence and width
+        scrollbar_width = 0
+        try:
+            if hasattr(self, 'max_scroll_y') and self.max_scroll_y > 0:
+                # Can scroll vertically, so scrollbar is likely visible
+                scrollbar_width = 1  # Standard Textual scrollbar width
+        except Exception:
+            pass
+        
+        # Detect border requirements
+        border_width = 0
+        if width_source in ["region", "widget_size", "app_size"]:
+            # These include borders, estimate border width
+            border_width = 2  # Standard solid border
+        
+        # Detect DataTable column properties
+        actual_columns = 0
+        try:
+            if hasattr(self, 'columns') and self.columns:
+                actual_columns = len(self.columns)
+            else:
+                # Count expected columns if not yet created
+                actual_columns = len(["✓", "Title", "Authors", "Year", "Venue", "Collections"])
+        except Exception:
+            actual_columns = 6  # Last resort fallback
+        
+        # Get actual cell padding
+        actual_cell_padding = getattr(self, 'cell_padding', 1)
+        
+        # Calculate minimal necessary overhead
+        # This should be the absolute minimum spacing needed by DataTable
+        min_overhead = actual_columns - 1  # Minimal column separators
+        
+        # Calculate content width
+        content_width = raw_width - scrollbar_width - border_width - min_overhead
+        
+        # Ensure reasonable minimum
+        final_width = max(40, content_width)
+        
+        
+        return final_width
 
     def _setup_columns(self) -> None:
         """Setup the DataTable columns with dynamic width calculation."""
         available_width = self._get_available_width()
 
-        sel_width = 3
-        year_width = 6
-        remaining_width = max(10, available_width - sel_width - year_width)
+        # Define fixed-width columns that don't scale
+        sel_width = 3  # Selection indicator
+        year_width = 6  # Year (4 digits + padding)
+        
+        # Calculate flexible space after fixed columns
+        flexible_width = max(0, available_width - sel_width - year_width)
+        
+        # Calculate dynamic column ratios based on available space
+        # More space = more generous author and venue columns
+        if flexible_width >= available_width * 0.8:  # Very wide screens
+            title_ratio = 0.45
+            authors_ratio = 0.30  # More generous for author names
+            venue_ratio = 0.15
+            collections_ratio = 0.10
+        elif flexible_width >= available_width * 0.6:  # Wide screens
+            title_ratio = 0.50
+            authors_ratio = 0.25
+            venue_ratio = 0.15
+            collections_ratio = 0.10
+        elif flexible_width >= available_width * 0.4:  # Medium screens
+            title_ratio = 0.50
+            authors_ratio = 0.25
+            venue_ratio = 0.15
+            collections_ratio = 0.10
+        else:  # Narrow screens
+            title_ratio = 0.55
+            authors_ratio = 0.25
+            venue_ratio = 0.10
+            collections_ratio = 0.10
 
-        title_width = int(remaining_width * 0.45)
-        authors_width = int(remaining_width * 0.25)
-        venue_width = int(remaining_width * 0.15)
-        collections_width = remaining_width - title_width - authors_width - venue_width
+        # Calculate initial widths
+        title_width = int(flexible_width * title_ratio)
+        authors_width = int(flexible_width * authors_ratio)
+        venue_width = int(flexible_width * venue_ratio)
+        collections_width = flexible_width - title_width - authors_width - venue_width
 
-        title_width = max(20, title_width)
-        authors_width = max(15, authors_width)
-        venue_width = max(10, min(20, venue_width))  # Max 20 chars for venue
-        collections_width = max(10, collections_width)
+        # Define dynamic minimums based on available space
+        min_title = max(10, int(available_width * 0.08))
+        min_authors = max(8, int(available_width * 0.06))
+        min_venue = max(4, int(available_width * 0.03))
+        min_collections = max(4, int(available_width * 0.03))
 
-        # Recalculate collections_width if venue was capped
-        original_venue_width = int(remaining_width * 0.15)
-        if venue_width < original_venue_width:
-            # Add the saved space to collections
-            collections_width += original_venue_width - venue_width
+        # Apply minimums
+        title_width = max(min_title, title_width)
+        authors_width = max(min_authors, authors_width)
+        venue_width = max(min_venue, venue_width)
+        collections_width = max(min_collections, collections_width)
 
-        # Cap collections width and redistribute to title
-        collections_width = min(20, collections_width)  # Max 20 chars for collections
+        # Distribute any remaining width
+        total_calculated = sel_width + title_width + authors_width + year_width + venue_width + collections_width
+        width_difference = available_width - total_calculated
+        
+        if width_difference > 0:
+            # Distribute extra width proportionally to title and authors
+            title_extra = int(width_difference * 0.6)
+            authors_extra = width_difference - title_extra
+            title_width += title_extra
+            authors_width += authors_extra
+        elif width_difference < 0:
+            # Reduce from least important columns
+            deficit = abs(width_difference)
+            reductions = [
+                ('collections', collections_width, min_collections),
+                ('venue', venue_width, min_venue),
+                ('authors', authors_width, min_authors),
+                ('title', title_width, min_title)
+            ]
+            
+            for col_name, current_width, min_width in reductions:
+                if deficit <= 0:
+                    break
+                reduction = min(current_width - min_width, deficit)
+                if col_name == 'collections':
+                    collections_width -= reduction
+                elif col_name == 'venue':
+                    venue_width -= reduction
+                elif col_name == 'authors':
+                    authors_width -= reduction
+                elif col_name == 'title':
+                    title_width -= reduction
+                deficit -= reduction
 
-        total_calculated = (
-            sel_width
-            + title_width
-            + authors_width
-            + year_width
-            + venue_width
-            + collections_width
-        )
-        if total_calculated < available_width:
-            title_width += available_width - total_calculated
+        final_total = sel_width + title_width + authors_width + year_width + venue_width + collections_width
+        
 
         self.add_columns("✓", "Title", "Authors", "Year", "Venue", "Collections")
 
         try:
             columns = list(self.columns.values())
-            if len(columns) >= 6:
+            if len(columns) >= len([sel_width, title_width, authors_width, year_width, venue_width, collections_width]):
                 columns[0].width = sel_width
                 columns[1].width = title_width
                 columns[2].width = authors_width
@@ -329,7 +431,9 @@ class PaperList(DataTable):
 
     def on_resize(self) -> None:
         """Handle resize events to adjust column widths."""
-        if hasattr(self, "_setup_complete") and self._setup_complete and self.papers:
+        
+        # Always rebuild columns and table on resize to ensure 100% width usage
+        if hasattr(self, "_setup_complete") and self._setup_complete:
             self.clear(columns=True)
             self._setup_columns()
             self.populate_table()
