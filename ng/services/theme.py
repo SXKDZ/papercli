@@ -17,7 +17,7 @@ class ThemeService:
         "text": "black",
         "success": "dark_green",
         "error": "red",
-        "warning": "dark_orange",
+        "warning": "orange",
         "info": "blue",
         "link": "blue underline",
         "dim": "dim grey37",
