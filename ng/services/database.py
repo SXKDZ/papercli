@@ -657,7 +657,7 @@ class DatabaseHealthService:
             papers_with_abs_paths = (
                 session.query(Paper)
                 .filter(
-                    Paper.file_path.isnot(None),
+                    Paper.pdf_path.isnot(None),
                     # This filter is still problematic for SQLite, will rely on manual check
                 )
                 .all()
@@ -687,7 +687,7 @@ class DatabaseHealthService:
             self._add_log("fix_path_error", f"Error fixing absolute PDF paths: {e}")
         finally:
             session.close()
-        return {"fixed_paths": fixed_count}
+        return {"pdf_paths": fixed_count}
 
     def clean_pdf_filenames(self) -> Dict[str, int]:
         """Renames PDF files to follow a consistent naming convention."""

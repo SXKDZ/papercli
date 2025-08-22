@@ -522,10 +522,6 @@ class ChatDialog(ModalScreen):
         """Handle model and page range input changes with validation."""
         if event.input.id == "model-input":
             self.model_name = event.value.strip() or "gpt-4o"
-            if self.app:
-                self.app._add_log(
-                    "chat_model_change", f"Model changed to: {self.model_name}"
-                )
         elif event.input.id == "pdf-start-input":
             try:
                 if not event.value or not event.value.strip():
@@ -622,6 +618,18 @@ class ChatDialog(ModalScreen):
 
         # Re-enable buttons
         self._enable_buttons()
+
+        # Log successful completion with token usage
+        if self.app:
+            response_preview = (
+                message.final_content[:100] + "..." 
+                if len(message.final_content) > 100 
+                else message.final_content
+            )
+            self.app._add_log(
+                "chat_response",
+                f"LLM response completed: {response_preview} (~{self._input_tokens} input, ~{self._output_tokens} output tokens)",
+            )
 
         # Ensure we have some response
         if not message.final_content.strip():

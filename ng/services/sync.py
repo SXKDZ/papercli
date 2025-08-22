@@ -363,18 +363,53 @@ class SyncService:
                 self.app._add_log("sync_error", f"Sync failed with error: {str(e)}")
         finally:
             self._release_locks()
-            if self.app and not result.errors:
-                changes = result.changes_applied
-                total_changes = sum(changes.values())
-                if total_changes > 0:
+            if self.app:
+                if result.errors:
                     self.app._add_log(
-                        "sync_complete",
-                        f"Sync completed successfully: {total_changes} total changes",
+                        "sync_failed",
+                        f"Sync failed with {len(result.errors)} error(s): {'; '.join(result.errors[:3])}"
                     )
                 else:
-                    self.app._add_log(
-                        "sync_complete", "Sync completed: databases already in sync"
-                    )
+                    changes = result.changes_applied
+                    total_changes = sum(changes.values())
+                    if total_changes > 0:
+                        # Build detailed change summary
+                        change_details = []
+                        if changes["papers_added"]:
+                            change_details.append(f"{changes['papers_added']} papers added")
+                        if changes["papers_updated"]:
+                            change_details.append(f"{changes['papers_updated']} papers updated")
+                        if changes["collections_added"]:
+                            change_details.append(f"{changes['collections_added']} collections added")
+                        if changes["collections_updated"]:
+                            change_details.append(f"{changes['collections_updated']} collections updated")
+                        if changes["pdfs_copied"]:
+                            change_details.append(f"{changes['pdfs_copied']} PDFs copied")
+                        if changes["pdfs_updated"]:
+                            change_details.append(f"{changes['pdfs_updated']} PDFs updated")
+                        
+                        detailed_summary = "; ".join(change_details)
+                        self.app._add_log(
+                            "sync_success",
+                            f"Sync completed successfully: {total_changes} total changes ({detailed_summary})"
+                        )
+                        
+                        # Log specific items that were changed
+                        for change_type, items in result.detailed_changes.items():
+                            if items:
+                                items_preview = items[:5]  # Show first 5 items
+                                more_count = len(items) - len(items_preview)
+                                items_str = ", ".join(f"'{item}'" for item in items_preview)
+                                if more_count > 0:
+                                    items_str += f" and {more_count} more"
+                                self.app._add_log(
+                                    "sync_details",
+                                    f"{change_type.replace('_', ' ').title()}: {items_str}"
+                                )
+                    else:
+                        self.app._add_log(
+                            "sync_success", "Sync completed successfully: databases already in sync"
+                        )
 
         return result
 

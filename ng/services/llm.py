@@ -207,9 +207,11 @@ class LLMSummaryService:
     def _process_summary_queue(self, tracking: Dict[str, Any]):
         """Process the queue of successfully generated summaries."""
         if self.app:
+            queue_size = len(tracking['queue'])
+            item_text = self._pluralizer.pluralize("summary", queue_size, True)
             self.app._add_log(
                 f"{tracking['operation_prefix']}_queue_processing",
-                f"Processing queue with {len(tracking['queue'])} summaries to save",
+                f"Processing queue with {item_text} to save",
             )
 
         # Process in background

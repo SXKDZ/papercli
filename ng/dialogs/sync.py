@@ -314,16 +314,11 @@ class SyncDialog(ModalScreen):
 
     def watch_show_conflicts(self, show: bool) -> None:
         """Show/hide conflict resolution UI."""
-        self.app._add_log(
-            "sync_show_conflicts",
-            f"watch_show_conflicts called with show={show}, conflicts={len(self.conflicts) if self.conflicts else 0}",
-        )
         try:
             progress_content = self.query_one("#progress-content")
             conflict_content = self.query_one("#conflict-content")
 
             if show and self.conflicts:
-                self.app._add_log("sync_ui_switch", "Switching to conflict view")
                 # Switch to conflict view FIRST
                 conflict_content.remove_class("hidden")
                 progress_content.add_class("hidden")
@@ -343,10 +338,6 @@ class SyncDialog(ModalScreen):
                 # Update conflict info AFTER making visible
                 self._update_conflict_display()
             else:
-                self.app._add_log(
-                    "sync_ui_switch",
-                    f"Not switching to conflict view - show={show}, conflicts={len(self.conflicts) if self.conflicts else 0}",
-                )
                 # Switch back to progress/summary view
                 conflict_content.add_class("hidden")
                 progress_content.remove_class("hidden")
@@ -764,6 +755,7 @@ class SyncDialog(ModalScreen):
                     self.local_path,
                     self.remote_path,
                     progress_callback=progress_updater,
+                    app=self.app,
                 )
 
                 self.sync_result = sync_service.sync(

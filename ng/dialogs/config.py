@@ -5,7 +5,7 @@ from typing import Any, Callable, Dict
 from dotenv import load_dotenv, set_key
 from openai import OpenAI
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal
+from textual.containers import Container, Horizontal, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import (
     Button,
@@ -56,7 +56,13 @@ class ConfigDialog(ModalScreen):
     }
     
     ConfigDialog TabPane {
+        padding: 0;
+    }
+    ConfigDialog VerticalScroll {
         padding: 1;
+        scrollbar-size: 2 2;
+        scrollbar-background: $surface;
+        scrollbar-color: $primary;
     }
     ConfigDialog .form-row {
         height: auto;
@@ -234,123 +240,127 @@ class ConfigDialog(ModalScreen):
             with TabbedContent(id="config-tabs"):
                 # OpenAI Tab
                 with TabPane("OpenAI", id="openai-tab"):
-                    # Model selection
-                    with Horizontal(classes="form-row"):
-                        yield Label("Model:", classes="form-label")
-                        model_options = self._build_model_options()
-                        current_model = os.getenv("OPENAI_MODEL", "gpt-4o")
-                        # Ensure we have a valid default model
-                        default_model = (
-                            current_model
-                            if current_model in self.available_models
-                            else (
-                                self.available_models[0]
-                                if self.available_models
-                                else "gpt-4o"
+                    with VerticalScroll():
+                        # Model selection
+                        with Horizontal(classes="form-row"):
+                            yield Label("Model:", classes="form-label")
+                            model_options = self._build_model_options()
+                            current_model = os.getenv("OPENAI_MODEL", "gpt-4o")
+                            # Ensure we have a valid default model
+                            default_model = (
+                                current_model
+                                if current_model in self.available_models
+                                else (
+                                    self.available_models[0]
+                                    if self.available_models
+                                    else "gpt-4o"
+                                )
                             )
-                        )
-                        yield Select(
-                            options=model_options,
-                            value=default_model,
-                            id="model-select",
-                            classes="form-select",
-                        )
+                            yield Select(
+                                options=model_options,
+                                value=default_model,
+                                id="model-select",
+                                classes="form-select",
+                            )
 
-                    # API Key
-                    with Horizontal(classes="form-row"):
-                        yield Label("API Key:", classes="form-label")
-                        api_key = os.getenv("OPENAI_API_KEY", "")
-                        masked_key = self._mask_api_key(api_key)
-                        yield TextArea(
-                            text=masked_key,
-                            id="api-key-input",
-                            classes="form-textarea",
-                        )
+                        # API Key
+                        with Horizontal(classes="form-row"):
+                            yield Label("API Key:", classes="form-label")
+                            api_key = os.getenv("OPENAI_API_KEY", "")
+                            masked_key = self._mask_api_key(api_key)
+                            yield TextArea(
+                                text=masked_key,
+                                id="api-key-input",
+                                classes="form-textarea",
+                            )
 
-                    # Max Tokens
-                    with Horizontal(classes="form-row"):
-                        yield Label("Max Tokens:", classes="form-label")
-                        max_tokens = os.getenv("OPENAI_MAX_TOKENS", "4000")
-                        yield Input(
-                            value=max_tokens,
-                            placeholder="4000",
-                            id="max-tokens-input",
-                            classes="form-input",
-                        )
+                        # Max Tokens
+                        with Horizontal(classes="form-row"):
+                            yield Label("Max Tokens:", classes="form-label")
+                            max_tokens = os.getenv("OPENAI_MAX_TOKENS", "4000")
+                            yield Input(
+                                value=max_tokens,
+                                placeholder="4000",
+                                id="max-tokens-input",
+                                classes="form-input",
+                            )
 
-                    # Temperature
-                    with Horizontal(classes="form-row"):
-                        yield Label("Temperature:", classes="form-label")
-                        temperature = os.getenv("OPENAI_TEMPERATURE", "0.7")
-                        yield Input(
-                            value=temperature,
-                            placeholder="0.7",
-                            id="temperature-input",
-                            classes="form-input",
-                        )
+                        # Temperature
+                        with Horizontal(classes="form-row"):
+                            yield Label("Temperature:", classes="form-label")
+                            temperature = os.getenv("OPENAI_TEMPERATURE", "0.7")
+                            yield Input(
+                                value=temperature,
+                                placeholder="0.7",
+                                id="temperature-input",
+                                classes="form-input",
+                            )
 
                 # Sync Tab
                 with TabPane("Sync", id="sync-tab"):
-                    # Remote Path
-                    with Horizontal(classes="form-row"):
-                        yield Label("Remote Path:", classes="form-label")
-                        remote_path = os.getenv("PAPERCLI_REMOTE_PATH", "")
-                        yield Input(
-                            value=remote_path,
-                            placeholder="~/OneDrive/papercli-sync",
-                            id="remote-path-input",
-                            classes="form-input",
-                        )
+                    with VerticalScroll():
+                        # Remote Path
+                        with Horizontal(classes="form-row"):
+                            yield Label("Remote Path:", classes="form-label")
+                            remote_path = os.getenv("PAPERCLI_REMOTE_PATH", "")
+                            yield Input(
+                                value=remote_path,
+                                placeholder="~/OneDrive/papercli-sync",
+                                id="remote-path-input",
+                                classes="form-input",
+                            )
 
-                    # Auto-sync radio buttons
-                    with Horizontal(classes="form-row"):
-                        yield Label("Auto-sync:", classes="form-label")
-                        with RadioSet(
-                            id="auto-sync-radio-set", classes="form-radio-set"
-                        ):
-                            auto_sync = (
-                                os.getenv("PAPERCLI_AUTO_SYNC", "false").lower()
-                                == "true"
-                            )
-                            yield RadioButton(
-                                "Enable",
-                                value=auto_sync,
-                                id="auto-sync-enable",
-                            )
-                            yield RadioButton(
-                                "Disable",
-                                value=not auto_sync,
-                                id="auto-sync-disable",
-                            )
+                        # Auto-sync radio buttons
+                        with Horizontal(classes="form-row"):
+                            yield Label("Auto-sync:", classes="form-label")
+                            with RadioSet(
+                                id="auto-sync-radio-set", classes="form-radio-set"
+                            ):
+                                auto_sync = (
+                                    os.getenv("PAPERCLI_AUTO_SYNC", "false").lower()
+                                    == "true"
+                                )
+                                yield RadioButton(
+                                    "Enable",
+                                    value=auto_sync,
+                                    id="auto-sync-enable",
+                                )
+                                yield RadioButton(
+                                    "Disable",
+                                    value=not auto_sync,
+                                    id="auto-sync-disable",
+                                )
 
                 # PDF Tab
                 with TabPane("PDF", id="pdf-tab"):
-                    # PDF Pages Limit
-                    with Horizontal(classes="form-row"):
-                        yield Label("PDF Pages Limit:", classes="form-label")
-                        pdf_pages = os.getenv("PAPERCLI_PDF_PAGES", "10")
-                        yield Input(
-                            value=pdf_pages,
-                            placeholder="10",
-                            id="pdf-pages-input",
-                            classes="form-input",
-                        )
+                    with VerticalScroll():
+                        # PDF Pages Limit
+                        with Horizontal(classes="form-row"):
+                            yield Label("PDF Pages Limit:", classes="form-label")
+                            pdf_pages = os.getenv("PAPERCLI_PDF_PAGES", "10")
+                            yield Input(
+                                value=pdf_pages,
+                                placeholder="10",
+                                id="pdf-pages-input",
+                                classes="form-input",
+                            )
 
                 # Theme Tab
                 with TabPane("Theme", id="theme-tab"):
-                    # Theme selection as radio buttons
-                    with Horizontal(classes="form-row"):
-                        yield Label("Theme:", classes="form-label")
-                        current_theme = os.getenv("PAPERCLI_THEME", "textual-dark")
-                        with RadioSet(id="theme-radio-set", classes="form-radio-set"):
-                            for theme_name, theme_value in self.available_themes:
-                                is_selected = theme_value == current_theme
-                                yield RadioButton(
-                                    theme_name,
-                                    value=is_selected,
-                                    id=f"theme-{theme_value}",
-                                    name=theme_value,
-                                )
+                    with VerticalScroll():
+                        # Theme selection as radio buttons
+                        with Horizontal(classes="form-row"):
+                            yield Label("Theme:", classes="form-label")
+                            current_theme = os.getenv("PAPERCLI_THEME", "textual-dark")
+                            with RadioSet(id="theme-radio-set", classes="form-radio-set"):
+                                for theme_name, theme_value in self.available_themes:
+                                    is_selected = theme_value == current_theme
+                                    yield RadioButton(
+                                        theme_name,
+                                        value=is_selected,
+                                        id=f"theme-{theme_value}",
+                                        name=theme_value,
+                                    )
 
             # Bottom buttons
             with Horizontal(classes="bottom-buttons"):

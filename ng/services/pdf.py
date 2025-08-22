@@ -103,6 +103,7 @@ class PDFService:
                 first_word = next((w for w in words if len(w) > 3), "paper")[:10]
 
             temp_filename = f"{author_lastname}{year}{first_word}_{temp_hash}.pdf"
+            temp_filename = re.sub(r"[^\w\-._]", "", temp_filename)
             temp_filepath = os.path.join(self.pdf_dir, temp_filename)
 
             # Download to temporary path
@@ -532,7 +533,7 @@ class PDFManager:
                     f"PDFManager.download_pdf_from_url_with_proper_naming called with url='{url}'",
                 )
                 self.app._add_log(
-                    "pdf_manager_debug", f"Paper data for naming: {paper_data}"
+                    "pdf_naming_data", f"Paper data for naming: {paper_data}"
                 )
 
             start_time = time.time()
@@ -553,20 +554,21 @@ class PDFManager:
                 first_word = next((w for w in words if len(w) > 3), "paper")[:10]
 
             temp_filename = f"{author_lastname}{year}{first_word}_{temp_hash}.pdf"
+            temp_filename = re.sub(r"[^\w\-._]", "", temp_filename)
             temp_filepath = os.path.join(self.pdf_dir, temp_filename)
 
             if self.app:
                 self.app._add_log(
-                    "pdf_manager_debug", f"Generated temp filename: {temp_filename}"
+                    "pdf_filename_generation", f"Generated temp filename: {temp_filename}"
                 )
                 self.app._add_log(
-                    "pdf_manager_debug", f"Full temp path: {temp_filepath}"
+                    "pdf_path_generation", f"Full temp path: {temp_filepath}"
                 )
 
             # Download to temporary path
             if self.app:
                 self.app._add_log(
-                    "pdf_manager_debug", "Starting download to temp path..."
+                    "pdf_download_init", "Starting download to temp path..."
                 )
             downloaded_path, error = self._download_pdf_from_url(url, temp_filepath)
             download_duration = time.time() - start_time
@@ -593,24 +595,24 @@ class PDFManager:
             # Generate final filename with content-based hash
             if self.app:
                 self.app._add_log(
-                    "pdf_manager_debug", "Generating final filename based on content..."
+                    "pdf_filename_final", "Generating final filename based on content..."
                 )
             final_filename = self._generate_pdf_filename(paper_data, downloaded_path)
             final_filepath = os.path.join(self.pdf_dir, final_filename)
 
             if self.app:
                 self.app._add_log(
-                    "pdf_manager_debug", f"Final filename: {final_filename}"
+                    "pdf_filename_final", f"Final filename: {final_filename}"
                 )
                 self.app._add_log(
-                    "pdf_manager_debug", f"Final filepath: {final_filepath}"
+                    "pdf_path_final", f"Final filepath: {final_filepath}"
                 )
 
             # Rename to final location if needed
             if temp_filepath != final_filepath:
                 if self.app:
                     self.app._add_log(
-                        "pdf_manager_debug", "Renaming from temp to final location..."
+                        "pdf_file_rename", "Renaming from temp to final location..."
                     )
                 try:
                     shutil.move(temp_filepath, final_filepath)
@@ -629,7 +631,7 @@ class PDFManager:
             else:
                 if self.app:
                     self.app._add_log(
-                        "pdf_manager_debug",
+                        "pdf_file_status",
                         "Temp and final paths are the same, no rename needed",
                     )
 
@@ -668,13 +670,12 @@ class PDFManager:
                     "http_request_timing",
                     f"HTTP request completed in {request_duration:.2f} seconds",
                 )
+                headers = dict(response.headers)
+                content_type = headers.get('content-type', 'unknown')
+                content_length = headers.get('content-length', 'unknown')
                 self.app._add_log(
-                    "http_response_debug",
-                    f"HTTP response status: {response.status_code}",
-                )
-                self.app._add_log(
-                    "http_response_debug",
-                    f"HTTP response headers: {dict(response.headers)}",
+                    "http_response",
+                    f"HTTP response: {response.status_code}, Type: {content_type}, Size: {content_length}",
                 )
 
             # Check if content is actually a PDF
