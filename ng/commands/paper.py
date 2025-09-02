@@ -111,6 +111,72 @@ class PaperCommandHandler(CommandHandler):
             self.app.notify(f"Error adding paper: {str(e)}", severity="error")
             return False
 
+    def _handle_async_pdf_paper(self, source: str, path_id: str) -> bool:
+        """Handle async PDF paper addition with background metadata extraction."""
+        try:
+            result = self.add_paper_service.add_pdf_paper_async(path_id)
+            if result and result.get("paper"):
+                paper = result["paper"]
+                self.app.notify(
+                    f"Added PDF paper: {path_id}",
+                    severity="information",
+                )
+                self.app.load_papers()  # Reload papers to show new entry
+
+                # Start background metadata extraction
+                extraction_task = PDFDownloadTaskFactory.create_metadata_extraction_task(
+                    self.add_paper_service,
+                    paper.id,
+                    result["pdf_path"],
+                )
+
+                def metadata_completion_callback(extracted_result, error):
+                    if error:
+                        self.app.notify(
+                            f"Failed to extract metadata from PDF: {error}",
+                            severity="warning",
+                        )
+                        return
+
+                    if not extracted_result or not extracted_result.get("success"):
+                        error_msg = (
+                            extracted_result.get("error", "Unknown error")
+                            if extracted_result
+                            else "Unknown error"
+                        )
+                        self.app.notify(
+                            f"Failed to extract metadata from PDF: {error_msg}",
+                            severity="warning",
+                        )
+                        return
+
+                    # Success - metadata extracted and paper updated
+                    self.app.notify(
+                        f"PDF metadata extraction completed for: {path_id}",
+                        severity="information",
+                    )
+                    self.app.load_papers()  # Reload to show updated metadata
+
+                self.background_service.run_operation(
+                    extraction_task,
+                    f"pdf_metadata_extraction_{paper.id}",
+                    f"Extracting metadata from PDF: {path_id}...",
+                    metadata_completion_callback,
+                )
+                return True
+            else:
+                self.app.notify(
+                    f"Failed to add PDF paper: {path_id} - No paper created",
+                    severity="error",
+                )
+                return False
+        except Exception as e:
+            self.app.notify(
+                f"Error processing PDF paper {path_id}: {str(e)}",
+                severity="error",
+            )
+            return False
+
     def _add_paper_by_source(self, source: str, path_id: str) -> bool:
         """Consolidated method to add papers by source type."""
         source_lower = source.lower()
@@ -139,9 +205,7 @@ class PaperCommandHandler(CommandHandler):
                 source_lower, path_id, self.add_paper_service.add_ris_papers
             )
         elif source_lower == "pdf":
-            return self._handle_sync_paper(
-                source_lower, path_id, self.add_paper_service.add_pdf_paper
-            )
+            return self._handle_async_pdf_paper(source_lower, path_id)
         elif source_lower == "manual":
             try:
                 self.add_paper_service.add_manual_paper(path_id or "")

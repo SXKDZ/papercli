@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import os
+import traceback
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Tuple
 
 from ng.db.database import get_pdf_directory
 from ng.services.metadata import MetadataExtractor
 from ng.services.paper import PaperService
+from ng.services.pdf import PDFManager
 from ng.services.system import SystemService
 from ng.services.utils import normalize_paper_data
 
@@ -163,8 +165,6 @@ class AddPaperService:
                         "pdf_download_exception",
                         f"Exception calling system_service.download_pdf: {str(e)}",
                     )
-                    import traceback
-
                     self.app._add_log(
                         "pdf_download_traceback", f"Traceback: {traceback.format_exc()}"
                     )
@@ -266,8 +266,6 @@ class AddPaperService:
         except Exception as e:
             error_msg = f"Failed to download and update PDF: {str(e)}"
             if self.app:
-                import traceback
-
                 self.app._add_log(
                     "pdf_download_exception",
                     f"Exception in download_and_update_pdf: {error_msg}",
@@ -396,8 +394,8 @@ class AddPaperService:
             "paper_data": paper_data,
         }
 
-    def add_pdf_paper(self, pdf_path: str) -> Dict[str, Any]:
-        """Add a paper from local PDF file."""
+    def add_pdf_paper_async(self, pdf_path: str) -> Dict[str, Any]:
+        """Add a paper from local PDF file (step 1: copy PDF, metadata extraction queued for background)."""
         # Expand user path and resolve relative paths
         pdf_path = os.path.expanduser(pdf_path)
         pdf_path = os.path.abspath(pdf_path)
@@ -408,46 +406,40 @@ class AddPaperService:
         if not pdf_path.lower().endswith(".pdf"):
             raise Exception(f"File is not a PDF: {pdf_path}")
 
-        # Extract metadata from PDF
-        metadata = self.metadata_extractor.extract_from_pdf(pdf_path)
-
-        # Create paper data first for PDF filename generation
+        # Copy PDF first with minimal metadata for filename generation
         temp_paper_data = {
-            "title": metadata.get("title", "Unknown Title"),
-            "authors": metadata.get("authors", ""),
-            "year": metadata.get("year"),
+            "title": "PDF Paper",
+            "authors": ["Unknown"],
+            "year": datetime.now().year,
         }
 
-        # Use new PDFService for enhanced copy functionality
-        from ng.services.pdf import PDFService
-
-        pdf_service = PDFService(app=self.app)
-
+        pdf_manager = PDFManager(app=self.app)
         # Copy PDF to collection directory with timing
-        relative_pdf_path, pdf_error, copy_duration = (
-            pdf_service.copy_local_pdf_to_collection(pdf_path, temp_paper_data)
+        relative_pdf_path, pdf_error = pdf_manager.process_pdf_path(
+            pdf_path, temp_paper_data
         )
+        copy_duration = 0.0  # process_pdf_path doesn't return duration
 
         if pdf_error:
-            raise Exception(f"Failed to process PDF: {pdf_error}")
+            raise Exception(f"Failed to copy PDF: {pdf_error}")
 
-        # Prepare paper data
+        # Create minimal paper entry first (will be updated with metadata later)
         paper_data = {
-            "title": metadata.get("title", "Unknown Title"),
-            "abstract": metadata.get("abstract", ""),
-            "authors": metadata.get("authors", ""),
-            "year": metadata.get("year"),
-            "venue_full": metadata.get("venue_full", ""),
-            "venue_acronym": metadata.get("venue_acronym", ""),
-            "paper_type": metadata.get("paper_type", "unknown"),
-            "doi": metadata.get("doi"),
-            "url": metadata.get("url"),
+            "title": "PDF Paper (extracting metadata...)",
+            "abstract": "",
+            "authors": ["Unknown"],
+            "year": datetime.now().year,
+            "venue_full": "",
+            "venue_acronym": "",
+            "paper_type": "unknown",
+            "doi": None,
+            "url": None,
             "pdf_path": relative_pdf_path,
         }
 
         paper_data = normalize_paper_data(paper_data)
 
-        # Extract normalized authors
+        # Add paper to database with minimal info
         authors = paper_data.get("authors", [])
         collections = []
 
@@ -455,12 +447,123 @@ class AddPaperService:
             paper_data, authors, collections
         )
 
-        return {
-            "paper": paper,
-            "pdf_path": relative_pdf_path,
-            "pdf_error": None,
-            "copy_duration": copy_duration,
-        }
+        if self.app:
+            self.app._add_log(
+                "paper_add_pdf_async",
+                f"Queued metadata extraction for PDF '{pdf_path}' after adding paper ID {paper.id}",
+            )
+
+        return {"paper": paper, "pdf_path": pdf_path, "paper_data": paper_data}
+
+    def extract_and_update_pdf_metadata(
+        self, paper_id: int, pdf_path: str
+    ) -> Dict[str, Any]:
+        """Background task to extract metadata from PDF and update paper record."""
+        try:
+            # Log start of extraction process
+            if self.app:
+                self.app._add_log(
+                    "pdf_metadata_extraction_start",
+                    f"Starting metadata extraction for paper_id={paper_id}, pdf_path={pdf_path}",
+                )
+
+            # Extract metadata from PDF (this is the slow LLM operation)
+            metadata = self.metadata_extractor.extract_from_pdf(pdf_path)
+
+            # Update paper with extracted metadata
+            update_data = {
+                "title": metadata.get("title", "Unknown Title"),
+                "abstract": metadata.get("abstract", ""),
+                "authors": metadata.get("authors", []),
+                "year": metadata.get("year"),
+                "venue_full": metadata.get("venue_full", ""),
+                "venue_acronym": metadata.get("venue_acronym", ""),
+                "paper_type": metadata.get("paper_type", "unknown"),
+                "doi": metadata.get("doi"),
+                "url": metadata.get("url"),
+            }
+
+            update_data = normalize_paper_data(update_data)
+
+            if self.app:
+                self.app._add_log(
+                    "pdf_metadata_update",
+                    f"Updating paper {paper_id} with extracted metadata: {list(update_data.keys())}",
+                )
+
+            updated_paper, update_error = self.paper_service.update_paper(
+                paper_id, update_data
+            )
+
+            if update_error:
+                if self.app:
+                    self.app._add_log(
+                        "pdf_metadata_error",
+                        f"Failed to update paper with metadata: {update_error}",
+                    )
+                return {
+                    "success": False,
+                    "error": f"Metadata extracted but database update failed: {update_error}",
+                }
+
+            # Rename PDF file to match extracted metadata
+            if updated_paper and updated_paper.pdf_path:
+                try:
+                    pdf_manager = PDFManager(app=self.app)
+                    old_pdf_path = pdf_manager.get_absolute_path(updated_paper.pdf_path)
+                    
+                    # Generate new filename with extracted metadata
+                    new_filename = pdf_manager._generate_pdf_filename(metadata, old_pdf_path)
+                    new_pdf_path = os.path.join(pdf_manager.get_pdfs_directory(), new_filename)
+                    
+                    # Only rename if the filename would actually change
+                    if old_pdf_path != new_pdf_path and os.path.exists(old_pdf_path):
+                        import shutil
+                        shutil.move(old_pdf_path, new_pdf_path)
+                        
+                        # Update database with new relative path
+                        new_relative_path = pdf_manager.get_relative_path(new_pdf_path)
+                        updated_paper, update_error = self.paper_service.update_paper(
+                            paper_id, {"pdf_path": new_relative_path}
+                        )
+                        
+                        if self.app:
+                            self.app._add_log(
+                                "pdf_filename_update",
+                                f"Renamed PDF file to match extracted metadata: {new_filename}",
+                            )
+                    
+                except Exception as e:
+                    # Don't fail the whole operation if PDF renaming fails
+                    if self.app:
+                        self.app._add_log(
+                            "pdf_rename_warning",
+                            f"Failed to rename PDF file: {str(e)}",
+                        )
+
+            if self.app:
+                self.app._add_log(
+                    "pdf_metadata_complete",
+                    f"Successfully updated paper {paper_id} with extracted metadata",
+                )
+
+            return {
+                "success": True,
+                "paper": updated_paper,
+                "extracted_metadata": metadata,
+            }
+
+        except Exception as e:
+            error_msg = f"Failed to extract and update PDF metadata: {str(e)}"
+            if self.app:
+                self.app._add_log(
+                    "pdf_metadata_exception",
+                    f"Exception in extract_and_update_pdf_metadata: {error_msg}",
+                )
+                self.app._add_log(
+                    "pdf_metadata_traceback", f"Traceback: {traceback.format_exc()}"
+                )
+            return {"success": False, "error": error_msg}
 
     def add_bib_papers(self, bib_path: str) -> Tuple[List[Paper], List[str]]:
         """Add papers from .bib file."""
@@ -520,15 +623,14 @@ class AddPaperService:
 
                 # Try to download PDF if URL is provided and looks like a PDF
                 if metadata.get("url"):
-                    from ng.services.pdf import PDFService
-
-                    pdf_service = PDFService(app=self.app)
+                    pdf_manager = PDFManager(app=self.app)
 
                     try:
-                        pdf_path, pdf_error, download_duration = (
-                            pdf_service.download_pdf_from_website_url(
-                                metadata["url"], paper_data
-                            )
+                        pdf_path, pdf_error = pdf_manager.process_pdf_path(
+                            metadata["url"], paper_data
+                        )
+                        download_duration = (
+                            0.0  # process_pdf_path doesn't return duration
                         )
 
                         if pdf_path and not pdf_error:

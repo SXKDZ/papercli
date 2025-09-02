@@ -123,8 +123,6 @@ class PaperService:
                         pass
                     else:
                         # Process the PDF path (URL or local file)
-                        from .pdf import PDFManager
-
                         pdf_manager = PDFManager()
 
                         current_paper_data = {
@@ -158,10 +156,26 @@ class PaperService:
                     ).delete()
                     session.flush()
 
-                    for position, author in enumerate(authors):
-                        merged_author = session.merge(author)
+                    for position, author_name in enumerate(authors):
+                        # Convert Author objects to strings if needed
+                        if hasattr(author_name, "full_name"):
+                            author_name_str = author_name.full_name
+                        else:
+                            author_name_str = str(author_name)
+
+                        # Find or create Author object by full_name (same as add_paper_from_metadata)
+                        author = (
+                            session.query(Author)
+                            .filter(Author.full_name == author_name_str)
+                            .first()
+                        )
+                        if not author:
+                            author = Author(full_name=author_name_str)
+                            session.add(author)
+                            session.flush()
+
                         paper_author = PaperAuthor(
-                            paper_id=paper.id, author=merged_author, position=position
+                            paper_id=paper.id, author=author, position=position
                         )
                         session.add(paper_author)
 
@@ -173,6 +187,16 @@ class PaperService:
 
                 for key, value in paper_data.items():
                     if hasattr(paper, key):
+                        # Safety check: ensure we're not trying to set SQLAlchemy objects as field values
+                        if hasattr(
+                            value, "__table__"
+                        ):  # Check if it's a SQLAlchemy model instance
+                            if self.app:
+                                self.app._add_log(
+                                    "paper_update_warning",
+                                    f"Skipping SQLAlchemy object for field {key}: {type(value).__name__}",
+                                )
+                            continue
                         setattr(paper, key, value)
 
                 paper.modified_date = datetime.now()
@@ -236,8 +260,6 @@ class PaperService:
                 # Delete associated PDF file if it exists
                 if paper.pdf_path:
                     try:
-                        from ng.services.pdf import PDFManager
-
                         pdf_manager = PDFManager()
                         full_pdf_path = pdf_manager.get_absolute_path(paper.pdf_path)
                         if os.path.exists(full_pdf_path):
@@ -475,10 +497,6 @@ class PaperService:
                     app.notify(
                         f"Paper '{updated_paper.title}' updated successfully",
                         severity="information",
-                    )
-                    app._add_log(
-                        "paper_update",
-                        f"Updated paper via edit dialog ID {updated_paper.id}: '{updated_paper.title}'",
                     )
                     return updated_paper
                 else:

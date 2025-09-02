@@ -23,6 +23,18 @@ if TYPE_CHECKING:
     from ng.services import PDFManager
 
 
+def _truncate_for_logging(content: str, max_chars: int = 300) -> tuple[str, str]:
+    """
+    Truncate content for logging with consistent format.
+
+    Returns:
+        tuple: (truncated_content, length_info)
+    """
+    if len(content) > max_chars:
+        return content[:max_chars] + "...", f"({len(content)} chars)"
+    return content, f"({len(content)} chars)"
+
+
 class MetadataExtractor:
     """Service for extracting metadata from various sources."""
 
@@ -178,6 +190,7 @@ class MetadataExtractor:
 
         # Initialize chat service if not available
         client = OpenAI()
+        model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
         try:
             prompt = MetadataPrompts.venue_extraction_prompt(venue_field)
@@ -188,13 +201,14 @@ class MetadataExtractor:
                     "llm_venue_request",
                     f"Requesting venue extraction for: {venue_field}",
                 )
+                truncated_prompt, length_info = _truncate_for_logging(prompt, 300)
                 self.app._add_log(
                     "llm_venue_prompt",
-                    f"Full prompt sent to gpt-4o:\n{prompt}",
+                    f"Prompt sent to {model_name} {length_info}:\n{truncated_prompt}",
                 )
 
             response = client.chat.completions.create(
-                model="gpt-4o",
+                model=model_name,
                 messages=[
                     {
                         "role": "system",
@@ -212,11 +226,14 @@ class MetadataExtractor:
             if self.app:
                 self.app._add_log(
                     "llm_venue_response",
-                    f"GPT-4o response received ({len(response_text)} chars)",
+                    f"{model_name} response received ({len(response_text)} chars)",
+                )
+                truncated_content, length_info = _truncate_for_logging(
+                    response_text, 300
                 )
                 self.app._add_log(
                     "llm_venue_content",
-                    f"Raw response:\n{response_text}",
+                    f"Raw response {length_info}:\n{truncated_content}",
                 )
 
             # Clean up markdown code blocks if present
@@ -524,9 +541,10 @@ class MetadataExtractor:
                     "llm_metadata_request",
                     f"Requesting metadata extraction for PDF: {pdf_path}",
                 )
+                truncated_prompt, length_info = _truncate_for_logging(prompt, 300)
                 self.app._add_log(
                     "llm_metadata_prompt",
-                    f"Full prompt sent to {model_name}:\n{prompt}",
+                    f"Prompt sent to {model_name} {length_info}:\n{truncated_prompt}",
                 )
 
             # Build parameters using centralized utility (force temperature=0 for extraction)
@@ -549,9 +567,12 @@ class MetadataExtractor:
                     "llm_metadata_response",
                     f"{model_name} response received ({len(response_content)} chars)",
                 )
+                truncated_content, length_info = _truncate_for_logging(
+                    response_content, 300
+                )
                 self.app._add_log(
                     "llm_metadata_content",
-                    f"Raw response:\n{response_content}",
+                    f"Raw response {length_info}:\n{truncated_content}",
                 )
 
             if response_content.startswith("```json"):
@@ -645,10 +666,10 @@ class MetadataExtractor:
                     "llm_summarization_request",
                     f"Requesting paper summary for PDF: {pdf_path}",
                 )
-                prompt_preview = prompt[:100] + "..." if len(prompt) > 100 else prompt
+                truncated_prompt, length_info = _truncate_for_logging(prompt, 300)
                 self.app._add_log(
                     "llm_summarization_prompt",
-                    f"Prompt sent to {model_name}: {prompt_preview} ({len(prompt)} characters total)",
+                    f"Prompt sent to {model_name} {length_info}: {truncated_prompt}",
                 )
 
             # Build parameters using centralized utility
@@ -671,14 +692,12 @@ class MetadataExtractor:
                     "llm_summarization_response",
                     f"{model_name} response received ({len(summary_response)} chars)",
                 )
-                response_preview = (
-                    summary_response[:100] + "..."
-                    if len(summary_response) > 100
-                    else summary_response
+                truncated_content, length_info = _truncate_for_logging(
+                    summary_response, 300
                 )
                 self.app._add_log(
                     "llm_summarization_content",
-                    f"Generated summary: {response_preview} ({len(summary_response)} characters total)",
+                    f"Generated summary {length_info}: {truncated_content}",
                 )
 
             return summary_response

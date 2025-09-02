@@ -350,17 +350,10 @@ class DetailDialog(ModalScreen):
             if updated_paper:
                 # Fetch a fresh copy of the paper to avoid detached instances
                 try:
-                    self.app._add_log(
-                        "debug", f"Fetching fresh paper data for ID: {updated_paper.id}"
-                    )
                     fresh_paper = self.app.paper_commands.paper_service.get_paper_by_id(
                         updated_paper.id
                     )
                     if fresh_paper:
-                        self.app._add_log(
-                            "debug",
-                            "Successfully fetched fresh paper data, updating detail view",
-                        )
                         self.paper = fresh_paper  # Update our reference with fresh data
                         self.on_mount()  # Refresh the detail display
                         if self.callback:

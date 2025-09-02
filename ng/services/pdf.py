@@ -14,7 +14,8 @@ from pluralizer import Pluralizer
 
 from ng.db.database import get_pdf_directory
 from ng.services import HTTPClient
-from ng.services.formatting import format_download_summary, format_file_size
+from ng.services.formatting import format_file_size
+from ng.services.metadata import MetadataExtractor
 
 
 class PDFService:
@@ -61,197 +62,6 @@ class PDFService:
                 return f"Download completed: {size_formatted}, {duration_formatted}"
         except Exception:
             return "Download completed"
-
-    def download_pdf_from_website_url(
-        self, url: str, paper_data: Dict[str, Any]
-    ) -> Tuple[str, str, float]:
-        """
-        Download PDF from a website URL (for RIS/BIB files that contain PDF URLs).
-
-        Returns:
-            tuple[str, str, float]: (pdf_path, error_message, download_duration_seconds)
-        """
-        try:
-            if self.app:
-                self.app._add_log(
-                    "website_download_start",
-                    f"Attempting to download PDF from website URL: {url}",
-                )
-
-            start_time = time.time()
-
-            # Check if URL looks like it might be a PDF
-            if not self._is_potential_pdf_url(url):
-                error_msg = f"URL does not appear to be a PDF link: {url}"
-                if self.app:
-                    self.app._add_log("website_download_error", error_msg)
-                return "", error_msg, 0.0
-
-            # Generate temporary filename
-            temp_hash = secrets.token_hex(3)
-            author_lastname = "unknown"
-            year = "0000"
-            first_word = "paper"
-
-            if paper_data.get("authors"):
-                if isinstance(paper_data["authors"], list) and paper_data["authors"]:
-                    author_lastname = paper_data["authors"][0].split()[-1].lower()[:10]
-            if paper_data.get("year"):
-                year = str(paper_data["year"])
-            if paper_data.get("title"):
-                words = paper_data["title"].lower().split()
-                first_word = next((w for w in words if len(w) > 3), "paper")[:10]
-
-            temp_filename = f"{author_lastname}{year}{first_word}_{temp_hash}.pdf"
-            temp_filename = re.sub(r"[^\w\-._]", "", temp_filename)
-            temp_filepath = os.path.join(self.pdf_dir, temp_filename)
-
-            # Download to temporary path
-            downloaded_path, error = self._download_pdf_from_url(url, temp_filepath)
-            download_duration = time.time() - start_time
-
-            if error:
-                if self.app:
-                    self.app._add_log(
-                        "website_download_error", f"PDF download failed: {error}"
-                    )
-                return "", error, download_duration
-
-            # Generate final filename with content-based hash
-            final_filename = self._generate_pdf_filename(paper_data, downloaded_path)
-            final_filepath = os.path.join(self.pdf_dir, final_filename)
-
-            # Rename to final location if needed
-            if temp_filepath != final_filepath:
-                try:
-                    shutil.move(temp_filepath, final_filepath)
-                    if self.app:
-                        self.app._add_log(
-                            "website_download_success",
-                            f"Successfully downloaded and renamed to: {final_filepath}",
-                        )
-                    return final_filepath, "", download_duration
-                except Exception as e:
-                    # If move fails, keep the temporary file
-                    warning_msg = f"Warning: Could not rename to final filename: {e}"
-                    if self.app:
-                        self.app._add_log("website_download_warning", warning_msg)
-                    return temp_filepath, warning_msg, download_duration
-
-            return downloaded_path, "", download_duration
-
-        except Exception as e:
-            download_duration = (
-                time.time() - start_time if "start_time" in locals() else 0.0
-            )
-            error_msg = f"Error downloading PDF from website: {str(e)}"
-            if self.app:
-
-                self.app._add_log(
-                    "website_download_exception", f"Exception: {error_msg}"
-                )
-                self.app._add_log(
-                    "website_download_traceback", f"Traceback: {traceback.format_exc()}"
-                )
-            return "", error_msg, download_duration
-
-    def _is_potential_pdf_url(self, url: str) -> bool:
-        """Check if a URL might be a PDF based on common patterns."""
-        url_lower = url.lower()
-
-        # Direct PDF file extension
-        if url_lower.endswith(".pdf"):
-            return True
-
-        # Common PDF hosting patterns
-        pdf_patterns = [
-            "arxiv.org/pdf/",
-            "openreview.net/pdf",
-            "proceedings.mlr.press/",
-            "papers.nips.cc/",
-            "aclanthology.org/",
-            "/pdf/",
-            "download.pdf",
-            "view=pdf",
-            "filetype=pdf",
-        ]
-
-        return any(pattern in url_lower for pattern in pdf_patterns)
-
-    def copy_local_pdf_to_collection(
-        self, source_path: str, paper_data: Dict[str, Any]
-    ) -> Tuple[str, str, float]:
-        """
-        Copy a local PDF file to the PDF collection directory.
-
-        Returns:
-            tuple[str, str, float]: (relative_pdf_path, error_message, copy_duration_seconds)
-        """
-        try:
-            if self.app:
-                self.app._add_log(
-                    "pdf_copy_start", f"Copying local PDF from: {source_path}"
-                )
-
-            start_time = time.time()
-
-            # Expand and validate source path
-            source_path = os.path.expanduser(source_path)
-            source_path = os.path.abspath(source_path)
-
-            if not os.path.exists(source_path):
-                error_msg = f"Source PDF file not found: {source_path}"
-                if self.app:
-                    self.app._add_log("pdf_copy_error", error_msg)
-                return "", error_msg, 0.0
-
-            if not source_path.lower().endswith(".pdf"):
-                error_msg = f"File is not a PDF: {source_path}"
-                if self.app:
-                    self.app._add_log("pdf_copy_error", error_msg)
-                return "", error_msg, 0.0
-
-            # Generate target filename
-            target_filename = self._generate_pdf_filename(paper_data, source_path)
-            target_path = os.path.join(self.pdf_dir, target_filename)
-
-            # Check if source and destination are the same file
-            if os.path.abspath(source_path) == os.path.abspath(target_path):
-                # File is already in the right place, no need to copy
-                relative_path = os.path.relpath(target_path, self.pdf_dir)
-                copy_duration = time.time() - start_time
-                if self.app:
-                    self.app._add_log(
-                        "pdf_copy_info",
-                        f"File already in correct location: {relative_path}",
-                    )
-                return relative_path, "", copy_duration
-
-            # Copy the file
-            shutil.copy2(source_path, target_path)
-            copy_duration = time.time() - start_time
-
-            # Return relative path from PDF directory
-            relative_path = os.path.relpath(target_path, self.pdf_dir)
-
-            if self.app:
-                self.app._add_log(
-                    "pdf_copy_success", f"Successfully copied PDF to: {relative_path}"
-                )
-
-            return relative_path, "", copy_duration
-
-        except Exception as e:
-            copy_duration = (
-                time.time() - start_time if "start_time" in locals() else 0.0
-            )
-            error_msg = f"Error copying PDF file: {str(e)}"
-            if self.app:
-                self.app._add_log("pdf_copy_exception", f"Exception: {error_msg}")
-                self.app._add_log(
-                    "pdf_copy_traceback", f"Traceback: {traceback.format_exc()}"
-                )
-            return "", error_msg, copy_duration
 
 
 class PDFManager:
@@ -328,8 +138,6 @@ class PDFManager:
                 with open(absolute_path, "rb") as file:
                     pdf_reader = PyPDF2.PdfReader(file)
                     info["page_count"] = len(pdf_reader.pages)
-            except ImportError:
-                info["error"] = "PyPDF2 not available for page count"
             except Exception as e:
                 info["error"] = f"Could not read PDF: {str(e)}"
                 # Still return file size even if page count fails
@@ -559,7 +367,8 @@ class PDFManager:
 
             if self.app:
                 self.app._add_log(
-                    "pdf_filename_generation", f"Generated temp filename: {temp_filename}"
+                    "pdf_filename_generation",
+                    f"Generated temp filename: {temp_filename}",
                 )
                 self.app._add_log(
                     "pdf_path_generation", f"Full temp path: {temp_filepath}"
@@ -595,7 +404,8 @@ class PDFManager:
             # Generate final filename with content-based hash
             if self.app:
                 self.app._add_log(
-                    "pdf_filename_final", "Generating final filename based on content..."
+                    "pdf_filename_final",
+                    "Generating final filename based on content...",
                 )
             final_filename = self._generate_pdf_filename(paper_data, downloaded_path)
             final_filepath = os.path.join(self.pdf_dir, final_filename)
@@ -604,9 +414,7 @@ class PDFManager:
                 self.app._add_log(
                     "pdf_filename_final", f"Final filename: {final_filename}"
                 )
-                self.app._add_log(
-                    "pdf_path_final", f"Final filepath: {final_filepath}"
-                )
+                self.app._add_log("pdf_path_final", f"Final filepath: {final_filepath}")
 
             # Rename to final location if needed
             if temp_filepath != final_filepath:
@@ -671,8 +479,8 @@ class PDFManager:
                     f"HTTP request completed in {request_duration:.2f} seconds",
                 )
                 headers = dict(response.headers)
-                content_type = headers.get('content-type', 'unknown')
-                content_length = headers.get('content-length', 'unknown')
+                content_type = headers.get("content-type", "unknown")
+                content_length = headers.get("content-length", "unknown")
                 self.app._add_log(
                     "http_response",
                     f"HTTP response: {response.status_code}, Type: {content_type}, Size: {content_length}",
@@ -900,8 +708,6 @@ class PDFExtractionHandler:
         """Create a PDF metadata extraction task."""
 
         def extract_metadata_operation():
-            from ng.services.metadata import MetadataExtractor
-
             extractor = MetadataExtractor(pdf_manager=self.pdf_manager, app=self.app)
             extracted_data = extractor.extract_from_pdf(pdf_path)
             if not extracted_data:
@@ -957,3 +763,16 @@ class PDFDownloadTaskFactory:
             )
 
         return download_task
+
+    @staticmethod
+    def create_metadata_extraction_task(
+        add_paper_service,
+        paper_id: int,
+        pdf_path: str,
+    ) -> Callable:
+        """Create a PDF metadata extraction task function."""
+
+        def extraction_task():
+            return add_paper_service.extract_and_update_pdf_metadata(paper_id, pdf_path)
+
+        return extraction_task
