@@ -212,9 +212,6 @@ class LogPanel(VerticalScroll):
         if event.key == "escape":
             self.show_panel = False
             # Return focus to command input
-            try:
-                command_input = self.screen.query_one("#command-input")
-                self.app.set_focus(command_input)
-            except Exception:
-                pass
+            command_input = self.screen.query_one("#command-input")
+            self.app.set_focus(command_input)
             event.prevent_default()

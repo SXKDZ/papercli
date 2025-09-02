@@ -4,6 +4,8 @@ import re
 
 from titlecase import titlecase
 
+from ng.services.formatting import format_title_by_words
+
 
 def fix_broken_lines(text: str) -> str:
     """Fix broken lines in text - join lines that are not proper sentence endings."""
@@ -97,7 +99,7 @@ def compare_extracted_metadata_with_paper(extracted_data, paper, paper_service=N
                     if hasattr(paper, "title"):
                         paper_title = getattr(paper, "title", "Unknown")
                     else:
-                        paper_title = str(paper)[:50]
+                        paper_title = format_title_by_words(str(paper))
                     print(
                         f"[Session Error] Could not access authors for paper '{paper_title}': {e}"
                     )

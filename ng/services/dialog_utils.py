@@ -2,9 +2,13 @@
 Dialog utility functions used across multiple dialog components.
 """
 
+import os
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+from ng.services.pdf import PDFManager
 
 
 class DialogUtilsService:
@@ -83,8 +87,6 @@ class DialogUtilsService:
         Returns:
             Generated filename with timestamp
         """
-        from ng.services import PDFManager
-
         pdf_manager = PDFManager()
         fields = DialogUtilsService.get_paper_fields(paper)
 
@@ -115,8 +117,6 @@ class DialogUtilsService:
         Returns:
             Path to the data directory
         """
-        import os
-
         data_dir_env = os.getenv("PAPERCLI_DATA_DIR")
         if data_dir_env:
             data_dir = Path(data_dir_env).expanduser().resolve()
@@ -196,24 +196,6 @@ class DialogUtilsService:
             return False, f"Invalid {input_type} value", None
 
     @staticmethod
-    def format_paper_display_text(paper, max_title_length: int = 50) -> str:
-        """
-        Format paper for display in lists and details.
-        Used by collect.py and detail.py.
-
-        Args:
-            paper: Paper object
-            max_title_length: Maximum length for title truncation
-
-        Returns:
-            Formatted display string
-        """
-        title = paper.title or "Unknown Title"
-        if len(title) > max_title_length:
-            title = title[:max_title_length] + "..."
-        return title
-
-    @staticmethod
     def is_double_click(
         item_id: str, last_click_times: Dict[str, float], threshold: float = 0.5
     ) -> bool:
@@ -229,8 +211,6 @@ class DialogUtilsService:
         Returns:
             True if this is a double-click
         """
-        import time
-
         current_time = time.time()
         last_time = last_click_times.get(item_id, 0.0)
         is_double = (current_time - last_time) < threshold

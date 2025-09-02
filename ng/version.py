@@ -32,10 +32,6 @@ class VersionManager:
 
         self.config_file = self.config_dir / "version_config.json"
 
-    def get_current_version(self) -> str:
-        """Get the current version of PaperCLI."""
-        return self.current_version
-
     def get_latest_version(self) -> Optional[str]:
         """Get the latest version from GitHub releases."""
         try:
@@ -120,7 +116,6 @@ class VersionManager:
             return True
 
         try:
-
             last_check = datetime.fromisoformat(config["last_check"])
             check_interval = timedelta(days=config.get("check_interval_days", 7))
 

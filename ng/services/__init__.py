@@ -1,11 +1,16 @@
-# Import basic utilities and services with no dependencies first
+"""Convenience imports for services package.
+
+Ordered to avoid circular imports during module initialization.
+"""
+
+# Core utilities with no dependencies
 from .http_utils import HTTPClient
 from .utils import fix_broken_lines, normalize_paper_data
 
-# Import database related services
+# DB related
 from .database import DatabaseHealthService
 
-# Import services with minimal dependencies
+# Minimal-dependency services
 from .pdf import (
     PDFManager,
     PDFService,
@@ -21,40 +26,30 @@ from .search import SearchService
 from .export import ExportService
 from .theme import ThemeService
 
-# Import sync services (after DatabaseHealthService is available)
+# Sync services (after DB services are available)
 from .sync import SyncOperation, SyncConflict, SyncResult, SyncService
 from .dialog_utils import DialogUtilsService
 
-# Import auto_sync after sync services
-from .auto_sync import trigger_auto_sync
-
-# Import metadata and paper services (these may have dependencies on above services)
+# Services that depend on the above
 from .metadata import MetadataExtractor
 from .paper import PaperService
 from .system import SystemService
-
-# Import services that depend on other services
 from .chat import ChatService
 from .llm import LLMSummaryService
 from .add_paper import AddPaperService
-
-# Import new utility services
 from .formatting import (
     format_file_size,
     format_authors_list,
-    format_paper_title_preview,
+    format_title_by_words,
     format_field_change,
     format_collections_list,
     format_download_speed,
-    format_download_summary,
 )
-from .path_utils import PDFPathHandler
 from .paper_tracker import PaperChangeTracker
 
 __all__ = [
     "AddPaperService",
     "AuthorService",
-    "trigger_auto_sync",
     "BackgroundOperationService",
     "ChatService",
     "CollectionService",
@@ -80,12 +75,10 @@ __all__ = [
     # New utility services
     "format_file_size",
     "format_authors_list",
-    "format_paper_title_preview",
+    "format_title_by_words",
     "format_field_change",
     "format_collections_list",
     "format_download_speed",
-    "format_download_summary",
-    "PDFPathHandler",
     "PDFDownloadHandler",
     "PDFExtractionHandler",
     "PDFDownloadTaskFactory",

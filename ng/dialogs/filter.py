@@ -6,6 +6,8 @@ from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, RadioButton, RadioSet, Select, Static
 
+from ng.services.collection import CollectionService
+
 
 class FilterDialog(ModalScreen):
     """A modal dialog for filtering papers by various criteria."""
@@ -136,8 +138,6 @@ class FilterDialog(ModalScreen):
     def _load_collections(self) -> None:
         """Load available collections from the database."""
         try:
-            from ng.services import CollectionService
-
             collection_service = CollectionService()
             collections = collection_service.get_all_collections()
             self.collections = [col.name for col in collections]

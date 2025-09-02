@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List
 
 from pluralizer import Pluralizer
 
+from ng.services.formatting import format_title_by_words
 from ng.services.metadata import MetadataExtractor
 from ng.services.pdf import PDFManager
 
@@ -23,7 +24,6 @@ class LLMSummaryService:
         paper_service: PaperService,
         background_service: BackgroundOperationService,
         app=None,
-        pdf_dir: str = None,
     ):
         self.paper_service = paper_service
         self.background_service = background_service
@@ -90,7 +90,7 @@ class LLMSummaryService:
         # Set initial status
         if self.background_service.app:
             if tracking["total"] == 1:
-                title = papers_with_pdfs[0].title[:50]
+                title = format_title_by_words(papers_with_pdfs[0].title)
                 self.background_service.app.notify(
                     f"Generating summary for '{title}'...", severity="information"
                 )
@@ -127,7 +127,7 @@ class LLMSummaryService:
         if self.app:
             self.app._add_log(
                 f"{operation_prefix}_starting_{current_paper.id}",
-                f"Starting summary for paper ID {current_paper.id}: '{current_paper.title[:50]}...'",
+                f"Starting summary for paper ID {current_paper.id}: '{format_title_by_words(current_paper.title)}'",
             )
 
         summary = self.metadata_extractor.generate_paper_summary(current_paper.pdf_path)
@@ -156,14 +156,14 @@ class LLMSummaryService:
             if self.app:
                 self.app._add_log(
                     f"{tracking['operation_prefix']}_error_{current_paper.id}",
-                    f"Failed to generate summary for '{current_paper.title[:50]}...': {error}",
+                    f"Failed to generate summary for '{format_title_by_words(current_paper.title)}': {error}",
                 )
         elif result is None:
             tracking["failed"].append((current_paper.id, "Empty response"))
             if self.app:
                 self.app._add_log(
                     f"{tracking['operation_prefix']}_error_{current_paper.id}",
-                    f"Failed to generate summary for '{current_paper.title[:50]}...': Empty response",
+                    f"Failed to generate summary for '{format_title_by_words(current_paper.title)}': Empty response",
                 )
         else:
             tracking["queue"].append(
@@ -207,7 +207,7 @@ class LLMSummaryService:
     def _process_summary_queue(self, tracking: Dict[str, Any]):
         """Process the queue of successfully generated summaries."""
         if self.app:
-            queue_size = len(tracking['queue'])
+            queue_size = len(tracking["queue"])
             item_text = self._pluralizer.pluralize("summary", queue_size, True)
             self.app._add_log(
                 f"{tracking['operation_prefix']}_queue_processing",
@@ -226,7 +226,7 @@ class LLMSummaryService:
                 if self.app:
                     self.app._add_log(
                         f"{tracking['operation_prefix']}_save_attempt_{paper_id}",
-                        f"Attempting to save summary for paper ID {paper_id}: {paper_title[:50]}...",
+                        f"Attempting to save summary for paper ID {paper_id}: {format_title_by_words(paper_title)}",
                     )
 
                 updated_paper, error_msg = self.paper_service.update_paper(
@@ -237,19 +237,19 @@ class LLMSummaryService:
                     if self.app:
                         self.app._add_log(
                             f"{tracking['operation_prefix']}_save_error_{paper_id}",
-                            f"Failed to save summary for {paper_title[:50]}...: {error_msg}",
+                            f"Failed to save summary for {format_title_by_words(paper_title)}: {error_msg}",
                         )
                 else:
                     if self.app:
                         self.app._add_log(
                             f"{tracking['operation_prefix']}_save_success_{paper_id}",
-                            f"Successfully saved summary for {paper_title[:50]}...",
+                            f"Successfully saved summary for {format_title_by_words(paper_title)}",
                         )
             except Exception as e:
                 if self.app:
                     self.app._add_log(
                         f"{tracking['operation_prefix']}_save_exception_{paper_id}",
-                        f"Exception saving summary for {paper_title[:50]}...: {e}",
+                        f"Exception saving summary for {format_title_by_words(paper_title)}: {e}",
                     )
 
         # Schedule UI update after processing the whole queue

@@ -1,6 +1,10 @@
 """Shared formatting utilities for PaperCLI."""
 
-from typing import Any, Dict, List
+# Shared display constants
+from typing import Any, List
+
+TITLE_PREVIEW_WORDS = 10
+TITLE_PREVIEW_CHARS = 50
 
 
 def format_file_size(size_bytes: int) -> str:
@@ -27,13 +31,17 @@ def format_authors_list(authors: List[str]) -> str:
         return f"{', '.join(authors[:-1])}, and {authors[-1]}"
 
 
-def format_paper_title_preview(title: str, max_length: int = 120) -> str:
-    """Format paper title for preview display with truncation."""
+def format_title_by_words(title: str, max_words: int = TITLE_PREVIEW_WORDS) -> str:
+    """Format a title by limiting to a maximum number of words.
+
+    Keeps whole words and appends an ellipsis when truncated.
+    """
     if not title:
         return ""
-    if len(title) <= max_length:
+    words = str(title).split()
+    if len(words) <= max_words:
         return title
-    return title[:max_length] + "..."
+    return " ".join(words[:max_words]) + "..."
 
 
 def format_field_change(
@@ -69,10 +77,3 @@ def format_download_speed(bytes_per_second: float) -> str:
         return "0.0 MB/s"
     mb_per_second = bytes_per_second / (1024 * 1024)
     return f"{mb_per_second:.1f} MB/s"
-
-
-def format_download_summary(file_path: str, file_size: int, duration: float) -> str:
-    """Create a comprehensive download summary string."""
-    size_str = format_file_size(file_size)
-    speed_str = format_download_speed(file_size / duration) if duration > 0 else "N/A"
-    return f"{size_str} in {duration:.1f}s ({speed_str})"

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import re
-from typing import Tuple
+from typing import Iterable, Tuple
 
 
 class ValidationService:
@@ -138,25 +138,9 @@ class ValidationService:
         if not pdf_path or not pdf_path.strip():
             return False, "PDF path cannot be empty"
 
-        path = pdf_path.strip()
-
-        # Expand user path
-        expanded_path = os.path.expanduser(path)
-        absolute_path = os.path.abspath(expanded_path)
-
-        # Check if file exists
-        if not os.path.exists(absolute_path):
-            return False, f"PDF file not found: {path}"
-
-        # Check if it's a file (not directory)
-        if not os.path.isfile(absolute_path):
-            return False, f"Path is not a file: {path}"
-
-        # Check if it's a PDF file
-        if not absolute_path.lower().endswith(".pdf"):
-            return False, f"File is not a PDF: {path}"
-
-        return True, ""
+        return ValidationService._validate_existing_file(
+            pdf_path.strip(), (".pdf",), "PDF"
+        )
 
     @staticmethod
     def validate_bib_path(bib_path: str) -> Tuple[bool, str]:
@@ -172,25 +156,9 @@ class ValidationService:
         if not bib_path or not bib_path.strip():
             return False, "BibTeX file path cannot be empty"
 
-        path = bib_path.strip()
-
-        # Expand user path
-        expanded_path = os.path.expanduser(path)
-        absolute_path = os.path.abspath(expanded_path)
-
-        # Check if file exists
-        if not os.path.exists(absolute_path):
-            return False, f"BibTeX file not found: {path}"
-
-        # Check if it's a file (not directory)
-        if not os.path.isfile(absolute_path):
-            return False, f"Path is not a file: {path}"
-
-        # Check if it's a BibTeX file
-        if not absolute_path.lower().endswith((".bib", ".bibtex")):
-            return False, f"File is not a BibTeX file: {path}"
-
-        return True, ""
+        return ValidationService._validate_existing_file(
+            bib_path.strip(), (".bib", ".bibtex"), "BibTeX"
+        )
 
     @staticmethod
     def validate_ris_path(ris_path: str) -> Tuple[bool, str]:
@@ -206,25 +174,9 @@ class ValidationService:
         if not ris_path or not ris_path.strip():
             return False, "RIS file path cannot be empty"
 
-        path = ris_path.strip()
-
-        # Expand user path
-        expanded_path = os.path.expanduser(path)
-        absolute_path = os.path.abspath(expanded_path)
-
-        # Check if file exists
-        if not os.path.exists(absolute_path):
-            return False, f"RIS file not found: {path}"
-
-        # Check if it's a file (not directory)
-        if not os.path.isfile(absolute_path):
-            return False, f"Path is not a file: {path}"
-
-        # Check if it's a RIS file
-        if not absolute_path.lower().endswith((".ris", ".txt")):
-            return False, f"File is not a RIS file: {path}"
-
-        return True, ""
+        return ValidationService._validate_existing_file(
+            ris_path.strip(), (".ris", ".txt"), "RIS"
+        )
 
     @staticmethod
     def validate_manual_title(title: str) -> Tuple[bool, str]:
@@ -253,6 +205,28 @@ class ValidationService:
 
         if len(title) > 500:
             return False, "Title is too long (max 500 characters)"
+
+        return True, ""
+
+    @staticmethod
+    def _validate_existing_file(
+        path: str, allowed_exts: Iterable[str], label: str
+    ) -> Tuple[bool, str]:
+        """Shared helper to validate an existing file with allowed extensions."""
+        if not path or not path.strip():
+            return False, f"{label} file path cannot be empty"
+
+        original = path.strip()
+        absolute_path = os.path.abspath(os.path.expanduser(original))
+
+        if not os.path.exists(absolute_path):
+            return False, f"{label} file not found: {original}"
+        if not os.path.isfile(absolute_path):
+            return False, f"Path is not a file: {original}"
+        if allowed_exts and not any(
+            absolute_path.lower().endswith(ext) for ext in allowed_exts
+        ):
+            return False, f"File is not a {label} file: {original}"
 
         return True, ""
 

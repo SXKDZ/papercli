@@ -1,6 +1,7 @@
 from typing import List, Optional
 
 from sqlalchemy import func
+from sqlalchemy.orm import joinedload
 
 from ng.db.database import get_db_session
 from ng.db.models import Collection, Paper, paper_collections
@@ -14,8 +15,6 @@ class CollectionService:
 
     def get_all_collections(self) -> List[Collection]:
         """Get all collections with their papers eagerly loaded."""
-        from sqlalchemy.orm import joinedload
-
         with get_db_session() as session:
             collections = (
                 session.query(Collection)
@@ -173,10 +172,6 @@ class CollectionService:
                     )
                 return True
             return False
-
-    def create_collection(self, name: str) -> Collection:
-        """Create a new collection."""
-        return self.add_collection(name)
 
     def delete_collection(self, collection_id: int) -> bool:
         """Delete a collection by ID."""

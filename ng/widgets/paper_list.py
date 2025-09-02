@@ -67,7 +67,7 @@ class PaperList(DataTable):
         # Get raw widget dimensions
         raw_width = 0
         width_source = "unknown"
-        
+
         try:
             # Priority 1: Region width (actual allocated space)
             if getattr(self, "region", None) and self.region.width > 0:
@@ -78,7 +78,7 @@ class PaperList(DataTable):
                 raw_width = self.size.width
                 width_source = "widget_size"
             # Priority 3: Content size
-            elif hasattr(self, 'content_size') and self.content_size.width > 0:
+            elif hasattr(self, "content_size") and self.content_size.width > 0:
                 raw_width = self.content_size.width
                 width_source = "content_size"
             # Fallback: App size
@@ -87,50 +87,51 @@ class PaperList(DataTable):
                 width_source = "app_size"
         except Exception:
             raw_width = 0
-        
+
         if raw_width <= 0:
             return 80  # Minimal fallback
-        
+
         # Detect actual scrollbar presence and width
         scrollbar_width = 0
         try:
-            if hasattr(self, 'max_scroll_y') and self.max_scroll_y > 0:
+            if hasattr(self, "max_scroll_y") and self.max_scroll_y > 0:
                 # Can scroll vertically, so scrollbar is likely visible
                 scrollbar_width = 1  # Standard Textual scrollbar width
         except Exception:
             pass
-        
+
         # Detect border requirements
         border_width = 0
         if width_source in ["region", "widget_size", "app_size"]:
             # These include borders, estimate border width
             border_width = 2  # Standard solid border
-        
+
         # Detect DataTable column properties
         actual_columns = 0
         try:
-            if hasattr(self, 'columns') and self.columns:
+            if hasattr(self, "columns") and self.columns:
                 actual_columns = len(self.columns)
             else:
                 # Count expected columns if not yet created
-                actual_columns = len(["✓", "Title", "Authors", "Year", "Venue", "Collections"])
+                actual_columns = len(
+                    ["✓", "Title", "Authors", "Year", "Venue", "Collections"]
+                )
         except Exception:
             actual_columns = 6  # Last resort fallback
-        
+
         # Get actual cell padding
-        actual_cell_padding = getattr(self, 'cell_padding', 1)
-        
+        actual_cell_padding = getattr(self, "cell_padding", 1)
+
         # Calculate minimal necessary overhead
         # This should be the absolute minimum spacing needed by DataTable
         min_overhead = actual_columns - 1  # Minimal column separators
-        
+
         # Calculate content width
         content_width = raw_width - scrollbar_width - border_width - min_overhead
-        
+
         # Ensure reasonable minimum
         final_width = max(40, content_width)
-        
-        
+
         return final_width
 
     def _setup_columns(self) -> None:
@@ -140,10 +141,10 @@ class PaperList(DataTable):
         # Define fixed-width columns that don't scale
         sel_width = 3  # Selection indicator
         year_width = 6  # Year (4 digits + padding)
-        
+
         # Calculate flexible space after fixed columns
         flexible_width = max(0, available_width - sel_width - year_width)
-        
+
         # Calculate dynamic column ratios based on available space
         # More space = more generous author and venue columns
         if flexible_width >= available_width * 0.8:  # Very wide screens
@@ -186,9 +187,16 @@ class PaperList(DataTable):
         collections_width = max(min_collections, collections_width)
 
         # Distribute any remaining width
-        total_calculated = sel_width + title_width + authors_width + year_width + venue_width + collections_width
+        total_calculated = (
+            sel_width
+            + title_width
+            + authors_width
+            + year_width
+            + venue_width
+            + collections_width
+        )
         width_difference = available_width - total_calculated
-        
+
         if width_difference > 0:
             # Distribute extra width proportionally to title and authors
             title_extra = int(width_difference * 0.6)
@@ -199,34 +207,49 @@ class PaperList(DataTable):
             # Reduce from least important columns
             deficit = abs(width_difference)
             reductions = [
-                ('collections', collections_width, min_collections),
-                ('venue', venue_width, min_venue),
-                ('authors', authors_width, min_authors),
-                ('title', title_width, min_title)
+                ("collections", collections_width, min_collections),
+                ("venue", venue_width, min_venue),
+                ("authors", authors_width, min_authors),
+                ("title", title_width, min_title),
             ]
-            
+
             for col_name, current_width, min_width in reductions:
                 if deficit <= 0:
                     break
                 reduction = min(current_width - min_width, deficit)
-                if col_name == 'collections':
+                if col_name == "collections":
                     collections_width -= reduction
-                elif col_name == 'venue':
+                elif col_name == "venue":
                     venue_width -= reduction
-                elif col_name == 'authors':
+                elif col_name == "authors":
                     authors_width -= reduction
-                elif col_name == 'title':
+                elif col_name == "title":
                     title_width -= reduction
                 deficit -= reduction
 
-        final_total = sel_width + title_width + authors_width + year_width + venue_width + collections_width
-        
+        final_total = (
+            sel_width
+            + title_width
+            + authors_width
+            + year_width
+            + venue_width
+            + collections_width
+        )
 
         self.add_columns("✓", "Title", "Authors", "Year", "Venue", "Collections")
 
         try:
             columns = list(self.columns.values())
-            if len(columns) >= len([sel_width, title_width, authors_width, year_width, venue_width, collections_width]):
+            if len(columns) >= len(
+                [
+                    sel_width,
+                    title_width,
+                    authors_width,
+                    year_width,
+                    venue_width,
+                    collections_width,
+                ]
+            ):
                 columns[0].width = sel_width
                 columns[1].width = title_width
                 columns[2].width = authors_width
@@ -255,9 +278,7 @@ class PaperList(DataTable):
             title_width = column_list[1].width - 1 if len(column_list) > 1 else 40
             authors_width = column_list[2].width - 1 if len(column_list) > 2 else 25
             venue_width = column_list[4].width - 1 if len(column_list) > 4 else 15
-            collections_width = (
-                column_list[5].width - 1 if len(column_list) > 5 else 20
-            )
+            collections_width = column_list[5].width - 1 if len(column_list) > 5 else 20
         except (IndexError, KeyError, AttributeError):
             title_width = 40
             authors_width = 25
@@ -329,29 +350,35 @@ class PaperList(DataTable):
         try:
             if not (0 <= row_index < len(self.papers)):
                 return
-                
+
             # Prepare row data using shared logic
-            selection_indicator, title, authors, year, venue, collections = self._prepare_row_data(paper)
-            
+            selection_indicator, title, authors, year, venue, collections = (
+                self._prepare_row_data(paper)
+            )
+
             # Update the row cells using proper key objects
             row_keys = list(self.rows.keys())
             if 0 <= row_index < len(row_keys):
                 actual_row_key = row_keys[row_index]
-                
+
                 # Get column key objects
                 column_keys = list(self.columns.keys())
                 if len(column_keys) >= 6:
-                    self.update_cell(actual_row_key, column_keys[0], selection_indicator)  # ✓
-                    self.update_cell(actual_row_key, column_keys[1], title)               # Title
-                    self.update_cell(actual_row_key, column_keys[2], authors)             # Authors
-                    self.update_cell(actual_row_key, column_keys[3], year)                # Year
-                    self.update_cell(actual_row_key, column_keys[4], venue)               # Venue
-                    self.update_cell(actual_row_key, column_keys[5], collections)         # Collections
+                    self.update_cell(
+                        actual_row_key, column_keys[0], selection_indicator
+                    )  # ✓
+                    self.update_cell(actual_row_key, column_keys[1], title)  # Title
+                    self.update_cell(actual_row_key, column_keys[2], authors)  # Authors
+                    self.update_cell(actual_row_key, column_keys[3], year)  # Year
+                    self.update_cell(actual_row_key, column_keys[4], venue)  # Venue
+                    self.update_cell(
+                        actual_row_key, column_keys[5], collections
+                    )  # Collections
                 else:
                     raise ValueError("Not enough columns")
             else:
                 raise ValueError(f"Row index {row_index} out of range")
-            
+
         except Exception:
             # If individual row update fails, fall back to full table update
             self.populate_table()
@@ -363,7 +390,9 @@ class PaperList(DataTable):
         self.clear(columns=False)
 
         for paper in self.papers:
-            selection_indicator, title, authors, year, venue, collections = self._prepare_row_data(paper)
+            selection_indicator, title, authors, year, venue, collections = (
+                self._prepare_row_data(paper)
+            )
             self.add_row(
                 selection_indicator,
                 title,
@@ -373,7 +402,7 @@ class PaperList(DataTable):
                 collections,
                 key=str(paper.id),
             )
-        
+
         # Restore cursor position after rebuild
         if 0 <= saved_cursor < len(self.papers):
             self.move_cursor(row=saved_cursor)
@@ -385,7 +414,7 @@ class PaperList(DataTable):
         # Save scroll position before rebuilding
         try:
             scroll_x, scroll_y = self.scroll_offset
-        except:
+        except Exception:
             scroll_x, scroll_y = 0, 0
 
         self.populate_table()
@@ -397,7 +426,7 @@ class PaperList(DataTable):
         # Try to restore scroll position
         try:
             self.scroll_to(scroll_x, scroll_y, animate=False)
-        except:
+        except Exception:
             pass
 
     def get_current_paper(self) -> Optional[Paper]:
@@ -431,7 +460,7 @@ class PaperList(DataTable):
 
     def on_resize(self) -> None:
         """Handle resize events to adjust column widths."""
-        
+
         # Always rebuild columns and table on resize to ensure 100% width usage
         if hasattr(self, "_setup_complete") and self._setup_complete:
             self.clear(columns=True)
@@ -511,7 +540,6 @@ class PaperList(DataTable):
             current_paper = self.get_current_paper()
             if current_paper:
                 self.current_paper_id = current_paper.id
-
 
     # Movement methods
     def move_up(self) -> None:

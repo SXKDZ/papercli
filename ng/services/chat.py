@@ -1,13 +1,10 @@
 from __future__ import annotations
 
 import os
-import platform
-import subprocess
 import traceback
 import webbrowser
 from typing import TYPE_CHECKING, Any, Dict, List
 
-import pyperclip
 from pluralizer import Pluralizer
 
 from ng.services import PDFManager
@@ -20,7 +17,7 @@ if TYPE_CHECKING:
 class ChatService:
     """Service for chat functionality."""
 
-    def __init__(self, app=None, pdf_dir=None):
+    def __init__(self, app):
         self.app = app
         self.pdf_manager = PDFManager()
         self._pluralizer = Pluralizer()
@@ -43,20 +40,17 @@ class ChatService:
                 len(papers), chr(10).join(context_parts)
             )
 
-            # Copy to clipboard
-            pyperclip.copy(full_prompt)
-
-            return {
-                "success": True,
-                "message": f"Prompt for {self._pluralizer.pluralize('paper', len(papers), True)} copied to clipboard",
-                "prompt_length": len(full_prompt),
-            }
-
-        except ImportError:
+            copied = self.app.system_service.copy_to_clipboard(full_prompt)
+            if copied:
+                return {
+                    "success": True,
+                    "message": f"Prompt for {self._pluralizer.pluralize('paper', len(papers), True)} copied to clipboard",
+                    "prompt_length": len(full_prompt),
+                }
             return {
                 "success": False,
-                "message": "Clipboard functionality unavailable (pyperclip not installed)",
-                "prompt_length": 0,
+                "message": "Failed to copy to clipboard",
+                "prompt_length": len(full_prompt),
             }
         except Exception as e:
             return {
@@ -81,8 +75,7 @@ class ChatService:
             url = provider_urls.get(provider, "https://claude.ai")
             webbrowser.open(url)
 
-            # Open PDF files in Finder/File Explorer
-            system = platform.system()
+            # Reveal PDF files using SystemService
             opened_files = []
             failed_files = []
 
@@ -91,28 +84,20 @@ class ChatService:
                     absolute_path = self.pdf_manager.get_absolute_path(paper.pdf_path)
                     if os.path.exists(absolute_path):
                         try:
-                            if system == "Darwin":  # macOS
-                                subprocess.run(
-                                    ["open", "-R", absolute_path], check=True
-                                )
-                            elif system == "Windows":
-                                subprocess.run(
-                                    ["explorer", "/select,,", absolute_path], check=True
-                                )
-                            elif system == "Linux":
-                                # For Linux, open the directory containing the file
-                                pdf_dir = os.path.dirname(absolute_path)
-                                subprocess.run(["xdg-open", pdf_dir], check=True)
-
-                            opened_files.append(paper.title)
+                            success, error = self.app.system_service.open_file_location(
+                                absolute_path
+                            )
+                            if success:
+                                opened_files.append(paper.title)
+                            else:
+                                failed_files.append(f"{paper.title}: {error}")
                         except Exception as e:
                             error_msg = f"{paper.title}: {str(e)}"
                             failed_files.append(error_msg)
-                            if self.app:
-                                self.app._add_log(
-                                    "chat_pdf_error",
-                                    f"Failed to open PDF for {paper.title}: {traceback.format_exc()}",
-                                )
+                            self.app._add_log(
+                                "chat_pdf_error",
+                                f"Failed to open PDF for {paper.title}: {traceback.format_exc()}",
+                            )
 
             # Prepare result message
             result_parts = []

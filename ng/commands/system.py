@@ -346,7 +346,7 @@ Notes:
 
         if not args:
             # Show basic version info
-            current_version = self.version_manager.get_current_version()
+            current_version = self.version_manager.current_version
             install_method = self.version_manager.get_installation_method()
 
             version_info = f"PaperCLI v{current_version}\n"
@@ -376,7 +376,7 @@ Notes:
                 update_available, latest_version = (
                     self.version_manager.is_update_available()
                 )
-                current_version = self.version_manager.get_current_version()
+                current_version = self.version_manager.current_version
 
                 if update_available:
                     update_info = f"Update Available!\n\n"
@@ -435,7 +435,7 @@ Notes:
                     self.version_manager.is_update_available()
                 )
                 if not update_available:
-                    current_version = self.version_manager.get_current_version()
+                    current_version = self.version_manager.current_version
                     self.app.notify(
                         f"Already running latest version (v{current_version})",
                         severity="information",
@@ -474,7 +474,7 @@ Notes:
                 self.app.notify(f"Update failed: {e}", severity="error")
 
         elif action == "info":
-            current_version = self.version_manager.get_current_version()
+            current_version = self.version_manager.current_version
             install_method = self.version_manager.get_installation_method()
             config = self.version_manager.get_update_config()
 
@@ -868,12 +868,9 @@ gpt-3.5-turbo                   - GPT-3.5 Turbo model (faster, cheaper)"""
     def _show_current_model(self):
         """Show the current OpenAI model."""
         current_model = os.getenv("OPENAI_MODEL", "gpt-4o")
-        try:
-            self.app.notify(
-                f"Current OpenAI model: {current_model}", severity="information"
-            )
-        except Exception:
-            pass
+        self.app.notify(
+            f"Current OpenAI model: {current_model}", severity="information"
+        )
 
     def _set_model(self, model_name):
         """Set the OpenAI model."""
@@ -1186,25 +1183,19 @@ gpt-3.5-turbo                   - GPT-3.5 Turbo model (faster, cheaper)"""
                     remote_data_dir = Path(os.path.expanduser(configured_path))
 
             if not remote_data_dir:
-                try:
-                    self.app.notify(
-                        "No remote path configured. Set it with: /config remote <path> or use: /sync <remote_path>",
-                        severity="error",
-                    )
-                except:
-                    pass
+                self.app.notify(
+                    "No remote path configured. Set it with: /config remote <path> or use: /sync <remote_path>",
+                    severity="error",
+                )
                 return
 
             # Show sync dialog with progress
             def sync_callback(result):
                 if result:
-                    try:
-                        # Refresh papers after successful sync
-                        self.app.load_papers()
-                        if hasattr(self.app, "main_screen") and self.app.main_screen:
-                            self.app.main_screen.refresh_papers()
-                    except:
-                        pass
+                    # Refresh papers after successful sync
+                    self.app.load_papers()
+                    if hasattr(self.app, "main_screen") and self.app.main_screen:
+                        self.app.main_screen.refresh_papers()
 
             self.app.push_screen(
                 SyncDialog(
@@ -1215,7 +1206,4 @@ gpt-3.5-turbo                   - GPT-3.5 Turbo model (faster, cheaper)"""
             )
 
         except Exception as e:
-            try:
-                self.app.notify(f"Sync error: {str(e)}", severity="error")
-            except:
-                pass
+            self.app.notify(f"Sync error: {str(e)}", severity="error")

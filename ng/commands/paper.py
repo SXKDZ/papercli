@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Any, Dict, List
 from pluralizer import Pluralizer
 
 from ng.commands import CommandHandler
-from ng.db.database import get_pdf_directory
 from ng.db.models import Paper
 from ng.dialogs import AddDialog, ConfirmDialog, DetailDialog, EditDialog
 from ng.services import AddPaperService, PaperService, PDFService, ValidationService
@@ -34,10 +33,6 @@ class PaperCommandHandler(CommandHandler):
         self.background_service = BackgroundOperationService(self.app)
         self.pdf_service = PDFService(app=self.app)
         self.pdf_download_handler = PDFDownloadHandler(self.app, self.pdf_service)
-
-    def _get_target_papers(self) -> List[Paper]:
-        """Helper to get selected papers from the main app's paper list."""
-        return self.app.screen.query_one("#paper-list-view").get_selected_papers()
 
     def _validate_input_for_source(self, source: str, path_id: str) -> bool:
         """Helper to validate input for a given source and show error if invalid."""
@@ -124,10 +119,12 @@ class PaperCommandHandler(CommandHandler):
                 self.app.load_papers()  # Reload papers to show new entry
 
                 # Start background metadata extraction
-                extraction_task = PDFDownloadTaskFactory.create_metadata_extraction_task(
-                    self.add_paper_service,
-                    paper.id,
-                    result["pdf_path"],
+                extraction_task = (
+                    PDFDownloadTaskFactory.create_metadata_extraction_task(
+                        self.add_paper_service,
+                        paper.id,
+                        result["pdf_path"],
+                    )
                 )
 
                 def metadata_completion_callback(extracted_result, error):

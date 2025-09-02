@@ -1,4 +1,5 @@
 import os
+import traceback
 from typing import Any, Callable, Dict, List
 
 from pluralizer import Pluralizer
@@ -661,8 +662,6 @@ class EditDialog(ModalScreen):
                     ]
                 except Exception as e:
                     if self.parent_app:
-                        import traceback
-
                         error_details = f"Error processing authors: {str(e)}\nFull traceback:\n{traceback.format_exc()}"
                     # Fallback: just store the names as strings
                     result["author_names"] = new_value
@@ -675,8 +674,6 @@ class EditDialog(ModalScreen):
                     ]
                 except Exception as e:
                     if self.parent_app:
-                        import traceback
-
                         error_details = f"Error processing collections: {str(e)}\nFull traceback:\n{traceback.format_exc()}"
                     # Fallback: just store the names as strings
                     result["collection_names"] = new_value
@@ -704,8 +701,6 @@ class EditDialog(ModalScreen):
             except Exception as e:
                 # Handle any errors from callback
                 if self.parent_app:
-                    import traceback
-
                     error_details = f"Error saving paper: {str(e)}\nFull traceback:\n{traceback.format_exc()}"
                     self.parent_app.notify(f"Error saving paper: {e}", severity="error")
                 return
@@ -910,7 +905,7 @@ class EditDialog(ModalScreen):
                             )
                             for button in radio_set.query(RadioButton):
                                 button.value = button.id == f"type-{value}"
-                        except:
+                        except Exception:
                             pass
                         # Switch to new paper type content
                         content_switcher = self.query_one(

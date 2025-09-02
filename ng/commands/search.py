@@ -20,27 +20,6 @@ class SearchCommandHandler(CommandHandler):
         self.search_service = SearchService(app=self.app)
         self.pluralizer = Pluralizer()
 
-    def _find_paper_list_view(self):
-        """Find the paper list view, which may be behind modal dialogs."""
-        try:
-            # Try current screen first
-            return self.app.screen.query_one("#paper-list-view")
-        except Exception:
-            # If not found, look through screen stack for MainScreen
-            for screen in reversed(self.app.screen_stack):
-                try:
-                    return screen.query_one("#paper-list-view")
-                except Exception:
-                    continue
-
-            # If still not found, try main_screen reference
-            if hasattr(self.app, "main_screen"):
-                try:
-                    return self.app.main_screen.query_one("#paper-list-view")
-                except Exception:
-                    pass
-        return None
-
     def handle_all_command(self):
         """Handle /all command - return to full paper list."""
         self.app.load_papers()  # Reload all papers

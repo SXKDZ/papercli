@@ -13,7 +13,7 @@ import PyPDF2
 from pluralizer import Pluralizer
 
 from ng.db.database import get_pdf_directory
-from ng.services import HTTPClient
+from ng.services.http_utils import HTTPClient
 from ng.services.formatting import format_file_size
 from ng.services.metadata import MetadataExtractor
 
@@ -68,7 +68,6 @@ class PDFManager:
     """Service for managing PDF files with smart naming and handling."""
 
     def __init__(self, app=None):
-        self.pdf_dir = None
         self.pdf_dir = get_pdf_directory()
         self.app = app
 
@@ -99,10 +98,6 @@ class PDFManager:
         except ValueError:
             # If path is outside pdf_dir, just return the filename
             return os.path.basename(absolute_path)
-
-    def get_pdfs_directory(self) -> str:
-        """Get the absolute path to the PDFs directory."""
-        return self.pdf_dir
 
     def get_pdf_info(self, relative_path: str) -> Dict[str, Any]:
         """Get PDF file information including size and page count."""

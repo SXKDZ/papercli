@@ -10,6 +10,7 @@ from textual.widgets import Button, Input, Label, ListItem, ListView, Static
 
 from ng.db.models import Collection, Paper
 from ng.services import DialogUtilsService
+from ng.services.formatting import format_title_by_words
 
 
 class CollectDialog(ModalScreen):
@@ -273,11 +274,6 @@ class CollectDialog(ModalScreen):
             or collection_name in self.new_collections
         )
 
-    def _is_double_click(self, item_id: str) -> bool:
-        """Return True if clicking the same item within threshold constitutes a double-click."""
-        return DialogUtilsService.is_double_click(
-            item_id, self._last_click_time, self.DOUBLE_CLICK_THRESHOLD_S
-        )
 
     def _is_paper_changed(self, paper_id: int) -> bool:
         """Check if a paper has been moved to/from collections."""
@@ -373,7 +369,7 @@ class CollectDialog(ModalScreen):
         )
 
         for idx, paper in enumerate(sorted_available_papers):
-            title = paper.title[:50] + "..." if len(paper.title) > 50 else paper.title
+            title = format_title_by_words(paper.title or "")
             is_changed = self._is_paper_changed(paper.id)
             label_classes = "changed-paper" if is_changed else ""
             label = Label(title, classes=label_classes)
@@ -408,7 +404,7 @@ class CollectDialog(ModalScreen):
         sorted_papers = sorted(collection.papers, key=sort_key)
 
         for idx, paper in enumerate(sorted_papers):
-            title = paper.title[:50] + "..." if len(paper.title) > 50 else paper.title
+            title = format_title_by_words(paper.title or "")
             is_changed = self._is_paper_changed(paper.id)
             label_classes = "changed-paper" if is_changed else ""
             label = Label(title, classes=label_classes)
@@ -489,7 +485,9 @@ class CollectDialog(ModalScreen):
                 if list_item.id.startswith("collection-") and not list_item.id.endswith(
                     "-editing"
                 ):
-                    if self._is_double_click(list_item.id):
+                    if DialogUtilsService.is_double_click(
+                        list_item.id, self._last_click_time, self.DOUBLE_CLICK_THRESHOLD_S
+                    ):
 
                         # This is a double-click - start editing
                         collections_list = self.query_one("#collections-list", ListView)

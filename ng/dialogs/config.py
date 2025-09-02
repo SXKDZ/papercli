@@ -22,7 +22,8 @@ from textual.widgets import (
 )
 
 from ng.services import DialogUtilsService
-from ng.services.llm_utils import is_reasoning_model
+from ng.services.llm_utils import LLMModelUtils
+from textual.theme import BUILTIN_THEMES
 
 
 class ConfigDialog(ModalScreen):
@@ -164,7 +165,7 @@ class ConfigDialog(ModalScreen):
                 model_id = model.id
                 # Include all GPT models, o1, o3 series
                 if any(prefix in model_id for prefix in ["gpt-", "o1", "o3"]):
-                    if is_reasoning_model(model_id):
+                    if LLMModelUtils.is_reasoning_model(model_id):
                         reasoning_models.append(model_id)
                     else:
                         standard_models.append(model_id)
@@ -193,27 +194,11 @@ class ConfigDialog(ModalScreen):
 
     def _load_available_themes(self):
         """Load available Textual themes dynamically."""
-        try:
-            from textual.theme import BUILTIN_THEMES
-
-            # Get all available theme names
-            theme_names = list(BUILTIN_THEMES.keys())
-            self.available_themes = [
-                (name.replace("-", " ").replace("_", " ").title(), name)
-                for name in sorted(theme_names)
-            ]
-        except ImportError:
-            # Fallback to common themes if BUILTIN_THEMES is not available
-            self.available_themes = [
-                ("Textual Dark", "textual-dark"),
-                ("Textual Light", "textual-light"),
-                ("Nord", "nord"),
-                ("Gruvbox", "gruvbox"),
-                ("Tokyo Night", "tokyo-night"),
-                ("Solarized Light", "solarized-light"),
-                ("Monokai", "monokai"),
-                ("Dracula", "dracula"),
-            ]
+        theme_names = list(BUILTIN_THEMES.keys())
+        self.available_themes = [
+            (name.replace("-", " ").replace("_", " ").title(), name)
+            for name in sorted(theme_names)
+        ]
 
     def _build_model_options(self):
         """Build model options with visual separation between standard and reasoning models."""
@@ -267,7 +252,7 @@ class ConfigDialog(ModalScreen):
                         with Horizontal(classes="form-row"):
                             yield Label("API Key:", classes="form-label")
                             api_key = os.getenv("OPENAI_API_KEY", "")
-                            masked_key = self._mask_api_key(api_key)
+                            masked_key = DialogUtilsService.mask_api_key(api_key)
                             yield TextArea(
                                 text=masked_key,
                                 id="api-key-input",
@@ -352,7 +337,9 @@ class ConfigDialog(ModalScreen):
                         with Horizontal(classes="form-row"):
                             yield Label("Theme:", classes="form-label")
                             current_theme = os.getenv("PAPERCLI_THEME", "textual-dark")
-                            with RadioSet(id="theme-radio-set", classes="form-radio-set"):
+                            with RadioSet(
+                                id="theme-radio-set", classes="form-radio-set"
+                            ):
                                 for theme_name, theme_value in self.available_themes:
                                     is_selected = theme_value == current_theme
                                     yield RadioButton(
@@ -368,13 +355,6 @@ class ConfigDialog(ModalScreen):
                 yield Button("Cancel", id="cancel-button", variant="default")
                 yield Button("Reset", id="reset-button", variant="warning")
 
-    def _mask_api_key(self, api_key: str) -> str:
-        """Mask API key for display."""
-        return DialogUtilsService.mask_api_key(api_key)
-
-    def _unmask_api_key(self, masked_key: str, original_key: str) -> str:
-        """Unmask API key if it hasn't been changed."""
-        return DialogUtilsService.unmask_api_key(masked_key, original_key)
 
     def on_select_changed(self, event: Select.Changed) -> None:
         """Handle model and theme selection changes."""
@@ -452,7 +432,7 @@ class ConfigDialog(ModalScreen):
 
             # API Key (handle masking)
             original_key = os.getenv("OPENAI_API_KEY", "")
-            new_key = self._unmask_api_key(api_key_input.text, original_key)
+            new_key = DialogUtilsService.unmask_api_key(api_key_input.text, original_key)
             if new_key != original_key:
                 if new_key and not new_key.startswith("sk-"):
                     self.notify(

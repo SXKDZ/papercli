@@ -259,18 +259,7 @@ class PaperService:
                     )
                 # Delete associated PDF file if it exists
                 if paper.pdf_path:
-                    try:
-                        pdf_manager = PDFManager()
-                        full_pdf_path = pdf_manager.get_absolute_path(paper.pdf_path)
-                        if os.path.exists(full_pdf_path):
-                            os.remove(full_pdf_path)
-                            if self.app:
-                                self.app._add_log(
-                                    "paper_pdf_delete",
-                                    f"Deleted PDF for paper {paper.id}: {full_pdf_path}",
-                                )
-                    except Exception:
-                        pass
+                    self._delete_pdf_file(paper.pdf_path, paper.id)
 
                 session.delete(paper)
                 session.commit()
@@ -293,19 +282,7 @@ class PaperService:
 
             for paper in papers_to_delete:
                 if paper.pdf_path:
-                    try:
-
-                        pdf_manager = PDFManager()
-                        full_pdf_path = pdf_manager.get_absolute_path(paper.pdf_path)
-                        if os.path.exists(full_pdf_path):
-                            os.remove(full_pdf_path)
-                            if self.app:
-                                self.app._add_log(
-                                    "paper_pdf_delete",
-                                    f"Deleted PDF for paper {paper.id}: {full_pdf_path}",
-                                )
-                    except Exception:
-                        pass
+                    self._delete_pdf_file(paper.pdf_path, paper.id)
                 if self.app:
                     self.app._add_log(
                         "paper_delete_start",
@@ -324,6 +301,25 @@ class PaperService:
                     ),
                 )
             return len(papers_to_delete)
+
+    def _delete_pdf_file(
+        self, relative_pdf_path: str, paper_id: int | None = None
+    ) -> None:
+        """Delete a PDF file given a stored relative path."""
+        try:
+            pdf_manager = PDFManager()
+            full_pdf_path = pdf_manager.get_absolute_path(relative_pdf_path)
+            if os.path.exists(full_pdf_path):
+                os.remove(full_pdf_path)
+                if self.app:
+                    context = f" for paper {paper_id}" if paper_id is not None else ""
+                    self.app._add_log(
+                        "paper_pdf_delete",
+                        f"Deleted PDF{context}: {full_pdf_path}",
+                    )
+        except Exception:
+            # Swallow errors to avoid blocking deletion
+            pass
 
     def add_paper_from_metadata(
         self,

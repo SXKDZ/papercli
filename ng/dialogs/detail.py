@@ -2,18 +2,19 @@ import os
 import webbrowser
 from typing import Any, Callable, Dict
 
-from ng.db.models import Paper
-from ng.dialogs.chat import ChatDialog
-from ng.dialogs.confirm import ConfirmDialog
-from ng.dialogs.edit import EditDialog
-from ng.services import PDFManager, PDFService, SystemService, ThemeService
-from ng.services.formatting import format_file_size
 from pluralizer import Pluralizer
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static
+
+from ng.db.models import Paper
+from ng.dialogs.chat import ChatDialog
+from ng.dialogs.confirm import ConfirmDialog
+from ng.dialogs.edit import EditDialog
+from ng.services import PDFManager, PDFService, SystemService, ThemeService
+from ng.services.formatting import format_file_size
 
 _pluralizer = Pluralizer()
 

@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import os
+import shutil
 import traceback
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Tuple
 
 from ng.db.database import get_pdf_directory
+from ng.services.formatting import format_title_by_words
 from ng.services.metadata import MetadataExtractor
 from ng.services.paper import PaperService
-from ng.services.pdf import PDFManager
+from ng.services.pdf import PDFManager, PDFService
 from ng.services.system import SystemService
 from ng.services.utils import normalize_paper_data
 
@@ -32,27 +34,45 @@ class AddPaperService:
         self.system_service = system_service
         self.app = app
 
-    def add_arxiv_paper(self, arxiv_id: str) -> Dict[str, Any]:
-        """Add a paper from arXiv."""
-        # Extract metadata from arXiv
-        metadata = self.metadata_extractor.extract_from_arxiv(arxiv_id)
-
-        # Prepare paper data (without PDF initially)
-        paper_data = {
-            "title": metadata["title"],
+    # Internal helpers
+    def _build_paper_data(
+        self, metadata: Dict[str, Any], overrides: Dict[str, Any] | None = None
+    ) -> Dict[str, Any]:
+        """Build and normalize paper data from raw metadata with optional overrides."""
+        data: Dict[str, Any] = {
+            "title": metadata.get("title", "Unknown Title"),
             "abstract": metadata.get("abstract", ""),
             "authors": metadata.get("authors", ""),
             "year": metadata.get("year"),
             "venue_full": metadata.get("venue_full", ""),
             "venue_acronym": metadata.get("venue_acronym", ""),
-            "paper_type": metadata.get("paper_type", "preprint"),
-            "preprint_id": metadata.get("preprint_id"),
-            "category": metadata.get("category"),
+            "paper_type": metadata.get("paper_type", "unknown"),
             "doi": metadata.get("doi"),
-            "url": f"https://arxiv.org/pdf/{arxiv_id}.pdf",
+            "url": metadata.get("url"),
+            "category": metadata.get("category"),
+            "preprint_id": metadata.get("preprint_id"),
+            "volume": metadata.get("volume"),
+            "issue": metadata.get("issue"),
+            "pages": metadata.get("pages"),
         }
+        if overrides:
+            data.update({k: v for k, v in overrides.items() if v is not None})
+        return normalize_paper_data(data)
 
-        paper_data = normalize_paper_data(paper_data)
+    def _resolve_path(self, path: str) -> str:
+        """Resolve a user-provided file path to an absolute path."""
+        return os.path.abspath(os.path.expanduser(path))
+
+    def add_arxiv_paper(self, arxiv_id: str) -> Dict[str, Any]:
+        """Add a paper from arXiv."""
+        metadata = self.metadata_extractor.extract_from_arxiv(arxiv_id)
+        paper_data = self._build_paper_data(
+            metadata,
+            overrides={
+                "paper_type": "preprint",
+                "url": f"https://arxiv.org/pdf/{arxiv_id}.pdf",
+            },
+        )
 
         # Add to database first (without PDF)
         authors = paper_data.get("authors", [])
@@ -312,25 +332,16 @@ class AddPaperService:
 
     def add_openreview_paper(self, openreview_id: str) -> Dict[str, Any]:
         """Add a paper from OpenReview."""
-        # Extract metadata from OpenReview
         metadata = self.metadata_extractor.extract_from_openreview(openreview_id)
-
-        # Prepare paper data
-        paper_data = {
-            "title": metadata.get("title", "Unknown Title"),
-            "abstract": metadata.get("abstract", ""),
-            "authors": metadata.get("authors", ""),
-            "year": metadata.get("year"),
-            "venue_full": metadata.get("venue_full", ""),
-            "venue_acronym": metadata.get("venue_acronym", ""),
-            "paper_type": metadata.get("paper_type", "conference"),
-            "category": metadata.get("category"),
-            "url": metadata.get(
-                "url", f"https://openreview.net/forum?id={openreview_id}"
-            ),
-        }
-
-        paper_data = normalize_paper_data(paper_data)
+        paper_data = self._build_paper_data(
+            metadata,
+            overrides={
+                "paper_type": metadata.get("paper_type", "conference"),
+                "url": metadata.get(
+                    "url", f"https://openreview.net/forum?id={openreview_id}"
+                ),
+            },
+        )
 
         # Add to database
         authors = paper_data.get("authors", [])
@@ -511,28 +522,29 @@ class AddPaperService:
                 try:
                     pdf_manager = PDFManager(app=self.app)
                     old_pdf_path = pdf_manager.get_absolute_path(updated_paper.pdf_path)
-                    
+
                     # Generate new filename with extracted metadata
-                    new_filename = pdf_manager._generate_pdf_filename(metadata, old_pdf_path)
-                    new_pdf_path = os.path.join(pdf_manager.get_pdfs_directory(), new_filename)
-                    
+                    new_filename = pdf_manager._generate_pdf_filename(
+                        metadata, old_pdf_path
+                    )
+                    new_pdf_path = os.path.join(pdf_manager.pdf_dir, new_filename)
+
                     # Only rename if the filename would actually change
                     if old_pdf_path != new_pdf_path and os.path.exists(old_pdf_path):
-                        import shutil
                         shutil.move(old_pdf_path, new_pdf_path)
-                        
+
                         # Update database with new relative path
                         new_relative_path = pdf_manager.get_relative_path(new_pdf_path)
                         updated_paper, update_error = self.paper_service.update_paper(
                             paper_id, {"pdf_path": new_relative_path}
                         )
-                        
+
                         if self.app:
                             self.app._add_log(
                                 "pdf_filename_update",
                                 f"Renamed PDF file to match extracted metadata: {new_filename}",
                             )
-                    
+
                 except Exception as e:
                     # Don't fail the whole operation if PDF renaming fails
                     if self.app:
@@ -567,15 +579,12 @@ class AddPaperService:
 
     def add_bib_papers(self, bib_path: str) -> Tuple[List[Paper], List[str]]:
         """Add papers from .bib file."""
-        # Expand user path and resolve relative paths
-        bib_path = os.path.expanduser(bib_path)
-        bib_path = os.path.abspath(bib_path)
-
-        if not os.path.exists(bib_path):
-            raise Exception(f"BibTeX file not found: {bib_path}")
-
-        if not bib_path.lower().endswith((".bib", ".bibtex")):
-            raise Exception(f"File is not a BibTeX file: {bib_path}")
+        # Resolve path and do simple validation
+        bib_path = self._resolve_path(bib_path)
+        if not os.path.exists(bib_path) or not bib_path.lower().endswith(
+            (".bib", ".bibtex")
+        ):
+            raise Exception(f"Invalid BibTeX file: {bib_path}")
 
         # Extract metadata from BibTeX file
         papers_metadata = self.metadata_extractor.extract_from_bibtex(bib_path)
@@ -585,24 +594,8 @@ class AddPaperService:
 
         for metadata in papers_metadata:
             try:
-                # Prepare paper data
-                paper_data = {
-                    "title": metadata.get("title", "Unknown Title"),
-                    "abstract": metadata.get("abstract", ""),
-                    "authors": metadata.get("authors", ""),
-                    "year": metadata.get("year"),
-                    "venue_full": metadata.get("venue_full", ""),
-                    "venue_acronym": metadata.get("venue_acronym", ""),
-                    "paper_type": metadata.get("paper_type", "unknown"),
-                    "doi": metadata.get("doi"),
-                    "url": metadata.get("url"),
-                    "volume": metadata.get("volume"),
-                    "issue": metadata.get("issue"),
-                    "pages": metadata.get("pages"),
-                }
-
-                # Normalize paper data for database storage
-                paper_data = normalize_paper_data(paper_data)
+                # Prepare and normalize paper data
+                paper_data = self._build_paper_data(metadata)
 
                 # Add to database first
                 authors = paper_data.get("authors", [])
@@ -621,7 +614,7 @@ class AddPaperService:
                         ),
                     )
 
-                # Try to download PDF if URL is provided and looks like a PDF
+                # Try to download or process PDF if URL is provided
                 if metadata.get("url"):
                     pdf_manager = PDFManager(app=self.app)
 
@@ -634,9 +627,11 @@ class AddPaperService:
                         )
 
                         if pdf_path and not pdf_error:
-                            # Convert to relative path and update paper
-                            pdf_dir = get_pdf_directory()
-                            relative_pdf_path = os.path.relpath(pdf_path, pdf_dir)
+                            # process_pdf_path returns a relative path; ensure we store it as-is
+                            relative_pdf_path = pdf_path
+                            absolute_pdf_path = pdf_manager.get_absolute_path(
+                                relative_pdf_path
+                            )
 
                             update_data = {"pdf_path": relative_pdf_path}
                             updated_paper, update_error = (
@@ -644,11 +639,16 @@ class AddPaperService:
                             )
 
                             if not update_error and self.app:
-                                summary = pdf_service.create_download_summary(
-                                    pdf_path, download_duration
+                                summary = PDFService(
+                                    app=self.app
+                                ).create_download_summary(
+                                    absolute_pdf_path, download_duration
+                                )
+                                preview = format_title_by_words(
+                                    paper_data.get("title", "") or ""
                                 )
                                 self.app.notify(
-                                    f"PDF downloaded for '{paper_data['title'][:50]}...': {summary}",
+                                    f"PDF available for '{preview}': {summary}",
                                     severity="information",
                                 )
 
@@ -671,15 +671,12 @@ class AddPaperService:
 
     def add_ris_papers(self, ris_path: str) -> Tuple[List[Paper], List[str]]:
         """Add papers from .ris file."""
-        # Expand user path and resolve relative paths
-        ris_path = os.path.expanduser(ris_path)
-        ris_path = os.path.abspath(ris_path)
-
-        if not os.path.exists(ris_path):
-            raise Exception(f"RIS file not found: {ris_path}")
-
-        if not ris_path.lower().endswith((".ris", ".txt")):
-            raise Exception(f"File is not a RIS file: {ris_path}")
+        # Resolve path and do simple validation
+        ris_path = self._resolve_path(ris_path)
+        if not os.path.exists(ris_path) or not ris_path.lower().endswith(
+            (".ris", ".txt")
+        ):
+            raise Exception(f"Invalid RIS file: {ris_path}")
 
         # Extract metadata from RIS file
         papers_metadata = self.metadata_extractor.extract_from_ris(ris_path)
@@ -689,24 +686,8 @@ class AddPaperService:
 
         for metadata in papers_metadata:
             try:
-                # Prepare paper data
-                paper_data = {
-                    "title": metadata.get("title", "Unknown Title"),
-                    "abstract": metadata.get("abstract", ""),
-                    "authors": metadata.get("authors", ""),
-                    "year": metadata.get("year"),
-                    "venue_full": metadata.get("venue_full", ""),
-                    "venue_acronym": metadata.get("venue_acronym", ""),
-                    "paper_type": metadata.get("paper_type", "unknown"),
-                    "doi": metadata.get("doi"),
-                    "url": metadata.get("url"),
-                    "volume": metadata.get("volume"),
-                    "issue": metadata.get("issue"),
-                    "pages": metadata.get("pages"),
-                }
-
-                # Normalize paper data for database storage
-                paper_data = normalize_paper_data(paper_data)
+                # Prepare and normalize paper data
+                paper_data = self._build_paper_data(metadata)
 
                 # Add to database
                 authors = paper_data.get("authors", [])
@@ -739,22 +720,15 @@ class AddPaperService:
         # Extract metadata from DOI using Crossref API
         metadata = self.metadata_extractor.extract_from_doi(doi)
 
-        # Prepare paper data
-        paper_data = {
-            "title": metadata.get("title", "Unknown Title"),
-            "abstract": metadata.get("abstract", ""),
-            "authors": metadata.get("authors", ""),
-            "year": metadata.get("year"),
-            "venue_full": metadata.get("venue_full", ""),
-            "venue_acronym": metadata.get("venue_acronym", ""),
-            "paper_type": metadata.get("paper_type", "journal"),
-            "doi": doi,
-            "url": metadata.get("url", f"https://doi.org/{doi}"),
-            "volume": metadata.get("volume"),
-            "issue": metadata.get("issue"),
-            "pages": metadata.get("pages"),
-        }
-        paper_data = normalize_paper_data(paper_data)
+        # Prepare and normalize paper data
+        paper_data = self._build_paper_data(
+            metadata,
+            overrides={
+                "paper_type": metadata.get("paper_type", "journal"),
+                "doi": doi,
+                "url": metadata.get("url", f"https://doi.org/{doi}"),
+            },
+        )
 
         # Add to database
         authors = paper_data.get("authors", [])

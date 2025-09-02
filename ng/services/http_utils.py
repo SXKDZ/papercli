@@ -1,6 +1,6 @@
 """HTTP utility functions for making web requests with consistent error handling."""
 
-from typing import Any, Dict, Optional, Tuple
+from typing import Dict, Optional
 
 import requests
 
@@ -47,48 +47,4 @@ class HTTPClient:
         response.raise_for_status()
         return response
 
-    @classmethod
-    def get_json(
-        self,
-        url: str,
-        headers: Optional[Dict[str, str]] = None,
-        timeout: int = 30,
-        **kwargs,
-    ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-        """
-        Make GET request and return JSON data with error handling.
-
-        Returns:
-            tuple[Optional[Dict], Optional[str]]: (json_data, error_message)
-            If successful: (data, None)
-            If error: (None, error_message)
-        """
-        try:
-            response = self.get(url, headers=headers, timeout=timeout, **kwargs)
-            return response.json(), None
-        except requests.RequestException as e:
-            return None, f"HTTP request failed: {str(e)}"
-        except ValueError as e:
-            return None, f"Invalid JSON response: {str(e)}"
-
-    @classmethod
-    def get_text(
-        self,
-        url: str,
-        headers: Optional[Dict[str, str]] = None,
-        timeout: int = 30,
-        **kwargs,
-    ) -> Tuple[Optional[str], Optional[str]]:
-        """
-        Make GET request and return text content with error handling.
-
-        Returns:
-            tuple[Optional[str], Optional[str]]: (text_content, error_message)
-            If successful: (content, None)
-            If error: (None, error_message)
-        """
-        try:
-            response = self.get(url, headers=headers, timeout=timeout, **kwargs)
-            return response.text, None
-        except requests.RequestException as e:
-            return None, f"HTTP request failed: {str(e)}"
+    # Removed unused get_json and get_text helpers to keep surface minimal

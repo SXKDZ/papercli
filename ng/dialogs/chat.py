@@ -24,7 +24,8 @@ from ng.services import (
     SystemService,
     ThemeService,
 )
-from ng.services.llm_utils import get_model_parameters
+from ng.services.formatting import format_title_by_words
+from ng.services.llm_utils import LLMModelUtils
 from ng.services.prompts import ChatPrompts
 
 _pluralizer = Pluralizer()
@@ -336,7 +337,7 @@ class ChatDialog(ModalScreen):
                             if self.app:
                                 self.app._add_log(
                                     f"chat_summary_memory_updated_{paper_id}",
-                                    f"Updated in-memory paper: {paper.title[:50]}...",
+                                    f"Updated in-memory paper: {format_title_by_words(paper.title or '')}",
                                 )
                             break
                 self.summary_in_progress = False
@@ -351,13 +352,10 @@ class ChatDialog(ModalScreen):
 
         self._build_initial_chat_content()
 
-    def _get_paper_fields(self, paper):
-        """Extract common paper fields using DialogUtilsService."""
-        return DialogUtilsService.get_paper_fields(paper)
 
     def _format_paper_info(self, paper, index):
         """Format paper information for display (app version logic)."""
-        fields = self._get_paper_fields(paper)
+        fields = DialogUtilsService.get_paper_fields(paper)
 
         paper_info = (
             f"**Paper {index}: {fields['title']}**\n\n"
@@ -622,8 +620,8 @@ class ChatDialog(ModalScreen):
         # Log successful completion with token usage
         if self.app:
             response_preview = (
-                message.final_content[:100] + "..." 
-                if len(message.final_content) > 100 
+                message.final_content[:100] + "..."
+                if len(message.final_content) > 100
                 else message.final_content
             )
             self.app._add_log(
@@ -735,7 +733,7 @@ class ChatDialog(ModalScreen):
                     )
 
                 # Get response with model-specific parameters using centralized utility
-                params = get_model_parameters(self.model_name)
+                params = LLMModelUtils.get_model_parameters(self.model_name)
                 params["messages"] = messages
                 params["stream"] = True
 
@@ -968,9 +966,6 @@ class ChatDialog(ModalScreen):
             # Controls might not be mounted yet
             pass
 
-    def _generate_chat_filename(self) -> str:
-        """Generate a chat filename using DialogUtilsService."""
-        return DialogUtilsService.generate_filename_from_paper(self.papers[0], ".md")
 
     def _handle_save(self):
         """Handle saving the chat to a file with PDF naming convention and file opening."""
@@ -984,7 +979,7 @@ class ChatDialog(ModalScreen):
             chats_dir = data_dir / "chats"
 
             # Generate filename and create safe filepath
-            filename = self._generate_chat_filename()
+            filename = DialogUtilsService.generate_filename_from_paper(self.papers[0], ".md")
             final_filepath = DialogUtilsService.create_safe_filename(
                 filename, chats_dir
             )

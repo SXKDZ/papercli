@@ -15,12 +15,12 @@ from openai import OpenAI
 from titlecase import titlecase
 
 from ng.services.http_utils import HTTPClient
-from ng.services.llm_utils import get_model_parameters
+from ng.services.llm_utils import LLMModelUtils
 from ng.services.prompts import MetadataPrompts, SummaryPrompts
 from ng.services.utils import fix_broken_lines, normalize_paper_data
 
 if TYPE_CHECKING:
-    from ng.services import PDFManager
+    from ng.services.pdf import PDFManager
 
 
 def _truncate_for_logging(content: str, max_chars: int = 300) -> tuple[str, str]:
@@ -548,7 +548,7 @@ class MetadataExtractor:
                 )
 
             # Build parameters using centralized utility (force temperature=0 for extraction)
-            params = get_model_parameters(model_name, temperature=0)
+            params = LLMModelUtils.get_model_parameters(model_name, temperature=0)
             params["messages"] = [
                 {
                     "role": "system",
@@ -673,7 +673,7 @@ class MetadataExtractor:
                 )
 
             # Build parameters using centralized utility
-            params = get_model_parameters(model_name)
+            params = LLMModelUtils.get_model_parameters(model_name)
             params["messages"] = [
                 {
                     "role": "system",

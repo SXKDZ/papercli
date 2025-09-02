@@ -80,12 +80,9 @@ class CustomHeader(Static):
 
     def _update_status_display(self) -> None:
         """Update the status display text."""
-        try:
-            status_display = self.query_one("#status-display")
-            status_text = f"Total: {self.total_papers}  Current: {self.current_position}  Selected: {self.selected_count}"
-            status_display.update(status_text)
-        except Exception:
-            pass  # Widget might not be ready yet
+        status_display = self.query_one("#status-display")
+        status_text = f"Total: {self.total_papers}  Current: {self.current_position}  Selected: {self.selected_count}"
+        status_display.update(status_text)
 
     def update_stats(self, total: int, current: int, selected: int) -> None:
         """Update all statistics at once."""

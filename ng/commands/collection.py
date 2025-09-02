@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Any, Dict, List
 
 from pluralizer import Pluralizer
@@ -19,10 +20,6 @@ class CollectionCommandHandler(CommandHandler):
         super().__init__(app)
         self.collection_service = CollectionService(app=self.app)
         self.pluralizer = Pluralizer()
-
-    def _get_target_papers(self):
-        """Helper to get selected papers from the main app's paper list."""
-        return self.app.screen.query_one("#paper-list-view").get_selected_papers()
 
     async def handle_add_to_command(self, args: List[str]):
         """Handle /add-to command."""
@@ -248,7 +245,7 @@ class CollectionCommandHandler(CommandHandler):
 
                     # Create new collections
                     for collection_name in result.get("new_collections", []):
-                        self.collection_service.create_collection(collection_name)
+                        self.collection_service.add_collection(collection_name)
                         changes_made = True
 
                     # Delete collections
@@ -294,8 +291,6 @@ class CollectionCommandHandler(CommandHandler):
 
                     if changes_made:
                         # Small delay to ensure database changes are fully committed
-                        import time
-
                         time.sleep(0.1)
 
                         self.app.load_papers()  # Reload papers to reflect changes

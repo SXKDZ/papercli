@@ -5,7 +5,7 @@ from textual.screen import Screen
 from textual.widgets import Footer, Input
 
 from ng.db.models import Paper
-from ng.dialogs import AddDialog, DetailDialog, FilterDialog, MessageDialog
+from ng.dialogs import AddDialog, DetailDialog, FilterDialog, MessageDialog, SortDialog
 from ng.services import CollectionService
 from ng.widgets.command_input import CommandInput
 from ng.widgets.custom_header import CustomHeader
@@ -285,7 +285,6 @@ class MainScreen(Screen):
 
     def action_show_sort_dialog(self) -> None:
         """Show sort dialog (F4)."""
-        from ng.dialogs import SortDialog
 
         def sort_callback(result):
             if result:

@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import os
 from typing import TYPE_CHECKING, Any, Dict, List
 
-import pyperclip
 from pluralizer import Pluralizer
 
 from ng.commands import CommandHandler
@@ -22,23 +20,12 @@ class ExportCommandHandler(CommandHandler):
         super().__init__(app)
         self.export_service = ExportService()
         self.pluralizer = Pluralizer()
-        pdf_dir = os.path.join(os.path.dirname(self.app.db_path), "pdfs")
-        self.chat_service = ChatService(app=self.app, pdf_dir=pdf_dir)
+        self.chat_service = ChatService(app=self.app)
         self.llm_summary_service = LLMSummaryService(
             paper_service=self.app.paper_service,
             background_service=self.app.background_service,
             app=self.app,
-            pdf_dir=pdf_dir,
         )
-
-    def _get_target_papers(self) -> List[Paper]:
-        """Helper to get selected papers from the main app's paper list."""
-        try:
-            paper_list = self.app.screen.query_one("#paper-list-view")
-            return paper_list.get_selected_papers()
-        except:
-            # Fallback: return empty list if no papers available
-            return []
 
     async def handle_export_command(self, args: List[str]):
         """Handle /export command."""
@@ -115,15 +102,15 @@ class ExportCommandHandler(CommandHandler):
                     )
 
             elif destination == "clipboard":
-                try:
-                    pyperclip.copy(content)
+                copied = self.app.system_service.copy_to_clipboard(content)
+                if copied:
                     self.app.notify(
                         f"Copied {self.pluralizer.pluralize('paper', len(papers_to_export), True)} to clipboard",
                         severity="information",
                     )
-                except pyperclip.PyperclipException:
+                else:
                     self.app.notify(
-                        "Failed to copy to clipboard. pyperclip might not be installed or configured correctly",
+                        "Failed to copy to clipboard",
                         severity="error",
                     )
 
@@ -181,14 +168,11 @@ class ExportCommandHandler(CommandHandler):
             self.app.notify("No papers selected or under cursor", severity="warning")
             return
 
-        try:
-            self.app.notify("Copying prompt to clipboard...", severity="information")
+        self.app.notify("Copying prompt to clipboard...", severity="information")
 
-            result = self.chat_service.copy_prompt_to_clipboard(papers_to_copy)
+        result = self.chat_service.copy_prompt_to_clipboard(papers_to_copy)
 
-            if result["success"]:
-                self.app.notify(result["message"], severity="information")
-            else:
-                self.app.notify(result["message"], severity="error")
-        except Exception as e:
-            self.app.notify(f"Error copying prompt: {e}", severity="error")
+        if result["success"]:
+            self.app.notify(result["message"], severity="information")
+        else:
+            self.app.notify(result["message"], severity="error")

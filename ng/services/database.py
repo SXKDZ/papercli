@@ -13,7 +13,7 @@ from sqlalchemy.orm import sessionmaker
 
 from ng.db.database import get_pdf_directory
 from ng.db.models import Author, Paper, PaperAuthor
-from ng.services.formatting import format_file_size
+from ng.services.formatting import format_file_size, format_title_by_words
 from ng.services.pdf import PDFManager
 
 
@@ -319,11 +319,7 @@ class DatabaseHealthService:
                 missing_pdf_details.append(
                     {
                         "paper_id": paper.id,
-                        "title": (
-                            paper.title[:50] + "..."
-                            if paper.title and len(paper.title) > 50
-                            else paper.title
-                        ),
+                        "title": format_title_by_words(paper.title or ""),
                         "pdf_path": "No PDF path set",
                         "resolved_path": "N/A",
                         "path_type": "none",
@@ -349,11 +345,7 @@ class DatabaseHealthService:
                         missing_pdf_details.append(
                             {
                                 "paper_id": paper.id,
-                                "title": (
-                                    paper.title[:50] + "..."
-                                    if paper.title and len(paper.title) > 50
-                                    else paper.title
-                                ),
+                                "title": format_title_by_words(paper.title or ""),
                                 "pdf_path": paper.pdf_path,
                                 "resolved_path": str(full_path),
                                 "path_type": (

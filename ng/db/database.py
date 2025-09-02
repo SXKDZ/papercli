@@ -12,6 +12,7 @@ from alembic.config import Config
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
+import ng
 from ng.db.models import Base
 
 
@@ -52,8 +53,6 @@ class DatabaseManager:
 
             if not os.path.exists(str(alembic_ini_path)):
                 # Look for it relative to the ng package (installed package)
-                import ng
-
                 ng_path = Path(ng.__file__).parent
                 alembic_ini_path = ng_path / "alembic.ini"
                 alembic_dir = ng_path / "alembic"
