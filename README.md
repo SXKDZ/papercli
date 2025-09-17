@@ -198,6 +198,7 @@ Work on the paper under the cursor ► or selected papers ✓:
   - `/config temperature <number>` - Set OpenAI temperature (default: 0.7)
   - `/config remote <path>` - Set remote sync path for OneDrive
   - `/config auto-sync enable|disable` - Enable/disable automatic sync after edits
+  - `/config auto-sync-interval <seconds>` - Set auto-sync interval (default: 5s)
   - `/config pdf-pages <number>` - Set PDF pages limit for chat/summarize operations
   - `/config help` - Show configuration help
 - `/version` - Version management and updates
@@ -237,6 +238,7 @@ export PAPERCLI_PDF_PAGES=10  # defaults to 10 pages for chat/summarize
 export PAPERCLI_THEME=textual-dark  # defaults to textual-dark
 export PAPERCLI_REMOTE_PATH=/path/to/remote  # OneDrive sync path
 export PAPERCLI_AUTO_SYNC=true  # defaults to false
+export PAPERCLI_AUTO_SYNC_INTERVAL=5  # defaults to 5 seconds
 ```
 
 ### Method 2: .env File
@@ -265,6 +267,7 @@ PAPERCLI_THEME=textual-dark
 # OneDrive sync settings (optional)
 PAPERCLI_REMOTE_PATH=/path/to/onedrive/folder
 PAPERCLI_AUTO_SYNC=false
+PAPERCLI_AUTO_SYNC_INTERVAL=5
 ```
 
 ### Data Storage

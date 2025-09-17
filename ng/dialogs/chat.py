@@ -201,7 +201,7 @@ class ChatDialog(ModalScreen):
             background_service=self.background_service,
             app=None,
         )
-        self.system_service = SystemService(self.pdf_manager)
+        self.system_service = SystemService(self.pdf_manager, app=self.app)
 
         # Initialize OpenAI client
         api_key = os.getenv("OPENAI_API_KEY")
@@ -351,7 +351,6 @@ class ChatDialog(ModalScreen):
             )
 
         self._build_initial_chat_content()
-
 
     def _format_paper_info(self, paper, index):
         """Format paper information for display (app version logic)."""
@@ -591,10 +590,9 @@ class ChatDialog(ModalScreen):
             chat_container = self.query_one("#chat-history", VerticalScroll)
             chat_container.scroll_end(animate=False)
         else:
-            if self.app:
-                self.app._add_log(
-                    "chat_stream_error", "No streaming widget found for content update"
-                )
+            self.app._add_log(
+                "chat_stream_error", "No streaming widget found for content update"
+            )
 
     def on_streaming_complete(self, message: StreamingComplete) -> None:
         """Handle streaming completion."""
@@ -618,16 +616,15 @@ class ChatDialog(ModalScreen):
         self._enable_buttons()
 
         # Log successful completion with token usage
-        if self.app:
-            response_preview = (
-                message.final_content[:100] + "..."
-                if len(message.final_content) > 100
-                else message.final_content
-            )
-            self.app._add_log(
-                "chat_response",
-                f"LLM response completed: {response_preview} (~{self._input_tokens} input, ~{self._output_tokens} output tokens)",
-            )
+        response_preview = (
+            message.final_content[:100] + "..."
+            if len(message.final_content) > 100
+            else message.final_content
+        )
+        self.app._add_log(
+            "chat_response",
+            f"LLM response completed: {response_preview} (~{self._input_tokens} input, ~{self._output_tokens} output tokens)",
+        )
 
         # Ensure we have some response
         if not message.final_content.strip():
@@ -635,18 +632,16 @@ class ChatDialog(ModalScreen):
                 self.chat_history[-1][
                     "content"
                 ] = "No response received from the AI model."
-                if self.app:
-                    self.app._add_log(
-                        "chat_stream_warning", "Received empty response from LLM"
-                    )
+                self.app._add_log(
+                    "chat_stream_warning", "Received empty response from LLM"
+                )
             self._update_display()
 
     def on_streaming_error(self, message: StreamingError) -> None:
         """Handle streaming errors."""
-        if self.app:
-            self.app._add_log(
-                "chat_stream_error", f"LLM streaming failed: {message.error_message}"
-            )
+        self.app._add_log(
+            "chat_stream_error", f"LLM streaming failed: {message.error_message}"
+        )
 
         # Replace the last message with error and re-enable input
         if self.chat_history:
@@ -692,14 +687,13 @@ class ChatDialog(ModalScreen):
         self.chat_history.append({"role": "user", "content": user_content})
 
         # Log the user message
-        if self.app:
-            user_preview = (
-                user_message[:100] + "..." if len(user_message) > 100 else user_message
-            )
-            self.app._add_log(
-                "chat_user",
-                f"User: {user_preview} ({len(user_message)} characters total)",
-            )
+        user_preview = (
+            user_message[:100] + "..." if len(user_message) > 100 else user_message
+        )
+        self.app._add_log(
+            "chat_user",
+            f"User: {user_preview} ({len(user_message)} characters total)",
+        )
 
         # Clear input and disable UI during response
         user_input.value = ""
@@ -727,10 +721,9 @@ class ChatDialog(ModalScreen):
                 # Build messages
                 messages = self._build_conversation_messages(user_message)
 
-                if self.app:
-                    self.app._add_log(
-                        "chat_api_call", f"Sending to OpenAI {self.model_name}"
-                    )
+                self.app._add_log(
+                    "chat_api_call", f"Sending to OpenAI {self.model_name}"
+                )
 
                 # Get response with model-specific parameters using centralized utility
                 params = LLMModelUtils.get_model_parameters(self.model_name)
@@ -966,7 +959,6 @@ class ChatDialog(ModalScreen):
             # Controls might not be mounted yet
             pass
 
-
     def _handle_save(self):
         """Handle saving the chat to a file with PDF naming convention and file opening."""
         if not self.chat_history:
@@ -979,7 +971,9 @@ class ChatDialog(ModalScreen):
             chats_dir = data_dir / "chats"
 
             # Generate filename and create safe filepath
-            filename = DialogUtilsService.generate_filename_from_paper(self.papers[0], ".md")
+            filename = DialogUtilsService.generate_filename_from_paper(
+                self.papers[0], ".md"
+            )
             final_filepath = DialogUtilsService.create_safe_filename(
                 filename, chats_dir
             )

@@ -16,6 +16,7 @@ from ng.commands import (
 from ng.db.database import init_database
 from ng.screens.main_screen import MainScreen
 from ng.services import (
+    AutoSyncService,
     BackgroundOperationService,
     MetadataExtractor,
     PaperService,
@@ -23,6 +24,7 @@ from ng.services import (
     PDFService,
     SystemService,
 )
+from ng.version import get_version
 from ng.widgets.command_input import CommandInput
 from ng.widgets.log_panel import LogPanel
 
@@ -90,12 +92,19 @@ class PaperCLIApp(App):
         )
         self.system_service = SystemService(pdf_manager=self.pdf_manager, app=self)
 
+        # Initialize auto-sync
+        self.auto_sync_service = AutoSyncService(app=self)
+        self.auto_sync_service.start_if_enabled()
+
         # Initialize CommandHandlers after MainScreen is pushed
         self.system_commands = SystemCommandHandler(self)
         self.search_commands = SearchCommandHandler(self)
         self.paper_commands = PaperCommandHandler(self)
         self.collection_commands = CollectionCommandHandler(self)
         self.export_commands = ExportCommandHandler(self)
+
+        # Set terminal title for supported terminals (iTerm2, xterm, etc.)
+        self._set_terminal_title()
 
     def _add_log(self, action: str, details: str):
         """Add a log entry and update log panel if visible."""
@@ -104,13 +113,9 @@ class PaperCLIApp(App):
         )
 
         # Directly update log panel if it's visible
-        try:
-            if self.main_screen:
-                log_panel = self.main_screen.query_one(LogPanel)
-                log_panel.refresh_if_visible()
-        except Exception:
-            # Ignore errors if log panel doesn't exist or isn't available
-            pass
+        if self.main_screen:
+            log_panel = self.main_screen.query_one(LogPanel)
+            log_panel.refresh_if_visible()
 
     def load_papers(self):
         """Load papers from database and update the PaperList widget."""
@@ -138,6 +143,12 @@ class PaperCLIApp(App):
 
         except Exception as e:
             self._add_log("load_papers_error", f"Error loading papers: {e}")
+
+    def _set_terminal_title(self) -> None:
+        """Set terminal window title using standard OSC escape sequence."""
+        title = f"PaperCLI v{get_version()}"
+        sys.stdout.write(f"\033]0;{title}\007")
+        sys.stdout.flush()
 
     def action_cursor_up(self) -> None:
         """Move cursor up in paper list."""

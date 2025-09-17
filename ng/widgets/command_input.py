@@ -191,6 +191,7 @@ class CommandInput(Container):
                     "openai_api_key": "Set OpenAI API key",
                     "remote": "Set remote sync path",
                     "auto-sync": "Enable/disable auto-sync",
+                    "auto-sync-interval": "Set auto-sync interval (seconds)",
                     "help": "Show configuration help",
                 },
                 "model_options": {

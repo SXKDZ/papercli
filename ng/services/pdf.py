@@ -277,10 +277,7 @@ class PDFManager:
                     and os.path.exists(old_pdf_path)
                     and old_pdf_path != target_path
                 ):
-                    try:
-                        os.remove(old_pdf_path)
-                    except Exception:
-                        pass  # Don't fail if cleanup fails
+                    os.remove(old_pdf_path)
 
                 # Return relative path from PDF directory
                 relative_path = os.path.relpath(target_path, self.pdf_dir)
@@ -299,10 +296,7 @@ class PDFManager:
                         and os.path.exists(old_pdf_path)
                         and old_pdf_path != new_path
                     ):
-                        try:
-                            os.remove(old_pdf_path)
-                        except Exception:
-                            pass  # Don't fail if cleanup fails
+                        os.remove(old_pdf_path)
 
                     # Return relative path from PDF directory
                     relative_path = os.path.relpath(new_path, self.pdf_dir)

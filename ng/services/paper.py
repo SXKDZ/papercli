@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime
+from pluralizer import Pluralizer
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import text
@@ -16,8 +17,9 @@ from ng.services.pdf import PDFManager
 class PaperService:
     """Service for managing papers."""
 
-    def __init__(self, app=None):
+    def __init__(self, app):
         self.app = app
+        self._pluralizer = Pluralizer()
 
     def get_all_papers(self) -> List[Paper]:
         """Get all papers ordered by added date (newest first)."""
@@ -80,6 +82,15 @@ class PaperService:
                     "paper_add",
                     f"Added paper ID {paper.id}: '{title_preview}'",
                 )
+                # Enqueue auto-sync operation
+                if hasattr(self.app, "auto_sync_service"):
+                    self.app.auto_sync_service.enqueue(
+                        {
+                            "resource": "paper",
+                            "op": "add",
+                            "id": paper.id,
+                        }
+                    )
 
             return paper
 
@@ -235,6 +246,15 @@ class PaperService:
                             "paper_update_pdf_warning",
                             f"PDF warning for paper {paper.id}: {pdf_error}",
                         )
+                    # Enqueue auto-sync operation
+                    if hasattr(self.app, "auto_sync_service"):
+                        self.app.auto_sync_service.enqueue(
+                            {
+                                "resource": "paper",
+                                "op": "edit",
+                                "id": paper.id,
+                            }
+                        )
 
                 return paper, pdf_error
 
@@ -252,6 +272,11 @@ class PaperService:
         with get_db_session() as session:
             paper = session.query(Paper).filter(Paper.id == paper_id).first()
             if paper:
+                # Capture info before deletion for auto-sync intents
+                deleted_title = paper.title
+                deleted_pdf_filename = (
+                    os.path.basename(paper.pdf_path) if paper.pdf_path else None
+                )
                 if self.app:
                     self.app._add_log(
                         "paper_delete_start",
@@ -268,6 +293,17 @@ class PaperService:
                         "paper_delete",
                         f"Deleted paper ID {paper_id}",
                     )
+                    # Enqueue auto-sync operation
+                    if hasattr(self.app, "auto_sync_service"):
+                        self.app.auto_sync_service.enqueue(
+                            {
+                                "resource": "paper",
+                                "op": "delete",
+                                "id": paper_id,
+                                "title": deleted_title,
+                                "pdf_filename": deleted_pdf_filename,
+                            }
+                        )
                 return True
             return False
 
@@ -280,7 +316,17 @@ class PaperService:
             if not papers_to_delete:
                 return 0
 
+            intents = []
             for paper in papers_to_delete:
+                intents.append(
+                    {
+                        "id": paper.id,
+                        "title": paper.title,
+                        "pdf_filename": (
+                            os.path.basename(paper.pdf_path) if paper.pdf_path else None
+                        ),
+                    }
+                )
                 if paper.pdf_path:
                     self._delete_pdf_file(paper.pdf_path, paper.id)
                 if self.app:
@@ -292,14 +338,15 @@ class PaperService:
 
             session.commit()
             if self.app:
-                self.app._add_log(
-                    "paper_delete",
-                    (
-                        "Deleted "
-                        f"{len(papers_to_delete)} papers: "
-                        + ", ".join(str(p.id) for p in papers_to_delete)
-                    ),
-                )
+                # Enqueue auto-sync operation (bulk)
+                if hasattr(self.app, "auto_sync_service"):
+                    self.app.auto_sync_service.enqueue(
+                        {
+                            "resource": "paper",
+                            "op": "bulk_delete",
+                            "items": intents,
+                        }
+                    )
             return len(papers_to_delete)
 
     def _delete_pdf_file(
@@ -425,6 +472,15 @@ class PaperService:
                         f"{len(authors)} author(s)"
                     ),
                 )
+                # Enqueue auto-sync operation
+                if hasattr(self.app, "auto_sync_service"):
+                    self.app.auto_sync_service.enqueue(
+                        {
+                            "resource": "paper",
+                            "op": "add",
+                            "id": paper_with_relationships.id,
+                        }
+                    )
 
             return paper_with_relationships
 

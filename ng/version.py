@@ -7,13 +7,14 @@ import os
 import subprocess
 import sys
 from datetime import datetime, timedelta
+from importlib.metadata import version as pkg_version
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
 import requests
 from packaging import version
 
-__version__ = "2.0.3"
+__version__ = pkg_version("papercli")
 
 
 class VersionManager:

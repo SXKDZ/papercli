@@ -274,7 +274,6 @@ class CollectDialog(ModalScreen):
             or collection_name in self.new_collections
         )
 
-
     def _is_paper_changed(self, paper_id: int) -> bool:
         """Check if a paper has been moved to/from collections."""
         return any(move[0] == paper_id for move in self.paper_moves)
@@ -486,7 +485,9 @@ class CollectDialog(ModalScreen):
                     "-editing"
                 ):
                     if DialogUtilsService.is_double_click(
-                        list_item.id, self._last_click_time, self.DOUBLE_CLICK_THRESHOLD_S
+                        list_item.id,
+                        self._last_click_time,
+                        self.DOUBLE_CLICK_THRESHOLD_S,
                     ):
 
                         # This is a double-click - start editing

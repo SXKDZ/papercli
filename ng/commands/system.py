@@ -8,6 +8,7 @@ import requests
 from openai import OpenAI
 
 from ng.commands import CommandHandler
+from pluralizer import Pluralizer
 from ng.dialogs import ConfigDialog, DoctorDialog, MessageDialog, SyncDialog
 from ng.services import DatabaseHealthService, SyncService
 from ng.version import VersionManager
@@ -22,9 +23,12 @@ class SystemCommandHandler(CommandHandler):
     def __init__(self, app: PaperCLIApp):
         super().__init__(app)
         self.version_manager = VersionManager()
+        # Initialize with db_path and app so internal logging goes to Log panel
         self.db_health_service = DatabaseHealthService(
-            db_path=self.app.db_path
-        )  # Initialize with db_path
+            db_path=self.app.db_path,
+            app=self.app,
+        )
+        self._pluralizer = Pluralizer()
 
     def handle_log_command(self):
         """Handle /log command - toggle log panel."""
@@ -75,13 +79,23 @@ class SystemCommandHandler(CommandHandler):
 
                     cleanup_summary = []
                     if total_cleaned_records > 0:
-                        cleanup_summary.append(f"{total_cleaned_records} records")
+                        cleanup_summary.append(
+                            self._pluralizer.pluralize(
+                                "record", total_cleaned_records, True
+                            )
+                        )
                     if total_cleaned_pdfs > 0:
-                        cleanup_summary.append(f"{total_cleaned_pdfs} PDFs")
+                        cleanup_summary.append(
+                            self._pluralizer.pluralize("PDF", total_cleaned_pdfs, True)
+                        )
                     if total_fixed_paths > 0:
-                        cleanup_summary.append(f"{total_fixed_paths} paths")
+                        cleanup_summary.append(
+                            self._pluralizer.pluralize("path", total_fixed_paths, True)
+                        )
                     if total_renamed > 0:
-                        cleanup_summary.append(f"{total_renamed} filenames")
+                        cleanup_summary.append(
+                            self._pluralizer.pluralize("filename", total_renamed, True)
+                        )
 
                     if cleanup_summary:
                         self.app.notify(
@@ -92,6 +106,26 @@ class SystemCommandHandler(CommandHandler):
                         self.app.notify(
                             "Database cleanup complete", severity="information"
                         )
+
+                    # Trigger auto-sync if enabled and available
+                    try:
+                        if hasattr(self.app, "auto_sync_service") and self.app.auto_sync_service:
+                            # Provide a specific op marker for observability
+                            self.app.auto_sync_service.enqueue(
+                                {
+                                    "resource": "system",
+                                    "op": "doctor_clean",
+                                    "summary": {
+                                        "records": total_cleaned_records,
+                                        "pdfs": total_cleaned_pdfs,
+                                        "paths": total_fixed_paths,
+                                        "renamed": total_renamed,
+                                    },
+                                }
+                            )
+                    except Exception:
+                        # Non-fatal: cleaning succeeded even if enqueue fails
+                        pass
                 else:
                     self.app.notify(
                         "No issues found - database is clean", severity="information"
@@ -557,6 +591,26 @@ Notes:
                         )
                 return
 
+            elif action == "auto-sync-interval":
+                if len(args) < 2:
+                    self._show_current_auto_sync_interval()
+                else:
+                    try:
+                        seconds = int(args[1])
+                        if seconds > 0:
+                            self._set_auto_sync_interval(seconds)
+                        else:
+                            self.app.notify(
+                                "Auto-sync interval must be a positive number",
+                                severity="error",
+                            )
+                    except ValueError:
+                        self.app.notify(
+                            "Auto-sync interval must be a valid number",
+                            severity="error",
+                        )
+                return
+
             elif action == "pdf-pages":
                 if len(args) < 2:
                     self._show_current_pdf_pages()
@@ -659,6 +713,10 @@ Notes:
                         "No configuration changes made", severity="information"
                     )
 
+                # Inform auto-sync service of relevant changes
+                if hasattr(self.app, "auto_sync_service"):
+                    self.app.auto_sync_service.on_config_changed(changes)
+
         self.app.push_screen(ConfigDialog(callback=config_callback))
 
     def _show_config_help(self):
@@ -686,6 +744,8 @@ Notes:
             "- `/config auto-sync` — Show current auto-sync setting",
             "- `/config auto-sync enable` — Enable auto-sync after edits",
             "- `/config auto-sync disable` — Disable auto-sync",
+            "- `/config auto-sync-interval` — Show current auto-sync interval (seconds)",
+            "- `/config auto-sync-interval <seconds>` — Set auto-sync interval",
             "- `/config pdf-pages` — Show current PDF pages limit for chat/summarize",
             "- `/config pdf-pages <number>` — Set PDF pages limit (e.g., 15, 20)",
             "- `/config theme` — Show current theme",
@@ -708,6 +768,7 @@ Notes:
             "/config openai_api_key sk-...",
             "/config remote ~/OneDrive/papercli-sync",
             "/config auto-sync enable",
+            "/config auto-sync-interval 5",
             "/config pdf-pages 15",
             "/config theme dark",
             "/config theme light",
@@ -960,6 +1021,11 @@ gpt-3.5-turbo                   - GPT-3.5 Turbo model (faster, cheaper)"""
             self.app.notify(
                 f"Remote sync path set to: {expanded_path}", severity="information"
             )
+            # Notify auto-sync service
+            if hasattr(self.app, "auto_sync_service"):
+                self.app.auto_sync_service.on_config_changed(
+                    {"PAPERCLI_REMOTE_PATH": expanded_path}
+                )
             # self._add_log("config_remote", f"Remote sync path changed to: {expanded_path}") # Need to implement logging
         else:
             self.app.notify("Failed to save remote path to .env file", severity="error")
@@ -984,10 +1050,47 @@ gpt-3.5-turbo                   - GPT-3.5 Turbo model (faster, cheaper)"""
         if self._write_env_file(env_vars):
             status = "enabled" if enabled else "disabled"
             self.app.notify(f"Auto-sync {status}", severity="information")
+            # Notify auto-sync service
+            if hasattr(self.app, "auto_sync_service"):
+                self.app.auto_sync_service.on_config_changed(
+                    {"PAPERCLI_AUTO_SYNC": value}
+                )
             # self._add_log("config_auto_sync", f"Auto-sync {status}") # Need to implement logging
         else:
             self.app.notify(
                 "Failed to save auto-sync setting to .env file", severity="error"
+            )
+
+    def _show_current_auto_sync_interval(self):
+        """Show current auto-sync interval in seconds."""
+        interval = int(os.getenv("PAPERCLI_AUTO_SYNC_INTERVAL", "5"))
+        self.app.notify(
+            f"Auto-sync interval: {interval} seconds", severity="information"
+        )
+
+    def _set_auto_sync_interval(self, seconds: int):
+        """Set the auto-sync interval seconds."""
+        value = str(seconds)
+
+        # Update environment variable
+        os.environ["PAPERCLI_AUTO_SYNC_INTERVAL"] = value
+
+        # Update .env file
+        env_vars = self._read_env_file()
+        env_vars["PAPERCLI_AUTO_SYNC_INTERVAL"] = value
+
+        if self._write_env_file(env_vars):
+            self.app.notify(
+                f"Auto-sync interval set to: {seconds} seconds", severity="information"
+            )
+            # Notify auto-sync service
+            if hasattr(self.app, "auto_sync_service"):
+                self.app.auto_sync_service.on_config_changed(
+                    {"PAPERCLI_AUTO_SYNC_INTERVAL": value}
+                )
+        else:
+            self.app.notify(
+                "Failed to save auto-sync interval to .env file", severity="error"
             )
 
     def _show_current_pdf_pages(self):
@@ -1076,6 +1179,7 @@ gpt-3.5-turbo                   - GPT-3.5 Turbo model (faster, cheaper)"""
         temperature = os.getenv("OPENAI_TEMPERATURE", "0.7")
         remote_path = os.getenv("PAPERCLI_REMOTE_PATH", "Not set")
         auto_sync = os.getenv("PAPERCLI_AUTO_SYNC", "false").lower() == "true"
+        auto_sync_interval = int(os.getenv("PAPERCLI_AUTO_SYNC_INTERVAL", "5"))
         pdf_pages = int(os.getenv("PAPERCLI_PDF_PAGES", "10"))
         theme = os.getenv("PAPERCLI_THEME", getattr(self.app, "theme", "textual-dark"))
 
@@ -1101,6 +1205,7 @@ gpt-3.5-turbo                   - GPT-3.5 Turbo model (faster, cheaper)"""
             f"- **OpenAI API Key**: `{masked_key}`",
             f"- **Remote Sync Path**: `{remote_path}`",
             f"- **Auto-sync**: `{auto_sync_status}`",
+            f"- **Auto-sync Interval (s)**: `{auto_sync_interval}`",
             f"- **PDF Pages Limit**: `{pdf_pages}`",
             f"- **Theme**: `{theme}`",
             "",
@@ -1118,6 +1223,7 @@ gpt-3.5-turbo                   - GPT-3.5 Turbo model (faster, cheaper)"""
             "/config openai_api_key <key>",
             "/config remote <path>",
             "/config auto-sync enable|disable",
+            "/config auto-sync-interval <seconds>",
             "/config pdf-pages <number>",
             "/config theme <theme_name>",
             "```",
@@ -1194,8 +1300,6 @@ gpt-3.5-turbo                   - GPT-3.5 Turbo model (faster, cheaper)"""
                 if result:
                     # Refresh papers after successful sync
                     self.app.load_papers()
-                    if hasattr(self.app, "main_screen") and self.app.main_screen:
-                        self.app.main_screen.refresh_papers()
 
             self.app.push_screen(
                 SyncDialog(

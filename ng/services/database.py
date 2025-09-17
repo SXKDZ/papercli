@@ -597,7 +597,7 @@ class DatabaseHealthService:
             session.commit()
             self._add_log(
                 "clean_records",
-                f"Cleaned {cleaned_counts['paper_collections']} paper-collections and {cleaned_counts['paper_authors']} paper-authors.",
+                f"Cleaned {cleaned_counts['paper_collections']} paper-collections and {cleaned_counts['paper_authors']} paper-authors",
             )
         except Exception as e:
             session.rollback()
@@ -695,15 +695,27 @@ class DatabaseHealthService:
                     if old_path.exists():
                         # Generate new filename based on convention using PDFManager
                         # Convert Paper object to dictionary format expected by PDFManager
+                        # IMPORTANT: use ordered authors so first entry is the first author
+                        author_names: list[str] = []
+                        ordered = (
+                            paper.get_ordered_authors()
+                            if hasattr(paper, "get_ordered_authors")
+                            else list(paper.authors or [])
+                        )
+                        for author in ordered:
+                            name = (getattr(author, "full_name", "") or "").strip()
+                            if not name:
+                                parts = []
+                                if getattr(author, "first_name", None):
+                                    parts.append(author.first_name)
+                                if getattr(author, "last_name", None):
+                                    parts.append(author.last_name)
+                                name = " ".join(parts).strip()
+                            if name:
+                                author_names.append(name)
+
                         paper_data = {
-                            "authors": (
-                                [
-                                    f"{author.first_name} {author.last_name}".strip()
-                                    for author in paper.authors
-                                ]
-                                if paper.authors
-                                else []
-                            ),
+                            "authors": author_names,
                             "year": paper.year,
                             "title": paper.title,
                         }

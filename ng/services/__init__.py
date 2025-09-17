@@ -19,8 +19,8 @@ from .pdf import (
     PDFDownloadTaskFactory,
 )
 from .background import BackgroundOperationService
+from .auto_sync import AutoSyncService
 from .validation import ValidationService
-from .author import AuthorService
 from .collection import CollectionService
 from .search import SearchService
 from .export import ExportService
@@ -49,8 +49,8 @@ from .paper_tracker import PaperChangeTracker
 
 __all__ = [
     "AddPaperService",
-    "AuthorService",
     "BackgroundOperationService",
+    "AutoSyncService",
     "ChatService",
     "CollectionService",
     "DatabaseHealthService",

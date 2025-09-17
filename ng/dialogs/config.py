@@ -145,6 +145,7 @@ class ConfigDialog(ModalScreen):
             "OPENAI_TEMPERATURE": "0.7",
             "PAPERCLI_REMOTE_PATH": "",
             "PAPERCLI_AUTO_SYNC": "false",
+            "PAPERCLI_AUTO_SYNC_INTERVAL": "5",
             "PAPERCLI_PDF_PAGES": "10",
             "PAPERCLI_THEME": "textual-dark",
         }
@@ -316,6 +317,19 @@ class ConfigDialog(ModalScreen):
                                     id="auto-sync-disable",
                                 )
 
+                        # Auto-sync interval
+                        with Horizontal(classes="form-row"):
+                            yield Label("Auto-sync Interval (s):", classes="form-label")
+                            auto_sync_interval = os.getenv(
+                                "PAPERCLI_AUTO_SYNC_INTERVAL", "5"
+                            )
+                            yield Input(
+                                value=str(auto_sync_interval),
+                                placeholder="5",
+                                id="auto-sync-interval-input",
+                                classes="form-input",
+                            )
+
                 # PDF Tab
                 with TabPane("PDF", id="pdf-tab"):
                     with VerticalScroll():
@@ -355,7 +369,6 @@ class ConfigDialog(ModalScreen):
                 yield Button("Cancel", id="cancel-button", variant="default")
                 yield Button("Reset", id="reset-button", variant="warning")
 
-
     def on_select_changed(self, event: Select.Changed) -> None:
         """Handle model and theme selection changes."""
         if event.select.id == "model-select":
@@ -389,6 +402,9 @@ class ConfigDialog(ModalScreen):
             temperature_input = self.query_one("#temperature-input", Input)
             remote_path_input = self.query_one("#remote-path-input", Input)
             auto_sync_radio_set = self.query_one("#auto-sync-radio-set", RadioSet)
+            auto_sync_interval_input = self.query_one(
+                "#auto-sync-interval-input", Input
+            )
             pdf_pages_input = self.query_one("#pdf-pages-input", Input)
             theme_radio_set = self.query_one("#theme-radio-set", RadioSet)
 
@@ -418,6 +434,16 @@ class ConfigDialog(ModalScreen):
                 self.notify(f"PDF pages error: {error_msg}", severity="error")
                 return
 
+            # Validate auto-sync interval
+            is_valid, error_msg, auto_sync_interval = (
+                DialogUtilsService.validate_numeric_input(
+                    auto_sync_interval_input.value, min_val=1, input_type="int"
+                )
+            )
+            if not is_valid:
+                self.notify(f"Auto-sync interval error: {error_msg}", severity="error")
+                return
+
             # Prepare changes
             changes = {}
 
@@ -432,7 +458,9 @@ class ConfigDialog(ModalScreen):
 
             # API Key (handle masking)
             original_key = os.getenv("OPENAI_API_KEY", "")
-            new_key = DialogUtilsService.unmask_api_key(api_key_input.text, original_key)
+            new_key = DialogUtilsService.unmask_api_key(
+                api_key_input.text, original_key
+            )
             if new_key != original_key:
                 if new_key and not new_key.startswith("sk-"):
                     self.notify(
@@ -465,6 +493,10 @@ class ConfigDialog(ModalScreen):
                 )
             if auto_sync_value != os.getenv("PAPERCLI_AUTO_SYNC", "false"):
                 changes["PAPERCLI_AUTO_SYNC"] = auto_sync_value
+
+            # Auto-sync interval
+            if str(auto_sync_interval) != os.getenv("PAPERCLI_AUTO_SYNC_INTERVAL", "5"):
+                changes["PAPERCLI_AUTO_SYNC_INTERVAL"] = str(auto_sync_interval)
 
             # PDF Pages
             if str(pdf_pages) != os.getenv("PAPERCLI_PDF_PAGES", "10"):
@@ -585,6 +617,13 @@ class ConfigDialog(ModalScreen):
             )
             auto_sync_enable.value = is_auto_sync_enabled
             auto_sync_disable.value = not is_auto_sync_enabled
+
+            auto_sync_interval_input = self.query_one(
+                "#auto-sync-interval-input", Input
+            )
+            auto_sync_interval_input.value = self.default_config[
+                "PAPERCLI_AUTO_SYNC_INTERVAL"
+            ]
 
             pdf_pages_input = self.query_one("#pdf-pages-input", Input)
             pdf_pages_input.value = self.default_config["PAPERCLI_PDF_PAGES"]

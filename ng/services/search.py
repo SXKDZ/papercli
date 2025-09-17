@@ -11,7 +11,7 @@ from ng.db.models import Author, Collection, Paper, PaperAuthor
 class SearchService:
     """Service for searching and filtering papers."""
 
-    def __init__(self, app=None):
+    def __init__(self, app):
         self.app = app
 
     def search_papers(self, query: str, fields: List[str] = None) -> List[Paper]:
@@ -69,11 +69,10 @@ class SearchService:
 
                 # Expunge to make detached but accessible
                 session.expunge_all()
-                if self.app:
-                    self.app._add_log(
-                        "search_query",
-                        f"Search '{query}' in fields {fields} → {len(papers)} result(s)",
-                    )
+                self.app._add_log(
+                    "search_query",
+                    f"Search '{query}' in fields {fields} → {len(papers)} result(s)",
+                )
                 return papers
             return []
 
@@ -136,11 +135,10 @@ class SearchService:
             # Expunge to make detached but accessible
             session.expunge_all()
             results = [paper for paper, score in scored_papers]
-            if self.app:
-                self.app._add_log(
-                    "search_fuzzy",
-                    f"Fuzzy search '{query}' (threshold={threshold}) → {len(results)} result(s)",
-                )
+            self.app._add_log(
+                "search_fuzzy",
+                f"Fuzzy search '{query}' (threshold={threshold}) → {len(results)} result(s)",
+            )
             return results
 
     def filter_papers(self, filters: Dict[str, Any]) -> List[Paper]:
@@ -204,9 +202,8 @@ class SearchService:
 
             # Expunge to make detached but accessible
             session.expunge_all()
-            if self.app:
-                self.app._add_log(
-                    "search_filter",
-                    f"Applied filters {filters} → {len(papers)} result(s)",
-                )
+            self.app._add_log(
+                "search_filter",
+                f"Applied filters {filters} → {len(papers)} result(s)",
+            )
             return papers

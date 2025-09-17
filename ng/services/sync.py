@@ -8,7 +8,7 @@ import sqlite3
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from pluralizer import Pluralizer
 
@@ -143,8 +143,8 @@ class SyncService:
         self,
         local_data_dir: str,
         remote_data_dir: str,
+        app,
         progress_callback=None,
-        app=None,
     ):
         self.local_data_dir = Path(local_data_dir)
         self.remote_data_dir = Path(remote_data_dir)
@@ -234,6 +234,8 @@ class SyncService:
 
         # Clear title mappings from any previous sync
         self.title_mappings.clear()
+        # Remember mode for downstream helpers (collections policy)
+        self._auto_sync_mode = bool(auto_sync_mode)
 
         if self.app:
             self.app._add_log("sync_start", "Starting database synchronization")
@@ -282,9 +284,9 @@ class SyncService:
                 self.progress_callback("Analyzing differences...")
             operations = self._generate_sync_operations()
             if self.app:
-                self.app._add_log(
-                    "sync_operations", f"Generated {len(operations)} sync operations"
-                )
+                count_ops = len(operations)
+                ops_text = _pluralizer.pluralize("sync operation", count_ops, True)
+                self.app._add_log("sync_operations", f"Generated {ops_text}")
             time.sleep(0.1)
 
             if not operations:
@@ -301,9 +303,12 @@ class SyncService:
                     changes = result.changes_applied
                     total_changes = sum(changes.values())
                     if total_changes > 0:
+                        total_text = _pluralizer.pluralize(
+                            "change", total_changes, True
+                        )
                         self.app._add_log(
                             "sync_complete",
-                            f"Collection sync complete: {total_changes} changes applied",
+                            f"Collection sync complete: {total_text} applied",
                         )
                     else:
                         self.app._add_log(
@@ -329,9 +334,10 @@ class SyncService:
                 self.progress_callback("Synchronizing remote to local...")
             if self.app:
                 remote_ops = [op for op in operations if op.target == "local"]
+                ops_text = _pluralizer.pluralize("operation", len(remote_ops), True)
                 self.app._add_log(
                     "sync_start",
-                    f"Starting remote→local sync: {len(remote_ops)} operations",
+                    f"Starting remote→local sync: {ops_text}",
                 )
             self._sync_remote_to_local(operations, result)
             time.sleep(0.1)
@@ -340,9 +346,10 @@ class SyncService:
                 self.progress_callback("Synchronizing local to remote...")
             if self.app:
                 local_ops = [op for op in operations if op.target == "remote"]
+                ops_text = _pluralizer.pluralize("operation", len(local_ops), True)
                 self.app._add_log(
                     "sync_start",
-                    f"Starting local→remote sync: {len(local_ops)} operations",
+                    f"Starting local→remote sync: {ops_text}",
                 )
             self._sync_local_to_remote(operations, result)
             time.sleep(0.1)
@@ -356,6 +363,15 @@ class SyncService:
                 )
             self._sync_collections_by_timestamp(result)
             time.sleep(0.1)
+
+            # Step 5: Cleanup orphan PDFs on both sides after paper/path updates
+            try:
+                # Consolidated orphan PDF cleanup for local and remote
+                self._cleanup_orphan_pdfs(self.local_pdf_dir, self.local_db_path, "local")
+                self._cleanup_orphan_pdfs(self.remote_pdf_dir, self.remote_db_path, "remote")
+            except Exception as e:
+                if self.app:
+                    self.app._add_log("sync_cleanup_error", f"PDF cleanup error: {e}")
 
         except Exception as e:
             result.errors.append(f"Sync failed: {str(e)}")
@@ -376,34 +392,43 @@ class SyncService:
                         # Build detailed change summary
                         change_details = []
                         if changes["papers_added"]:
+                            c = changes["papers_added"]
                             change_details.append(
-                                f"{changes['papers_added']} papers added"
+                                f"{_pluralizer.pluralize('paper', c, True)} added"
                             )
                         if changes["papers_updated"]:
+                            c = changes["papers_updated"]
                             change_details.append(
-                                f"{changes['papers_updated']} papers updated"
+                                f"{_pluralizer.pluralize('paper', c, True)} updated"
                             )
                         if changes["collections_added"]:
+                            c = changes["collections_added"]
                             change_details.append(
-                                f"{changes['collections_added']} collections added"
+                                f"{_pluralizer.pluralize('collection', c, True)} added"
                             )
                         if changes["collections_updated"]:
+                            c = changes["collections_updated"]
                             change_details.append(
-                                f"{changes['collections_updated']} collections updated"
+                                f"{_pluralizer.pluralize('collection', c, True)} updated"
                             )
                         if changes["pdfs_copied"]:
+                            c = changes["pdfs_copied"]
                             change_details.append(
-                                f"{changes['pdfs_copied']} PDFs copied"
+                                f"{_pluralizer.pluralize('PDF', c, True)} copied"
                             )
                         if changes["pdfs_updated"]:
+                            c = changes["pdfs_updated"]
                             change_details.append(
-                                f"{changes['pdfs_updated']} PDFs updated"
+                                f"{_pluralizer.pluralize('PDF', c, True)} updated"
                             )
 
                         detailed_summary = "; ".join(change_details)
+                        total_text = _pluralizer.pluralize(
+                            "change", total_changes, True
+                        )
                         self.app._add_log(
                             "sync_success",
-                            f"Sync completed successfully: {total_changes} total changes ({detailed_summary})",
+                            f"Sync completed successfully: {total_text} ({detailed_summary})",
                         )
 
                         # Log specific items that were changed
@@ -411,9 +436,7 @@ class SyncService:
                             if items:
                                 items_preview = items[:5]  # Show first 5 items
                                 more_count = len(items) - len(items_preview)
-                                items_str = ", ".join(
-                                    f"'{item}'" for item in items_preview
-                                )
+                                items_str = ", ".join(item for item in items_preview)
                                 if more_count > 0:
                                     items_str += f" and {more_count} more"
                                 self.app._add_log(
@@ -469,6 +492,55 @@ class SyncService:
 
         return operations
 
+    # --- PDF cleanup helpers ---
+    def _get_referenced_pdf_names(self, db_path: Path) -> set:
+        names: set = set()
+        conn = None
+        try:
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT pdf_path FROM papers WHERE pdf_path IS NOT NULL")
+            for (pdf_path,) in cursor.fetchall():
+                names.add(Path(pdf_path).name)
+        finally:
+            if conn is not None:
+                conn.close()
+        return names
+
+    def _cleanup_orphan_pdfs(self, pdf_dir: Path, db_path: Path, label: str) -> None:
+        if not pdf_dir.exists():
+            return
+        # Prefer existing DatabaseHealthService for local cleanup
+        if label == "local":
+            try:
+                db_health = DatabaseHealthService(app=self.app)
+                res = db_health.clean_orphaned_pdfs()
+                deleted = int(res.get("deleted_pdfs", 0))
+                if self.app and deleted:
+                    self.app._add_log(
+                        "sync_cleanup",
+                        f"Deleted {_pluralizer.pluralize('orphan local PDF', deleted, True)}",
+                    )
+            except Exception as e:
+                if self.app:
+                    self.app._add_log(
+                        "sync_cleanup_error",
+                        f"Local orphan PDF cleanup failed: {e}",
+                    )
+            return
+
+        referenced = self._get_referenced_pdf_names(db_path)
+        deleted = 0
+        for f in pdf_dir.glob("*.pdf"):
+            if f.name not in referenced:
+                f.unlink()
+                deleted += 1
+        if self.app and deleted:
+            self.app._add_log(
+                "sync_cleanup",
+                f"Deleted {_pluralizer.pluralize(f'orphan {label} PDF', deleted, True)}",
+            )
+
     def _generate_pdf_operations(self) -> List[SyncOperation]:
         """Generate PDF sync operations."""
         operations = []
@@ -476,11 +548,33 @@ class SyncService:
         if not (self.local_pdf_dir.exists() and self.remote_pdf_dir.exists()):
             return operations
 
+        # Only consider PDFs that are referenced by papers in respective databases
+        local_papers = self._get_papers_dict(self.local_db_path)
+        remote_papers = self._get_papers_dict(self.remote_db_path)
+
+        def referenced_pdf_names(papers: Dict[int, Dict]) -> set[str]:
+            names = set()
+            for p in papers.values():
+                pdf_path = p.get("pdf_path")
+                if pdf_path:
+                    try:
+                        names.add(Path(pdf_path).name)
+                    except Exception:
+                        pass
+            return names
+
+        local_refs = referenced_pdf_names(local_papers)
+        remote_refs = referenced_pdf_names(remote_papers)
+
         local_pdfs = {
-            f.name: self._get_file_info(f) for f in self.local_pdf_dir.glob("*.pdf")
+            f.name: self._get_file_info(f)
+            for f in self.local_pdf_dir.glob("*.pdf")
+            if f.name in local_refs
         }
         remote_pdfs = {
-            f.name: self._get_file_info(f) for f in self.remote_pdf_dir.glob("*.pdf")
+            f.name: self._get_file_info(f)
+            for f in self.remote_pdf_dir.glob("*.pdf")
+            if f.name in remote_refs
         }
 
         # PDFs that exist in both but are different
@@ -791,9 +885,15 @@ class SyncService:
         remote_collections = self._get_collections_dict(self.remote_db_path)
 
         if self.app:
+            local_text = _pluralizer.pluralize(
+                "local collection", len(local_collections), True
+            )
+            remote_text = _pluralizer.pluralize(
+                "remote collection", len(remote_collections), True
+            )
             self.app._add_log(
                 "sync_collections_info",
-                f"Found {len(local_collections)} local collections, {len(remote_collections)} remote collections",
+                f"Found {local_text}, {remote_text}",
             )
 
         # Create exact name-based lookups
@@ -836,7 +936,7 @@ class SyncService:
                     f"Added collection from remote: '{name}' with {_pluralizer.pluralize('paper', paper_count, True)}",
                 )
 
-        # Collections in both - use latest timestamp
+        # Collections in both - resolve differences
         for name in local_by_name.keys() & remote_by_name.keys():
             local_id, local_data = local_by_name[name]
             remote_id, remote_data = remote_by_name[name]
@@ -846,7 +946,7 @@ class SyncService:
             remote_papers = self._get_collection_papers(self.remote_db_path, remote_id)
 
             if local_papers != remote_papers:
-                # Collections differ - merge them and include any "keep both" versions
+                # Collections differ - merge union and include any "keep both" versions
                 all_papers = local_papers | remote_papers  # Union of both sets
 
                 # Check for any "keep both" papers that should be included
@@ -896,8 +996,8 @@ class SyncService:
                             + "keep_both ("
                             + str(keep_both_count)
                             + ") = "
-                            + str(merged_count)
-                            + " papers total"
+                            + _pluralizer.pluralize("paper", merged_count, True)
+                            + " total"
                         ),
                     )
 
@@ -984,6 +1084,8 @@ class SyncService:
             "category",
             "url",
             "notes",
+            # Include PDF path so filename changes propagate during sync
+            "pdf_path",
         ]
 
         for field in compare_fields:
@@ -1163,6 +1265,24 @@ class SyncService:
                     "DELETE FROM paper_collections WHERE paper_id = ?", (paper_id,)
                 )
                 cursor.execute("DELETE FROM papers WHERE id = ?", (paper_id,))
+                conn.commit()
+        finally:
+            conn.close()
+
+    def _delete_collection_by_name(self, db_path: Path, name: str):
+        """Delete a collection by name, including relationships."""
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT id FROM collections WHERE name = ?", (name,))
+            row = cursor.fetchone()
+            if row:
+                collection_id = row[0]
+                cursor.execute(
+                    "DELETE FROM paper_collections WHERE collection_id = ?",
+                    (collection_id,),
+                )
+                cursor.execute("DELETE FROM collections WHERE id = ?", (collection_id,))
                 conn.commit()
         finally:
             conn.close()
@@ -1384,6 +1504,96 @@ class SyncService:
                     cursor.execute(
                         "INSERT OR IGNORE INTO paper_collections (paper_id, collection_id) VALUES (?, ?)",
                         (paper_row[0], new_collection_id),
+                    )
+            conn.commit()
+        finally:
+            conn.close()
+
+    # ---- Generic DB lookup helpers ----
+    def _collection_id_by_name(self, db_path: Path, name: str) -> Optional[int]:
+        try:
+            conn = sqlite3.connect(db_path)
+            cur = conn.cursor()
+            cur.execute("SELECT id FROM collections WHERE name = ?", (name,))
+            row = cur.fetchone()
+            return int(row[0]) if row else None
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    def _paper_id_by_title(self, db_path: Path, title: str) -> Optional[int]:
+        try:
+            conn = sqlite3.connect(db_path)
+            cur = conn.cursor()
+            cur.execute("SELECT id FROM papers WHERE title = ?", (title,))
+            row = cur.fetchone()
+            return int(row[0]) if row else None
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    def _paper_title_by_id(self, db_path: Path, paper_id: int) -> Optional[str]:
+        try:
+            conn = sqlite3.connect(db_path)
+            cur = conn.cursor()
+            cur.execute("SELECT title FROM papers WHERE id = ?", (paper_id,))
+            row = cur.fetchone()
+            return row[0] if row else None
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    def _collection_name_by_id(self, db_path: Path, collection_id: int) -> Optional[str]:
+        try:
+            conn = sqlite3.connect(db_path)
+            cur = conn.cursor()
+            cur.execute("SELECT name FROM collections WHERE id = ?", (collection_id,))
+            row = cur.fetchone()
+            return row[0] if row else None
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    # ---- Remote collection membership helpers ----
+    def _remote_collection_remove_titles(self, name: str, titles: List[str]) -> None:
+        col_id = self._collection_id_by_name(self.remote_db_path, name)
+        if col_id is None:
+            return
+        conn = sqlite3.connect(self.remote_db_path)
+        try:
+            cur = conn.cursor()
+            for title in titles:
+                pid = self._paper_id_by_title(self.remote_db_path, title)
+                if pid is not None:
+                    cur.execute(
+                        "DELETE FROM paper_collections WHERE paper_id = ? AND collection_id = ?",
+                        (pid, col_id),
+                    )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _remote_collection_add_titles(self, name: str, titles: List[str]) -> None:
+        col_id = self._collection_id_by_name(self.remote_db_path, name)
+        if col_id is None:
+            return
+        conn = sqlite3.connect(self.remote_db_path)
+        try:
+            cur = conn.cursor()
+            for title in titles:
+                pid = self._paper_id_by_title(self.remote_db_path, title)
+                if pid is not None:
+                    cur.execute(
+                        "INSERT OR IGNORE INTO paper_collections (paper_id, collection_id) VALUES (?, ?)",
+                        (pid, col_id),
                     )
             conn.commit()
         finally:

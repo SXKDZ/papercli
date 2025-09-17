@@ -52,6 +52,15 @@ class CollectionService:
                 self.app._add_log(
                     "collection_add", f"Added collection ID {collection.id}: '{name}'"
                 )
+                # Enqueue auto-sync operation
+                if hasattr(self.app, "auto_sync_service"):
+                    self.app.auto_sync_service.enqueue(
+                        {
+                            "resource": "collection",
+                            "op": "add",
+                            "id": collection.id,
+                        }
+                    )
             return collection
 
     def add_papers_to_collection(
@@ -75,11 +84,22 @@ class CollectionService:
                     added_count += 1
             session.commit()
             if self.app and added_count:
+                from pluralizer import Pluralizer
                 paper_list = ", ".join(str(pid) for pid in paper_ids)
+                count_text = Pluralizer().pluralize("paper", added_count, True)
                 self.app._add_log(
                     "collection_add_papers",
-                    f"Added {added_count} paper(s) to '{collection_name}': {paper_list}",
+                    f"Added {count_text} to '{collection_name}': {paper_list}",
                 )
+                if hasattr(self.app, "auto_sync_service"):
+                    self.app.auto_sync_service.enqueue(
+                        {
+                            "resource": "collection",
+                            "op": "add_papers",
+                            "name": collection_name,
+                            "paper_ids": paper_ids,
+                        }
+                    )
             return added_count
 
     def remove_papers_from_collection(
@@ -108,11 +128,22 @@ class CollectionService:
                     )
             session.commit()
             if self.app and removed_count:
+                from pluralizer import Pluralizer
                 paper_list = ", ".join(str(pid) for pid in paper_ids)
+                count_text = Pluralizer().pluralize("paper", removed_count, True)
                 self.app._add_log(
                     "collection_remove_papers",
-                    f"Removed {removed_count} paper(s) from '{collection_name}': {paper_list}",
+                    f"Removed {count_text} from '{collection_name}': {paper_list}",
                 )
+                if hasattr(self.app, "auto_sync_service"):
+                    self.app.auto_sync_service.enqueue(
+                        {
+                            "resource": "collection",
+                            "op": "remove_papers",
+                            "name": collection_name,
+                            "paper_ids": paper_ids,
+                        }
+                    )
             return removed_count, errors
 
     def purge_empty_collections(self) -> int:
@@ -128,7 +159,9 @@ class CollectionService:
             )
 
             deleted_count = 0
+            purged_names = []
             for collection in empty_collections:
+                purged_names.append(collection.name)
                 session.delete(collection)
                 deleted_count += 1
             session.commit()
@@ -136,6 +169,14 @@ class CollectionService:
                 self.app._add_log(
                     "collection_purge", f"Purged {deleted_count} empty collection(s)"
                 )
+                if hasattr(self.app, "auto_sync_service"):
+                    self.app.auto_sync_service.enqueue(
+                        {
+                            "resource": "collection",
+                            "op": "bulk_delete",
+                            "names": purged_names,
+                        }
+                    )
             return deleted_count
 
     def get_or_create_collection(self, name: str) -> Collection:
@@ -155,6 +196,14 @@ class CollectionService:
                     "collection_get_or_create",
                     f"Retrieved or created collection ID {collection.id}: '{name}'",
                 )
+                if hasattr(self.app, "auto_sync_service"):
+                    self.app.auto_sync_service.enqueue(
+                        {
+                            "resource": "collection",
+                            "op": "get_or_create",
+                            "id": collection.id,
+                        }
+                    )
             return collection
 
     def update_collection_name(self, collection_id: int, new_name: str) -> bool:
@@ -170,6 +219,15 @@ class CollectionService:
                         "collection_rename",
                         f"Renamed collection ID {collection_id}: '{old_name}' → '{new_name}'",
                     )
+                    if hasattr(self.app, "auto_sync_service"):
+                        self.app.auto_sync_service.enqueue(
+                            {
+                                "resource": "collection",
+                                "op": "rename",
+                                "id": collection_id,
+                                "name": new_name,
+                            }
+                        )
                 return True
             return False
 
@@ -186,6 +244,15 @@ class CollectionService:
                         "collection_delete",
                         f"Deleted collection ID {collection_id}: '{old_name}'",
                     )
+                    if hasattr(self.app, "auto_sync_service"):
+                        self.app.auto_sync_service.enqueue(
+                            {
+                                "resource": "collection",
+                                "op": "delete",
+                                "id": old_name,
+                                "name": old_name,
+                            }
+                        )
                 return True
             return False
 
@@ -202,6 +269,15 @@ class CollectionService:
                         "collection_add_paper",
                         f"Added paper {paper_id} to collection {collection_id}",
                     )
+                    if hasattr(self.app, "auto_sync_service"):
+                        self.app.auto_sync_service.enqueue(
+                            {
+                                "resource": "collection",
+                                "op": "add_paper",
+                                "collection_id": collection_id,
+                                "paper_id": paper_id,
+                            }
+                        )
                 return True
             return False
 
@@ -218,5 +294,14 @@ class CollectionService:
                         "collection_remove_paper",
                         f"Removed paper {paper_id} from collection {collection_id}",
                     )
+                    if hasattr(self.app, "auto_sync_service"):
+                        self.app.auto_sync_service.enqueue(
+                            {
+                                "resource": "collection",
+                                "op": "remove_paper",
+                                "collection_id": collection_id,
+                                "paper_id": paper_id,
+                            }
+                        )
                 return True
             return False
