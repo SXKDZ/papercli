@@ -6,7 +6,7 @@ from textual.events import Key
 from textual.reactive import reactive
 from textual.widgets import Markdown
 
-from ng.services import ThemeService
+from ng.services import theme
 
 
 class LogPanel(VerticalScroll):
@@ -65,7 +65,7 @@ class LogPanel(VerticalScroll):
 
     def _update_theme_colors(self, mode: str) -> None:
         """Update theme colors based on mode and current theme."""
-        is_light = ThemeService.is_light_theme(app=self.app)
+        is_light = theme.is_light_theme(app=self.app)
 
         if mode == "log":
             if is_light:

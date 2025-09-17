@@ -353,17 +353,17 @@ class AutoSyncService:
         # Apply intended collection membership changes on remote
         for item in coll_remove_items:
             sync_service._remote_collection_remove_titles(item["name"], item["titles"])
-                n = len(item["titles"])
-                self.app._add_log(
-                    "auto_sync_remote_collection",
-                    f"Removed {self._pluralizer.pluralize('paper', n, True)} from remote collection '{item['name']}'",
-                )
+            n = len(item["titles"])
+            self.app._add_log(
+                "auto_sync_remote_collection",
+                f"Removed {self._pluralizer.pluralize('paper', n, True)} from remote collection '{item['name']}'",
+            )
         for item in coll_add_items:
             sync_service._remote_collection_add_titles(item["name"], item["titles"])
-                n = len(item["titles"])
-                self.app._add_log(
-                    "auto_sync_remote_collection",
-                    f"Added {self._pluralizer.pluralize('paper', n, True)} to remote collection '{item['name']}'",
-                )
+            n = len(item["titles"])
+            self.app._add_log(
+                "auto_sync_remote_collection",
+                f"Added {self._pluralizer.pluralize('paper', n, True)} to remote collection '{item['name']}'",
+            )
 
     # ---- Helpers for collection membership intents ----

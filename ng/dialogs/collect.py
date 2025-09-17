@@ -9,7 +9,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, ListItem, ListView, Static
 
 from ng.db.models import Collection, Paper
-from ng.services import DialogUtilsService
+from ng.services import dialog_utils
 from ng.services.formatting import format_title_by_words
 
 
@@ -484,7 +484,7 @@ class CollectDialog(ModalScreen):
                 if list_item.id.startswith("collection-") and not list_item.id.endswith(
                     "-editing"
                 ):
-                    if DialogUtilsService.is_double_click(
+                    if dialog_utils.is_double_click(
                         list_item.id,
                         self._last_click_time,
                         self.DOUBLE_CLICK_THRESHOLD_S,

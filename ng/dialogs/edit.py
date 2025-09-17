@@ -19,7 +19,6 @@ from textual.widgets import (
 )
 
 from ng.services import (
-    AuthorService,
     BackgroundOperationService,
     CollectionService,
     MetadataExtractor,
@@ -287,7 +286,6 @@ class EditDialog(ModalScreen):
             self.background_service = BackgroundOperationService(app=self.parent_app)
 
         self.collection_service = CollectionService()
-        self.author_service = AuthorService()
         self.pdf_manager = PDFManager()
 
         self.input_widgets: Dict[str, Input | TextArea] = {}
@@ -656,15 +654,7 @@ class EditDialog(ModalScreen):
             # Process field values for result
             if field_name == "author_names":
                 names = [name.strip() for name in new_value.split(",") if name.strip()]
-                try:
-                    result["authors"] = [
-                        self.author_service.get_or_create_author(name) for name in names
-                    ]
-                except Exception as e:
-                    if self.parent_app:
-                        error_details = f"Error processing authors: {str(e)}\nFull traceback:\n{traceback.format_exc()}"
-                    # Fallback: just store the names as strings
-                    result["author_names"] = new_value
+                result["authors"] = names
             elif field_name == "collections":
                 names = [name.strip() for name in new_value.split(",") if name.strip()]
                 try:

@@ -6,11 +6,11 @@ from typing import TYPE_CHECKING, List
 
 import requests
 from openai import OpenAI
+from pluralizer import Pluralizer
 
 from ng.commands import CommandHandler
-from pluralizer import Pluralizer
 from ng.dialogs import ConfigDialog, DoctorDialog, MessageDialog, SyncDialog
-from ng.services import DatabaseHealthService, SyncService
+from ng.services import DatabaseHealthService
 from ng.version import VersionManager
 
 if TYPE_CHECKING:

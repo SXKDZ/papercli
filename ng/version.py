@@ -6,15 +6,22 @@ import json
 import os
 import subprocess
 import sys
+import tomllib
 from datetime import datetime, timedelta
-from importlib.metadata import version as pkg_version
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
 import requests
 from packaging import version
 
-__version__ = pkg_version("papercli")
+def _get_version_from_toml() -> str:
+    """Read version from pyproject.toml file."""
+    toml_path = Path(__file__).parent.parent / "pyproject.toml"
+    with open(toml_path, "rb") as f:
+        data = tomllib.load(f)
+    return data["project"]["version"]
+
+__version__ = _get_version_from_toml()
 
 
 class VersionManager:

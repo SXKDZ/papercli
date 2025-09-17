@@ -7,8 +7,7 @@ from typing import TYPE_CHECKING, Any, Dict, List
 
 from pluralizer import Pluralizer
 
-from ng.services import PDFManager
-from ng.services.prompts import ChatPrompts
+from ng.services import PDFManager, prompts
 
 if TYPE_CHECKING:
     from ng.db.models import Paper
@@ -19,7 +18,7 @@ class ChatService:
 
     def __init__(self, app):
         self.app = app
-        self.pdf_manager = PDFManager()
+        self.pdf_manager = PDFManager(app=self.app)
         self._pluralizer = Pluralizer()
 
     def copy_prompt_to_clipboard(self, papers: List[Paper]) -> Dict[str, Any]:
@@ -36,7 +35,7 @@ class ChatService:
                 context_parts.append(paper_context)
 
             # Create simple prompt for external LLM use
-            full_prompt = ChatPrompts.clipboard_prompt(
+            full_prompt = prompts.chat_clipboard_prompt(
                 len(papers), chr(10).join(context_parts)
             )
 

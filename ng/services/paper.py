@@ -10,7 +10,7 @@ from sqlalchemy.orm import joinedload
 
 from ng.db.database import get_db_session
 from ng.db.models import Author, Collection, Paper, PaperAuthor
-from ng.services.paper_tracker import PaperChangeTracker
+from ng.services import paper_tracker
 from ng.services.pdf import PDFManager
 
 
@@ -110,13 +110,11 @@ class PaperService:
                 return None, f"Paper with ID {paper_id} not found"
 
             pdf_error = ""
-
             try:
                 # Use change tracker to capture original state
-                change_tracker = PaperChangeTracker()
-                original_simple_fields = change_tracker.extract_original_fields(paper)
-                original_authors = change_tracker.extract_original_authors(paper)
-                original_collections = change_tracker.extract_original_collections(
+                original_simple_fields = paper_tracker.extract_original_fields(paper)
+                original_authors = paper_tracker.extract_original_authors(paper)
+                original_collections = paper_tracker.extract_original_collections(
                     paper
                 )
                 if "pdf_path" in paper_data and paper_data["pdf_path"]:
@@ -223,7 +221,7 @@ class PaperService:
                 session.expunge(paper)
 
                 # Build change log using change tracker
-                changes = change_tracker.build_complete_change_log(
+                changes = paper_tracker.build_complete_change_log(
                     original_simple_fields,
                     original_authors,
                     original_collections,
@@ -231,7 +229,7 @@ class PaperService:
                 )
 
                 if self.app and changes:
-                    details = change_tracker.format_change_log_details(
+                    details = paper_tracker.format_change_log_details(
                         paper.id, changes
                     )
                     self.app._add_log("paper_update_fields", details)

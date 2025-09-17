@@ -13,7 +13,7 @@ from ng.db.models import Paper
 from ng.dialogs.chat import ChatDialog
 from ng.dialogs.confirm import ConfirmDialog
 from ng.dialogs.edit import EditDialog
-from ng.services import PDFManager, PDFService, SystemService, ThemeService
+from ng.services import PDFManager, PDFService, SystemService, theme
 from ng.services.formatting import format_file_size
 
 _pluralizer = Pluralizer()
@@ -211,7 +211,7 @@ class DetailDialog(ModalScreen):
     def _format_paper_details_rich(self, paper: Paper) -> Text:
         """Format paper details with rich formatting."""
         content = Text()
-        colors = ThemeService.get_colors(app=self.app)
+        colors = theme.get_colors(app=self.app)
 
         # Title
         content.append("Title:\n", style=colors["header"])

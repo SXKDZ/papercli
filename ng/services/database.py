@@ -37,8 +37,7 @@ class DatabaseHealthService:
         self.app = app
 
     def _add_log(self, action: str, details: str):
-        if self.app:
-            self.app._add_log(action, details)
+        self.app._add_log(action, details)
 
     def run_full_diagnostic(self) -> Dict[str, Any]:
         """Runs a comprehensive diagnostic check on the database and system."""

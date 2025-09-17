@@ -7,21 +7,21 @@ import secrets
 import shutil
 import time
 import traceback
-from typing import Any, Dict, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 import PyPDF2
 from pluralizer import Pluralizer
 
 from ng.db.database import get_pdf_directory
-from ng.services.http_utils import HTTPClient
 from ng.services.formatting import format_file_size
+from ng.services import http_utils
 from ng.services.metadata import MetadataExtractor
 
 
 class PDFService:
     """Centralized service for PDF operations including download, copy, and info management."""
 
-    def __init__(self, app=None):
+    def __init__(self, app):
         self.pdf_dir = get_pdf_directory()
         self.app = app
         self._pluralizer = Pluralizer()
@@ -324,14 +324,11 @@ class PDFManager:
             Note: This returns absolute path for internal use. The calling method converts to relative.
         """
         try:
-            if self.app:
-                self.app._add_log(
-                    "pdf_manager_start",
-                    f"PDFManager.download_pdf_from_url_with_proper_naming called with url='{url}'",
-                )
-                self.app._add_log(
-                    "pdf_naming_data", f"Paper data for naming: {paper_data}"
-                )
+            self.app._add_log(
+                "pdf_manager_start",
+                f"PDFManager.download_pdf_from_url_with_proper_naming called with url='{url}'",
+            )
+            self.app._add_log("pdf_naming_data", f"Paper data for naming: {paper_data}")
 
             start_time = time.time()
 
@@ -354,83 +351,63 @@ class PDFManager:
             temp_filename = re.sub(r"[^\w\-._]", "", temp_filename)
             temp_filepath = os.path.join(self.pdf_dir, temp_filename)
 
-            if self.app:
-                self.app._add_log(
-                    "pdf_filename_generation",
-                    f"Generated temp filename: {temp_filename}",
-                )
-                self.app._add_log(
-                    "pdf_path_generation", f"Full temp path: {temp_filepath}"
-                )
+            self.app._add_log(
+                "pdf_filename_generation",
+                f"Generated temp filename: {temp_filename}",
+            )
 
             # Download to temporary path
-            if self.app:
-                self.app._add_log(
-                    "pdf_download_init", "Starting download to temp path..."
-                )
+            self.app._add_log("pdf_download_init", "Starting download to temp path...")
             downloaded_path, error = self._download_pdf_from_url(url, temp_filepath)
             download_duration = time.time() - start_time
 
-            if self.app:
-                self.app._add_log(
-                    "pdf_manager_result",
-                    f"Download result: downloaded_path='{downloaded_path}', error='{error}'",
-                )
+            self.app._add_log(
+                "pdf_manager_result",
+                f"Download result: downloaded_path='{downloaded_path}', error='{error}'",
+            )
 
             if error:
-                if self.app:
-                    self.app._add_log(
-                        "pdf_manager_error", f"PDF download failed: {error}"
-                    )
+                self.app._add_log("pdf_manager_error", f"PDF download failed: {error}")
                 return "", error, download_duration
 
-            if self.app:
-                self.app._add_log(
-                    "pdf_manager_success",
-                    f"PDF downloaded successfully to: {downloaded_path}",
-                )
+            self.app._add_log(
+                "pdf_manager_success",
+                f"PDF downloaded successfully to: {downloaded_path}",
+            )
 
             # Generate final filename with content-based hash
-            if self.app:
-                self.app._add_log(
-                    "pdf_filename_final",
-                    "Generating final filename based on content...",
-                )
+            self.app._add_log(
+                "pdf_filename_final",
+                "Generating final filename based on content...",
+            )
             final_filename = self._generate_pdf_filename(paper_data, downloaded_path)
             final_filepath = os.path.join(self.pdf_dir, final_filename)
 
-            if self.app:
-                self.app._add_log(
-                    "pdf_filename_final", f"Final filename: {final_filename}"
-                )
-                self.app._add_log("pdf_path_final", f"Final filepath: {final_filepath}")
+            self.app._add_log("pdf_filename_final", f"Final filename: {final_filename}")
+            self.app._add_log("pdf_path_final", f"Final filepath: {final_filepath}")
 
             # Rename to final location if needed
             if temp_filepath != final_filepath:
-                if self.app:
-                    self.app._add_log(
-                        "pdf_file_rename", "Renaming from temp to final location..."
-                    )
+                self.app._add_log(
+                    "pdf_file_rename", "Renaming from temp to final location..."
+                )
                 try:
                     shutil.move(temp_filepath, final_filepath)
-                    if self.app:
-                        self.app._add_log(
-                            "pdf_manager_success",
-                            f"Successfully renamed to: {final_filepath}",
-                        )
+                    self.app._add_log(
+                        "pdf_manager_success",
+                        f"Successfully renamed to: {final_filepath}",
+                    )
                     return final_filepath, "", download_duration
                 except Exception as e:
                     # If move fails, keep the temporary file
                     warning_msg = f"Warning: Could not rename to final filename: {e}"
-                    if self.app:
-                        self.app._add_log("pdf_manager_warning", warning_msg)
+                    self.app._add_log("pdf_manager_warning", warning_msg)
                     return temp_filepath, warning_msg, download_duration
             else:
-                if self.app:
-                    self.app._add_log(
-                        "pdf_file_status",
-                        "Temp and final paths are the same, no rename needed",
-                    )
+                self.app._add_log(
+                    "pdf_file_status",
+                    "Temp and final paths are the same, no rename needed",
+                )
 
             return downloaded_path, "", download_duration
 
@@ -439,93 +416,81 @@ class PDFManager:
                 time.time() - start_time if "start_time" in locals() else 0.0
             )
             error_msg = f"Error in PDF download with proper naming: {str(e)}"
-            if self.app:
-
-                self.app._add_log(
-                    "pdf_manager_exception",
-                    f"Exception in download_pdf_from_url_with_proper_naming: {error_msg}",
-                )
-                self.app._add_log(
-                    "pdf_manager_traceback", f"Traceback: {traceback.format_exc()}"
-                )
+            self.app._add_log(
+                "pdf_manager_exception",
+                f"Exception in download_pdf_from_url_with_proper_naming: {error_msg}",
+            )
+            self.app._add_log(
+                "pdf_manager_traceback", f"Traceback: {traceback.format_exc()}"
+            )
             return "", error_msg, download_duration
 
     def _download_pdf_from_url(self, url: str, target_path: str) -> Tuple[str, str]:
-        """Download PDF from URL to target path using HTTPClient."""
+        """Download PDF from URL to target path using http_utils."""
         try:
-            if self.app:
-                self.app._add_log(
-                    "http_request_start", f"Starting HTTP request to: {url}"
-                )
+            self.app._add_log("http_request_start", f"Starting HTTP request to: {url}")
 
             request_start = time.time()
-            response = HTTPClient.get(url, timeout=60, stream=True)
+            response = http_utils.get(url, timeout=60, stream=True)
             request_duration = time.time() - request_start
 
-            if self.app:
-                self.app._add_log(
-                    "http_request_timing",
-                    f"HTTP request completed in {request_duration:.2f} seconds",
-                )
-                headers = dict(response.headers)
-                content_type = headers.get("content-type", "unknown")
-                content_length = headers.get("content-length", "unknown")
-                self.app._add_log(
-                    "http_response",
-                    f"HTTP response: {response.status_code}, Type: {content_type}, Size: {content_length}",
-                )
+            self.app._add_log(
+                "http_request_timing",
+                f"HTTP request completed in {request_duration:.2f} seconds",
+            )
+            headers = dict(response.headers)
+            content_type = headers.get("content-type", "unknown")
+            content_length = headers.get("content-length", "unknown")
+            self.app._add_log(
+                "http_response",
+                f"HTTP response: {response.status_code}, Type: {content_type}, Size: {content_length}",
+            )
 
             # Check if content is actually a PDF
             content_type = response.headers.get("content-type", "").lower()
 
             if "pdf" not in content_type:
-                if self.app:
-                    self.app._add_log(
-                        "http_content_debug",
-                        "Content-Type does not indicate PDF, checking content...",
-                    )
+                self.app._add_log(
+                    "http_content_debug",
+                    "Content-Type does not indicate PDF, checking content...",
+                )
                 # Check first few bytes for PDF signature
                 first_chunk = next(response.iter_content(chunk_size=1024), b"")
-                if self.app:
-                    self.app._add_log(
-                        "http_content_debug",
-                        f"First chunk size: {len(first_chunk)} bytes",
-                    )
+                self.app._add_log(
+                    "http_content_debug",
+                    f"First chunk size: {len(first_chunk)} bytes",
+                )
 
                 if not first_chunk.startswith(b"%PDF"):
                     # Provide more detailed error information
                     content_preview = first_chunk[:100].decode("utf-8", errors="ignore")
                     error_msg = f"URL does not point to a valid PDF file.\nContent-Type: {content_type}\nContent preview: {content_preview}..."
-                    if self.app:
-                        self.app._add_log("http_content_error", error_msg)
+                    self.app._add_log("http_content_error", error_msg)
                     return "", error_msg
                 else:
-                    if self.app:
-                        self.app._add_log(
-                            "http_content_debug",
-                            "Content starts with PDF signature despite Content-Type",
-                        )
+                    self.app._add_log(
+                        "http_content_debug",
+                        "Content starts with PDF signature despite Content-Type",
+                    )
 
-            if self.app:
-                self.app._add_log(
-                    "file_write_start", f"Starting file write to: {target_path}"
-                )
+            self.app._add_log(
+                "file_write_start", f"Starting file write to: {target_path}"
+            )
 
             # Get content length for progress tracking
             content_length = response.headers.get("content-length")
             total_size = int(content_length) if content_length else None
 
-            if self.app:
-                if total_size:
-                    self.app._add_log(
-                        "download_progress",
-                        f"PDF size: {total_size:,} bytes ({total_size/1024/1024:.1f} MB)",
-                    )
-                else:
-                    self.app._add_log(
-                        "download_progress",
-                        "PDF size: Unknown (no Content-Length header)",
-                    )
+            if total_size:
+                self.app._add_log(
+                    "download_progress",
+                    f"PDF size: {total_size:,} bytes ({total_size/1024/1024:.1f} MB)",
+                )
+            else:
+                self.app._add_log(
+                    "download_progress",
+                    "PDF size: Unknown (no Content-Length header)",
+                )
 
             # Download the file with progress tracking
             total_bytes = 0
@@ -548,71 +513,61 @@ class PDFManager:
                                 speed = total_bytes / elapsed if elapsed > 0 else 0
                                 speed_mb = speed / 1024 / 1024
 
-                                if self.app:
-                                    self.app._add_log(
-                                        "download_progress",
-                                        f"Downloaded {progress_percent:.1f}% ({total_bytes:,}/{total_size:,} bytes) at {speed_mb:.1f} MB/s",
-                                    )
+                                self.app._add_log(
+                                    "download_progress",
+                                    f"Downloaded {progress_percent:.1f}% ({total_bytes:,}/{total_size:,} bytes) at {speed_mb:.1f} MB/s",
+                                )
                                 last_progress_log = progress_percent
                         elif chunk_count % 50 == 0:  # Every 50 chunks when size unknown
                             elapsed = time.time() - start_time
                             speed = total_bytes / elapsed if elapsed > 0 else 0
                             speed_mb = speed / 1024 / 1024
 
-                            if self.app:
-                                self.app._add_log(
-                                    "download_progress",
-                                    f"Downloaded {total_bytes:,} bytes ({chunk_count} chunks) at {speed_mb:.1f} MB/s",
-                                )
+                            self.app._add_log(
+                                "download_progress",
+                                f"Downloaded {total_bytes:,} bytes ({chunk_count} chunks) at {speed_mb:.1f} MB/s",
+                            )
 
             elapsed = time.time() - start_time
             avg_speed = total_bytes / elapsed if elapsed > 0 else 0
             avg_speed_mb = avg_speed / 1024 / 1024
 
-            if self.app:
-                self.app._add_log(
-                    "file_write_success",
-                    f"Successfully downloaded {total_bytes:,} bytes to: {target_path}",
-                )
-                self.app._add_log(
-                    "download_stats",
-                    f"Total time: {elapsed:.1f}s, Average speed: {avg_speed_mb:.1f} MB/s",
-                )
+            self.app._add_log(
+                "file_write_success",
+                f"Successfully downloaded {total_bytes:,} bytes to: {target_path}",
+            )
+            self.app._add_log(
+                "download_stats",
+                f"Total time: {elapsed:.1f}s, Average speed: {avg_speed_mb:.1f} MB/s",
+            )
 
             # Verify file was created and has content
             if os.path.exists(target_path):
                 file_size = os.path.getsize(target_path)
-                if self.app:
-                    self.app._add_log(
-                        "file_verify_debug", f"Downloaded file size: {file_size} bytes"
-                    )
+                self.app._add_log(
+                    "file_verify_debug", f"Downloaded file size: {file_size} bytes"
+                )
                 if file_size == 0:
-                    if self.app:
-                        self.app._add_log(
-                            "file_verify_error", "Downloaded file is empty"
-                        )
+                    self.app._add_log("file_verify_error", "Downloaded file is empty")
                     return "", "Downloaded PDF file is empty"
             else:
-                if self.app:
-                    self.app._add_log(
-                        "file_verify_error",
-                        f"Downloaded file was not created at: {target_path}",
-                    )
+                self.app._add_log(
+                    "file_verify_error",
+                    f"Downloaded file was not created at: {target_path}",
+                )
                 return "", "Downloaded file was not created"
 
             return target_path, ""
 
         except Exception as e:
             error_msg = f"Failed to download PDF from URL: {str(e)}"
-            if self.app:
-
-                self.app._add_log(
-                    "http_download_exception",
-                    f"Exception in _download_pdf_from_url: {error_msg}",
-                )
-                self.app._add_log(
-                    "http_download_traceback", f"Traceback: {traceback.format_exc()}"
-                )
+            self.app._add_log(
+                "http_download_exception",
+                f"Exception in _download_pdf_from_url: {error_msg}",
+            )
+            self.app._add_log(
+                "http_download_traceback", f"Traceback: {traceback.format_exc()}"
+            )
             return "", error_msg
 
 
@@ -714,18 +669,16 @@ class PDFExtractionHandler:
             extracted_data: Optional[Dict[str, Any]], error: Optional[str]
         ):
             if error:
-                if self.app:
-                    self.app.notify(
-                        f"Failed to extract metadata: {error}", severity="error"
-                    )
+                self.app.notify(
+                    f"Failed to extract metadata: {error}", severity="error"
+                )
                 return
 
             if not extracted_data:
-                if self.app:
-                    self.app.notify(
-                        "Failed to extract metadata: No data extracted",
-                        severity="error",
-                    )
+                self.app.notify(
+                    "Failed to extract metadata: No data extracted",
+                    severity="error",
+                )
                 return
 
             on_success(extracted_data)

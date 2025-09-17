@@ -7,7 +7,7 @@ from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, RadioButton, RadioSet, Static
 
-from ng.services.validation import ValidationService
+from ng.services import validation
 
 if TYPE_CHECKING:
     from ng.papercli import PaperCLIApp
@@ -175,7 +175,7 @@ class AddDialog(ModalScreen):
         path_id = self.query_one("#path-input", Input).value.strip()
 
         # Validate input based on source type
-        is_valid, error_message = ValidationService.validate_input(source, path_id)
+        is_valid, error_message = validation.validate_input(source, path_id)
 
         if not is_valid:
             # Show validation error as toast

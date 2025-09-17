@@ -26,7 +26,7 @@ class AddPaperService:
         paper_service: PaperService,
         metadata_extractor: MetadataExtractor,
         system_service: SystemService,
-        app=None,
+        app,
     ):
         """Initialize the add paper service."""
         self.paper_service = paper_service
@@ -81,11 +81,6 @@ class AddPaperService:
         paper = self.paper_service.add_paper_from_metadata(
             paper_data, authors, collections
         )
-        if self.app:
-            self.app._add_log(
-                "paper_add_arxiv",
-                f"Added arXiv metadata for '{paper.title}' (ID {paper.id}) before PDF",
-            )
 
         # Download PDF
         pdf_dir = get_pdf_directory()
@@ -129,11 +124,6 @@ class AddPaperService:
         paper = self.paper_service.add_paper_from_metadata(
             paper_data, authors, collections
         )
-        if self.app:
-            self.app._add_log(
-                "paper_add_arxiv_async",
-                f"Queued PDF download for arXiv '{arxiv_id}' after adding paper ID {paper.id}",
-            )
 
         return {"paper": paper, "arxiv_id": arxiv_id, "paper_data": paper_data}
 
@@ -143,30 +133,13 @@ class AddPaperService:
         """Background task to download PDF and update paper record."""
         try:
             # Log start of download process
-            if self.app:
-                self.app._add_log(
-                    "pdf_download_start",
-                    f"Starting PDF download for paper_id={paper_id}, source={source}, identifier={identifier}",
-                )
-                self.app._add_log(
-                    "pdf_download_stage", "Stage 1/5: Initializing download process"
-                )
+            self.app._add_log(
+                "pdf_download_start",
+                f"Starting PDF download for paper_id={paper_id}, source={source}, identifier={identifier}",
+            )
 
             # Download PDF
             pdf_dir = get_pdf_directory()
-            if self.app:
-                self.app._add_log(
-                    "pdf_download_debug",
-                    f"Paper data keys: {list(paper_data.keys()) if paper_data else 'None'}",
-                )
-                self.app._add_log(
-                    "pdf_download_stage",
-                    "Stage 2/5: Calling SystemService to download PDF",
-                )
-                self.app._add_log(
-                    "pdf_download_debug",
-                    f"About to call system_service.download_pdf with source='{source}', identifier='{identifier}'",
-                )
 
             try:
                 pdf_path, pdf_error, download_duration = (
@@ -174,97 +147,61 @@ class AddPaperService:
                         source, identifier, pdf_dir, paper_data
                     )
                 )
-                if self.app:
-                    self.app._add_log(
-                        "pdf_download_debug",
-                        "system_service.download_pdf returned successfully",
-                    )
+                pass
             except Exception as e:
-                if self.app:
-                    self.app._add_log(
-                        "pdf_download_exception",
-                        f"Exception calling system_service.download_pdf: {str(e)}",
-                    )
-                    self.app._add_log(
-                        "pdf_download_traceback", f"Traceback: {traceback.format_exc()}"
-                    )
+                self.app._add_log(
+                    "pdf_download_exception",
+                    f"Exception calling system_service.download_pdf: {str(e)}",
+                )
+                self.app._add_log(
+                    "pdf_download_traceback", f"Traceback: {traceback.format_exc()}"
+                )
                 raise
 
-            if self.app:
+            # Summarize result in a readable way
+            if pdf_path and not pdf_error:
+                summary = PDFService(app=self.app).create_download_summary(
+                    pdf_path, download_duration
+                )
+                self.app._add_log("pdf_download_result", summary)
+            else:
                 self.app._add_log(
-                    "pdf_download_result",
-                    (
-                        f"Download result: pdf_path='{pdf_path}', pdf_error='{pdf_error}', "
-                        f"duration={download_duration:.2f}s"
-                    ),
+                    "pdf_download_error",
+                    f"Download failed: {pdf_error or 'Unknown error'}"
                 )
 
             if pdf_path and not pdf_error:
-                if self.app:
-                    self.app._add_log(
-                        "pdf_download_success",
-                        f"PDF downloaded successfully to: {pdf_path}",
-                    )
-                    self.app._add_log(
-                        "pdf_download_stage",
-                        "Stage 3/5: PDF download completed, processing path",
-                    )
+                # Success implied by result; skip extra stage logs
 
                 # Convert absolute path to relative for storage
                 relative_pdf_path = os.path.relpath(pdf_path, pdf_dir)
-                if self.app:
-                    self.app._add_log(
-                        "pdf_download_debug",
-                        f"Relative PDF path: {relative_pdf_path}",
-                    )
-                    self.app._add_log(
-                        "pdf_download_stage",
-                        "Stage 4/5: Updating database with PDF path",
-                    )
 
                 # Update the paper with PDF path
                 update_data = {"pdf_path": relative_pdf_path}
-                if self.app:
-                    self.app._add_log(
-                        "pdf_update_start",
-                        f"Updating paper {paper_id} with update_data: {update_data}",
-                    )
 
                 updated_paper, update_error = self.paper_service.update_paper(
                     paper_id, update_data
                 )
-                if self.app:
-                    self.app._add_log(
-                        "pdf_update_result",
-                        (
-                            f"Database update result: paper={updated_paper is not None}, "
-                            f"error='{update_error}'"
-                        ),
-                    )
+                self.app._add_log(
+                    "pdf_update_result",
+                    f"paper_updated={updated_paper is not None}, error='{update_error}'",
+                )
 
                 if update_error:
-                    if self.app:
-                        self.app._add_log(
-                            "pdf_update_error",
-                            f"Database update failed: {update_error}",
-                        )
+                    self.app._add_log(
+                        "pdf_update_error",
+                        f"Database update failed: {update_error}",
+                    )
                     return {
                         "success": False,
                         "error": f"PDF downloaded but database update failed: {update_error}",
                     }
 
-                if self.app:
-                    self.app._add_log(
-                        "pdf_download_stage",
-                        "Stage 5/5: Process completed successfully",
-                    )
-                    self.app._add_log(
-                        "pdf_download_complete",
-                        (
-                            f"Successfully updated paper {paper_id} with PDF path: "
-                            f"{relative_pdf_path}"
-                        ),
-                    )
+                # Completed
+                self.app._add_log(
+                    "pdf_download_complete",
+                    f"Updated paper {paper_id} with PDF path: {relative_pdf_path}",
+                )
                 return {
                     "success": True,
                     "pdf_path": relative_pdf_path,
@@ -273,10 +210,9 @@ class AddPaperService:
                 }
             else:
                 error_msg = pdf_error or "Unknown PDF download error"
-                if self.app:
-                    self.app._add_log(
-                        "pdf_download_error", f"PDF download failed: {error_msg}"
-                    )
+                self.app._add_log(
+                    "pdf_download_error", f"PDF download failed: {error_msg}"
+                )
                 return {
                     "success": False,
                     "error": error_msg,
@@ -285,14 +221,13 @@ class AddPaperService:
 
         except Exception as e:
             error_msg = f"Failed to download and update PDF: {str(e)}"
-            if self.app:
-                self.app._add_log(
-                    "pdf_download_exception",
-                    f"Exception in download_and_update_pdf: {error_msg}",
-                )
-                self.app._add_log(
-                    "pdf_download_traceback", f"Traceback: {traceback.format_exc()}"
-                )
+            self.app._add_log(
+                "pdf_download_exception",
+                f"Exception in download_and_update_pdf: {error_msg}",
+            )
+            self.app._add_log(
+                "pdf_download_traceback", f"Traceback: {traceback.format_exc()}"
+            )
             return {"success": False, "error": error_msg, "download_duration": 0.0}
 
     def add_dblp_paper(self, dblp_url: str) -> Dict[str, Any]:
@@ -696,15 +631,6 @@ class AddPaperService:
                 paper = self.paper_service.add_paper_from_metadata(
                     paper_data, authors, collections
                 )
-                if self.app:
-                    self.app._add_log(
-                        "paper_add_ris_entry",
-                        (
-                            "Added paper from RIS entry '"
-                            + paper_data.get("title", "Unknown Title")[:80]
-                            + f"...' (ID {paper.id})"
-                        ),
-                    )
 
                 added_papers.append(paper)
 
@@ -737,11 +663,6 @@ class AddPaperService:
         paper = self.paper_service.add_paper_from_metadata(
             paper_data, authors, collections
         )
-        if self.app:
-            self.app._add_log(
-                "paper_add_doi",
-                f"Added DOI paper '{paper.title}' (ID {paper.id})",
-            )
 
         return {"paper": paper, "pdf_path": None, "pdf_error": None}
 
@@ -769,11 +690,6 @@ class AddPaperService:
             paper = self.paper_service.add_paper_from_metadata(
                 paper_data, authors, collections
             )
-            if self.app:
-                self.app._add_log(
-                    "paper_add_manual",
-                    f"Added manual paper '{paper.title}' (ID {paper.id})",
-                )
 
             return {"paper": paper, "pdf_path": None, "pdf_error": None}
 

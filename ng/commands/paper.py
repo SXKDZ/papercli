@@ -8,7 +8,7 @@ from pluralizer import Pluralizer
 from ng.commands import CommandHandler
 from ng.db.models import Paper
 from ng.dialogs import AddDialog, ConfirmDialog, DetailDialog, EditDialog
-from ng.services import AddPaperService, PaperService, PDFService, ValidationService
+from ng.services import AddPaperService, PaperService, PDFService, validation
 from ng.services.background import BackgroundOperationService
 from ng.services.pdf import PDFDownloadHandler, PDFDownloadTaskFactory
 
@@ -36,7 +36,7 @@ class PaperCommandHandler(CommandHandler):
 
     def _validate_input_for_source(self, source: str, path_id: str) -> bool:
         """Helper to validate input for a given source and show error if invalid."""
-        is_valid, error_message = ValidationService.validate_input(source, path_id)
+        is_valid, error_message = validation.validate_input(source, path_id)
         if not is_valid:
             self.app.notify(f"Validation Error: {error_message}", severity="error")
             return False

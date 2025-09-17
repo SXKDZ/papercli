@@ -4,7 +4,7 @@ Ordered to avoid circular imports during module initialization.
 """
 
 # Core utilities with no dependencies
-from .http_utils import HTTPClient
+from . import http_utils
 from .utils import fix_broken_lines, normalize_paper_data
 
 # DB related
@@ -20,15 +20,15 @@ from .pdf import (
 )
 from .background import BackgroundOperationService
 from .auto_sync import AutoSyncService
-from .validation import ValidationService
+from . import validation
 from .collection import CollectionService
 from .search import SearchService
-from .export import ExportService
-from .theme import ThemeService
+from . import export
+from . import theme
 
 # Sync services (after DB services are available)
 from .sync import SyncOperation, SyncConflict, SyncResult, SyncService
-from .dialog_utils import DialogUtilsService
+from . import dialog_utils
 
 # Services that depend on the above
 from .metadata import MetadataExtractor
@@ -45,7 +45,7 @@ from .formatting import (
     format_collections_list,
     format_download_speed,
 )
-from .paper_tracker import PaperChangeTracker
+from . import paper_tracker
 
 __all__ = [
     "AddPaperService",
@@ -54,9 +54,9 @@ __all__ = [
     "ChatService",
     "CollectionService",
     "DatabaseHealthService",
-    "DialogUtilsService",
-    "ExportService",
-    "HTTPClient",
+    "dialog_utils",
+    "export",
+    "http_utils",
     "LLMSummaryService",
     "MetadataExtractor",
     "PaperService",
@@ -69,8 +69,8 @@ __all__ = [
     "SyncResult",
     "SyncService",
     "SystemService",
-    "ThemeService",
-    "ValidationService",
+    "theme",
+    "validation",
     "PDFService",
     # New utility services
     "format_file_size",
@@ -82,5 +82,5 @@ __all__ = [
     "PDFDownloadHandler",
     "PDFExtractionHandler",
     "PDFDownloadTaskFactory",
-    "PaperChangeTracker",
+    "paper_tracker",
 ]

@@ -14,9 +14,7 @@ import rispy
 from openai import OpenAI
 from titlecase import titlecase
 
-from ng.services.http_utils import HTTPClient
-from ng.services.llm_utils import LLMModelUtils
-from ng.services.prompts import MetadataPrompts, SummaryPrompts
+from ng.services import http_utils, llm_utils, prompts
 from ng.services.utils import fix_broken_lines, normalize_paper_data
 
 if TYPE_CHECKING:
@@ -38,7 +36,7 @@ def _truncate_for_logging(content: str, max_chars: int = 300) -> tuple[str, str]
 class MetadataExtractor:
     """Service for extracting metadata from various sources."""
 
-    def __init__(self, pdf_manager: PDFManager, app=None):
+    def __init__(self, pdf_manager: PDFManager, app):
         self.app = app
         self.pdf_manager = pdf_manager
 
@@ -51,7 +49,7 @@ class MetadataExtractor:
 
         try:
             url = f"http://export.arxiv.org/api/query?id_list={arxiv_id}"
-            response = HTTPClient.get(url, timeout=30)
+            response = http_utils.get(url, timeout=30)
 
             root = ET.fromstring(response.content)
 
@@ -124,7 +122,7 @@ class MetadataExtractor:
             # Convert DBLP HTML URL to BibTeX URL
             bib_url = self._convert_dblp_url_to_bib(dblp_url)
 
-            response = HTTPClient.get(bib_url, timeout=30)
+            response = http_utils.get(bib_url, timeout=30)
 
             bibtex_content = response.text.strip()
             if not bibtex_content:
@@ -193,26 +191,25 @@ class MetadataExtractor:
         model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
         try:
-            prompt = MetadataPrompts.venue_extraction_prompt(venue_field)
+            prompt = prompts.venue_extraction_prompt(venue_field)
 
             # Log the LLM request
-            if self.app:
-                self.app._add_log(
-                    "llm_venue_request",
-                    f"Requesting venue extraction for: {venue_field}",
-                )
-                truncated_prompt, length_info = _truncate_for_logging(prompt, 300)
-                self.app._add_log(
-                    "llm_venue_prompt",
-                    f"Prompt sent to {model_name} {length_info}:\n{truncated_prompt}",
-                )
+            self.app._add_log(
+                "llm_venue_request",
+                f"Requesting venue extraction for: {venue_field}",
+            )
+            truncated_prompt, length_info = _truncate_for_logging(prompt, 300)
+            self.app._add_log(
+                "llm_venue_prompt",
+                f"Prompt sent to {model_name} {length_info}:\n{truncated_prompt}",
+            )
 
             response = client.chat.completions.create(
                 model=model_name,
                 messages=[
                     {
                         "role": "system",
-                        "content": MetadataPrompts.venue_extraction_system_message(),
+                        "content": prompts.venue_extraction_system_message(),
                     },
                     {"role": "user", "content": prompt},
                 ],
@@ -223,18 +220,15 @@ class MetadataExtractor:
             response_text = response.choices[0].message.content.strip()
 
             # Log the LLM response
-            if self.app:
-                self.app._add_log(
-                    "llm_venue_response",
-                    f"{model_name} response received ({len(response_text)} chars)",
-                )
-                truncated_content, length_info = _truncate_for_logging(
-                    response_text, 300
-                )
-                self.app._add_log(
-                    "llm_venue_content",
-                    f"Raw response {length_info}:\n{truncated_content}",
-                )
+            self.app._add_log(
+                "llm_venue_response",
+                f"{model_name} response received ({len(response_text)} chars)",
+            )
+            truncated_content, length_info = _truncate_for_logging(response_text, 300)
+            self.app._add_log(
+                "llm_venue_content",
+                f"Raw response {length_info}:\n{truncated_content}",
+            )
 
             # Clean up markdown code blocks if present
             if response_text.startswith("```json"):
@@ -313,7 +307,7 @@ class MetadataExtractor:
             api_url_v2 = f"https://api2.openreview.net/notes?forum={openreview_id}&limit=1000&details=writable%2Csignatures%2Cinvitation%2Cpresentation%2Ctags"
 
             try:
-                response = HTTPClient.get(api_url_v2, timeout=30)
+                response = http_utils.get(api_url_v2, timeout=30)
                 data = response.json()
 
                 if data.get("notes") and len(data["notes"]) > 0:
@@ -324,7 +318,7 @@ class MetadataExtractor:
             # Try older API format if v2 fails
             api_url_v1 = f"https://api.openreview.net/notes?forum={openreview_id}&trash=true&details=replyCount%2Cwritable%2Crevisions%2Coriginal%2Coverwriting%2Cinvitation%2Ctags&limit=1000&offset=0"
 
-            response = HTTPClient.get(api_url_v1, timeout=30)
+            response = http_utils.get(api_url_v1, timeout=30)
             data = response.json()
 
             if not data.get("notes") or len(data["notes"]) == 0:
@@ -533,26 +527,25 @@ class MetadataExtractor:
             client = OpenAI()
             model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
-            prompt = MetadataPrompts.extraction_prompt(text_content)
+            prompt = prompts.metadata_extraction_prompt(text_content)
 
             # Log the LLM request
-            if self.app:
-                self.app._add_log(
-                    "llm_metadata_request",
-                    f"Requesting metadata extraction for PDF: {pdf_path}",
-                )
-                truncated_prompt, length_info = _truncate_for_logging(prompt, 300)
-                self.app._add_log(
-                    "llm_metadata_prompt",
-                    f"Prompt sent to {model_name} {length_info}:\n{truncated_prompt}",
-                )
+            self.app._add_log(
+                "llm_metadata_request",
+                f"Requesting metadata extraction for PDF: {pdf_path}",
+            )
+            truncated_prompt, length_info = _truncate_for_logging(prompt, 300)
+            self.app._add_log(
+                "llm_metadata_prompt",
+                f"Prompt sent to {model_name} {length_info}:\n{truncated_prompt}",
+            )
 
             # Build parameters using centralized utility (force temperature=0 for extraction)
-            params = LLMModelUtils.get_model_parameters(model_name, temperature=0)
+            params = llm_utils.get_model_parameters(model_name, temperature=0)
             params["messages"] = [
                 {
                     "role": "system",
-                    "content": MetadataPrompts.system_message(),
+                    "content": prompts.metadata_system_message(),
                 },
                 {"role": "user", "content": prompt},
             ]
@@ -562,18 +555,17 @@ class MetadataExtractor:
             response_content = response.choices[0].message.content.strip()
 
             # Log the LLM response
-            if self.app:
-                self.app._add_log(
-                    "llm_metadata_response",
-                    f"{model_name} response received ({len(response_content)} chars)",
-                )
-                truncated_content, length_info = _truncate_for_logging(
-                    response_content, 300
-                )
-                self.app._add_log(
-                    "llm_metadata_content",
-                    f"Raw response {length_info}:\n{truncated_content}",
-                )
+            self.app._add_log(
+                "llm_metadata_response",
+                f"{model_name} response received ({len(response_content)} chars)",
+            )
+            truncated_content, length_info = _truncate_for_logging(
+                response_content, 300
+            )
+            self.app._add_log(
+                "llm_metadata_content",
+                f"Raw response {length_info}:\n{truncated_content}",
+            )
 
             if response_content.startswith("```json"):
                 response_content = response_content[7:]
@@ -590,11 +582,10 @@ class MetadataExtractor:
                 metadata = json.loads(response_content)
             except json.JSONDecodeError as e:
                 # Fallback: create basic metadata from extracted text
-                if self.app:
-                    self.app._add_log(
-                        "pdf_extraction_warning",
-                        f"LLM JSON parsing failed: {e}. Response: {response_content[:500]}...",
-                    )
+                self.app._add_log(
+                    "pdf_extraction_warning",
+                    f"LLM JSON parsing failed: {e}. Response: {response_content[:500]}...",
+                )
 
                 # Extract basic info from text using regex as fallback
                 title_match = re.search(
@@ -658,26 +649,25 @@ class MetadataExtractor:
             client = OpenAI()
             model_name = os.getenv("OPENAI_MODEL", "gpt-4o")
 
-            prompt = SummaryPrompts.academic_summary(full_text)
+            prompt = prompts.summary_academic_summary(full_text)
 
             # Log the LLM request
-            if self.app:
-                self.app._add_log(
-                    "llm_summarization_request",
-                    f"Requesting paper summary for PDF: {pdf_path}",
-                )
-                truncated_prompt, length_info = _truncate_for_logging(prompt, 300)
-                self.app._add_log(
-                    "llm_summarization_prompt",
-                    f"Prompt sent to {model_name} {length_info}: {truncated_prompt}",
-                )
+            self.app._add_log(
+                "llm_summarization_request",
+                f"Requesting paper summary for PDF: {pdf_path}",
+            )
+            truncated_prompt, length_info = _truncate_for_logging(prompt, 300)
+            self.app._add_log(
+                "llm_summarization_prompt",
+                f"Prompt sent to {model_name} {length_info}: {truncated_prompt}",
+            )
 
             # Build parameters using centralized utility
-            params = LLMModelUtils.get_model_parameters(model_name)
+            params = llm_utils.get_model_parameters(model_name)
             params["messages"] = [
                 {
                     "role": "system",
-                    "content": SummaryPrompts.system_message(),
+                    "content": prompts.summary_system_message(),
                 },
                 {"role": "user", "content": prompt},
             ]
@@ -687,26 +677,24 @@ class MetadataExtractor:
             summary_response = response.choices[0].message.content.strip()
 
             # Log the LLM response
-            if self.app:
-                self.app._add_log(
-                    "llm_summarization_response",
-                    f"{model_name} response received ({len(summary_response)} chars)",
-                )
-                truncated_content, length_info = _truncate_for_logging(
-                    summary_response, 300
-                )
-                self.app._add_log(
-                    "llm_summarization_content",
-                    f"Generated summary {length_info}: {truncated_content}",
-                )
+            self.app._add_log(
+                "llm_summarization_response",
+                f"{model_name} response received ({len(summary_response)} chars)",
+            )
+            truncated_content, length_info = _truncate_for_logging(
+                summary_response, 300
+            )
+            self.app._add_log(
+                "llm_summarization_content",
+                f"Generated summary {length_info}: {truncated_content}",
+            )
 
             return summary_response
 
         except Exception as e:
-            if self.app:
-                self.app._add_log(
-                    "paper_summary_error", f"Failed to generate paper summary: {e}"
-                )
+            self.app._add_log(
+                "paper_summary_error", f"Failed to generate paper summary: {e}"
+            )
             return ""  # Return empty string if summarization fails, don't break the workflow
 
     def extract_from_bibtex(self, bib_path: str) -> List[Dict[str, Any]]:
@@ -847,7 +835,7 @@ class MetadataExtractor:
                 "User-Agent": "PaperCLI/1.0 (https://github.com/your-repo) mailto:your-email@example.com"
             }
 
-            response = HTTPClient.get(url, headers=headers, timeout=10)
+            response = http_utils.get(url, headers=headers, timeout=10)
             data = response.json()
             work = data.get("message", {})
 

@@ -5,46 +5,40 @@ from typing import Dict, Optional
 import requests
 
 
-class HTTPClient:
-    """Centralized HTTP client with consistent headers and error handling."""
+DEFAULT_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+}
 
-    DEFAULT_HEADERS = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-    }
 
-    @classmethod
-    def get(
-        self,
-        url: str,
-        headers: Optional[Dict[str, str]] = None,
-        timeout: int = 30,
-        stream: bool = False,
-        **kwargs,
-    ) -> requests.Response:
-        """
-        Make GET request with consistent headers and error handling.
+def get(
+    url: str,
+    headers: Optional[Dict[str, str]] = None,
+    timeout: int = 30,
+    stream: bool = False,
+    **kwargs,
+) -> requests.Response:
+    """
+    Make GET request with consistent headers and error handling.
 
-        Args:
-            url: The URL to request
-            headers: Additional headers (merged with defaults)
-            timeout: Request timeout in seconds
-            stream: Whether to stream the response
-            **kwargs: Additional arguments passed to requests.get
+    Args:
+        url: The URL to request
+        headers: Additional headers (merged with defaults)
+        timeout: Request timeout in seconds
+        stream: Whether to stream the response
+        **kwargs: Additional arguments passed to requests.get
 
-        Returns:
-            requests.Response object
+    Returns:
+        requests.Response object
 
-        Raises:
-            requests.RequestException: On HTTP errors
-        """
-        merged_headers = self.DEFAULT_HEADERS.copy()
-        if headers:
-            merged_headers.update(headers)
+    Raises:
+        requests.RequestException: On HTTP errors
+    """
+    merged_headers = DEFAULT_HEADERS.copy()
+    if headers:
+        merged_headers.update(headers)
 
-        response = requests.get(
-            url, headers=merged_headers, timeout=timeout, stream=stream, **kwargs
-        )
-        response.raise_for_status()
-        return response
-
-    # Removed unused get_json and get_text helpers to keep surface minimal
+    response = requests.get(
+        url, headers=merged_headers, timeout=timeout, stream=stream, **kwargs
+    )
+    response.raise_for_status()
+    return response

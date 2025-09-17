@@ -28,7 +28,7 @@ class LLMSummaryService:
         self.paper_service = paper_service
         self.background_service = background_service
         self.app = app
-        self.pdf_manager = PDFManager()
+        self.pdf_manager = PDFManager(app=self.app)
         self.metadata_extractor = MetadataExtractor(
             pdf_manager=self.pdf_manager, app=self.app
         )

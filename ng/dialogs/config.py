@@ -7,6 +7,7 @@ from openai import OpenAI
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
 from textual.screen import ModalScreen
+from textual.theme import BUILTIN_THEMES
 from textual.widgets import (
     Button,
     Input,
@@ -15,15 +16,12 @@ from textual.widgets import (
     RadioSet,
     Select,
     Static,
-    Switch,
     TabbedContent,
     TabPane,
     TextArea,
 )
 
-from ng.services import DialogUtilsService
-from ng.services.llm_utils import LLMModelUtils
-from textual.theme import BUILTIN_THEMES
+from ng.services import dialog_utils, llm_utils
 
 
 class ConfigDialog(ModalScreen):
@@ -166,7 +164,7 @@ class ConfigDialog(ModalScreen):
                 model_id = model.id
                 # Include all GPT models, o1, o3 series
                 if any(prefix in model_id for prefix in ["gpt-", "o1", "o3"]):
-                    if LLMModelUtils.is_reasoning_model(model_id):
+                    if llm_utils.is_reasoning_model(model_id):
                         reasoning_models.append(model_id)
                     else:
                         standard_models.append(model_id)
@@ -253,7 +251,7 @@ class ConfigDialog(ModalScreen):
                         with Horizontal(classes="form-row"):
                             yield Label("API Key:", classes="form-label")
                             api_key = os.getenv("OPENAI_API_KEY", "")
-                            masked_key = DialogUtilsService.mask_api_key(api_key)
+                            masked_key = dialog_utils.mask_api_key(api_key)
                             yield TextArea(
                                 text=masked_key,
                                 id="api-key-input",
@@ -409,7 +407,7 @@ class ConfigDialog(ModalScreen):
             theme_radio_set = self.query_one("#theme-radio-set", RadioSet)
 
             # Validate max tokens
-            is_valid, error_msg, max_tokens = DialogUtilsService.validate_numeric_input(
+            is_valid, error_msg, max_tokens = dialog_utils.validate_numeric_input(
                 max_tokens_input.value, min_val=1, input_type="int"
             )
             if not is_valid:
@@ -417,17 +415,15 @@ class ConfigDialog(ModalScreen):
                 return
 
             # Validate temperature
-            is_valid, error_msg, temperature = (
-                DialogUtilsService.validate_numeric_input(
-                    temperature_input.value, min_val=0, max_val=2, input_type="float"
-                )
+            is_valid, error_msg, temperature = dialog_utils.validate_numeric_input(
+                temperature_input.value, min_val=0, max_val=2, input_type="float"
             )
             if not is_valid:
                 self.notify(f"Temperature error: {error_msg}", severity="error")
                 return
 
             # Validate PDF pages
-            is_valid, error_msg, pdf_pages = DialogUtilsService.validate_numeric_input(
+            is_valid, error_msg, pdf_pages = dialog_utils.validate_numeric_input(
                 pdf_pages_input.value, min_val=1, input_type="int"
             )
             if not is_valid:
@@ -436,7 +432,7 @@ class ConfigDialog(ModalScreen):
 
             # Validate auto-sync interval
             is_valid, error_msg, auto_sync_interval = (
-                DialogUtilsService.validate_numeric_input(
+                dialog_utils.validate_numeric_input(
                     auto_sync_interval_input.value, min_val=1, input_type="int"
                 )
             )
@@ -458,9 +454,7 @@ class ConfigDialog(ModalScreen):
 
             # API Key (handle masking)
             original_key = os.getenv("OPENAI_API_KEY", "")
-            new_key = DialogUtilsService.unmask_api_key(
-                api_key_input.text, original_key
-            )
+            new_key = dialog_utils.unmask_api_key(api_key_input.text, original_key)
             if new_key != original_key:
                 if new_key and not new_key.startswith("sk-"):
                     self.notify(

@@ -6,7 +6,7 @@ from pluralizer import Pluralizer
 
 from ng.commands import CommandHandler
 from ng.dialogs import ChatDialog
-from ng.services import ChatService, ExportService, LLMSummaryService
+from ng.services import ChatService, export, LLMSummaryService
 
 if TYPE_CHECKING:
     from ng.db.models import Paper
@@ -18,7 +18,6 @@ class ExportCommandHandler(CommandHandler):
 
     def __init__(self, app: PaperCLIApp):
         super().__init__(app)
-        self.export_service = ExportService()
         self.pluralizer = Pluralizer()
         self.chat_service = ChatService(app=self.app)
         self.llm_summary_service = LLMSummaryService(

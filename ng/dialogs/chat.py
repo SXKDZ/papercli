@@ -17,16 +17,16 @@ from textual.widgets import Button, Input, Markdown, Static
 
 from ng.services import (
     BackgroundOperationService,
-    DialogUtilsService,
+    dialog_utils,
     LLMSummaryService,
     PaperService,
     PDFManager,
     SystemService,
-    ThemeService,
+    theme,
 )
 from ng.services.formatting import format_title_by_words
-from ng.services.llm_utils import LLMModelUtils
-from ng.services.prompts import ChatPrompts
+from ng.services import llm_utils
+from ng.services import prompts
 
 _pluralizer = Pluralizer()
 
@@ -317,7 +317,7 @@ class ChatDialog(ModalScreen):
         # Get papers that need summaries
         papers_needing_summaries = []
         for paper in self.papers:
-            fields = self._get_paper_fields(paper)
+            fields = dialog_utils.get_paper_fields(paper)
             if not fields["notes"] and fields["pdf_path"]:
                 absolute_path = self.pdf_manager.get_absolute_path(fields["pdf_path"])
                 if os.path.exists(absolute_path):
@@ -354,7 +354,7 @@ class ChatDialog(ModalScreen):
 
     def _format_paper_info(self, paper, index):
         """Format paper information for display (app version logic)."""
-        fields = DialogUtilsService.get_paper_fields(paper)
+        fields = dialog_utils.get_paper_fields(paper)
 
         paper_info = (
             f"**Paper {index}: {fields['title']}**\n\n"
@@ -376,9 +376,9 @@ class ChatDialog(ModalScreen):
             paper_details.append(self._format_paper_info(paper, i))
 
         if len(self.papers) == 1:
-            initial_content = ChatPrompts.initial_single_paper(paper_details[0])
+            initial_content = prompts.chat_initial_single_paper(paper_details[0])
         else:
-            initial_content = ChatPrompts.initial_multiple_papers(
+            initial_content = prompts.chat_initial_multiple_papers(
                 len(self.papers), "\n\n---\n\n".join(paper_details)
             )
 
@@ -418,18 +418,18 @@ class ChatDialog(ModalScreen):
                 role = entry["role"]
                 content = entry["content"]
 
-                # Get theme-appropriate colors using ThemeService
+                # Get theme-appropriate colors using theme service
                 if role == "user":
-                    role_color = ThemeService.get_markup_color("accent", app=self.app)
+                    role_color = theme.get_markup_color("accent", app=self.app)
                     role_text = "⏵ User"
                 elif role == "assistant":
-                    role_color = ThemeService.get_markup_color("success", app=self.app)
+                    role_color = theme.get_markup_color("success", app=self.app)
                     role_text = f"⏵ Model ({self.model_name})"
                 elif role == "system":
-                    role_color = ThemeService.get_markup_color("warning", app=self.app)
+                    role_color = theme.get_markup_color("warning", app=self.app)
                     role_text = "⏵ System"
                 elif role == "loading":
-                    role_color = ThemeService.get_markup_color("info", app=self.app)
+                    role_color = theme.get_markup_color("info", app=self.app)
                     role_text = content
                     # For loading messages, just show the text
                     loading_widget = Static(role_text, classes="chat-role-header")
@@ -438,7 +438,7 @@ class ChatDialog(ModalScreen):
                     chat_container.mount(loading_widget)
                     continue
                 elif role == "error":
-                    role_color = ThemeService.get_markup_color("error", app=self.app)
+                    role_color = theme.get_markup_color("error", app=self.app)
                     role_text = f"Error: {content}"
                     # For error messages, just show the text
                     error_widget = Static(role_text, classes="chat-role-header")
@@ -663,7 +663,7 @@ class ChatDialog(ModalScreen):
 
         # Check if any papers have PDF content that will be sent
         for paper in self.papers:
-            fields = self._get_paper_fields(paper)
+            fields = dialog_utils.get_paper_fields(paper)
             if fields["pdf_path"]:
                 absolute_path = self.pdf_manager.get_absolute_path(fields["pdf_path"])
                 if os.path.exists(absolute_path):
@@ -726,7 +726,7 @@ class ChatDialog(ModalScreen):
                 )
 
                 # Get response with model-specific parameters using centralized utility
-                params = LLMModelUtils.get_model_parameters(self.model_name)
+                params = llm_utils.get_model_parameters(self.model_name)
                 params["messages"] = messages
                 params["stream"] = True
 
@@ -776,7 +776,7 @@ class ChatDialog(ModalScreen):
         """Build messages for OpenAI API (app version logic)."""
         # Build paper context
         paper_context = self._build_paper_context()
-        system_message = ChatPrompts.system_message(paper_context)
+        system_message = prompts.chat_system_message(paper_context)
 
         messages = [{"role": "system", "content": system_message}]
 
@@ -805,7 +805,7 @@ class ChatDialog(ModalScreen):
 
         context_parts = []
         for i, paper in enumerate(self.papers, 1):
-            fields = self._get_paper_fields(paper)
+            fields = dialog_utils.get_paper_fields(paper)
 
             paper_context = f"Paper {i}: {fields['title']}\n"
             paper_context += f"Authors: {fields['authors']}\n"
@@ -845,7 +845,7 @@ class ChatDialog(ModalScreen):
 
             context_parts.append(paper_context)
 
-        return ChatPrompts.paper_context_header() + "\n".join(context_parts)
+        return prompts.chat_paper_context_header() + "\n".join(context_parts)
 
     def _extract_page_range(
         self, pdf_path: str, start_page: int = 1, end_page: int = 10
@@ -891,7 +891,7 @@ class ChatDialog(ModalScreen):
         """Calculate the maximum number of pages across all PDFs."""
         max_pages = 0
         for paper in self.papers:
-            fields = self._get_paper_fields(paper)
+            fields = dialog_utils.get_paper_fields(paper)
             if fields["pdf_path"]:
                 absolute_path = self.pdf_manager.get_absolute_path(fields["pdf_path"])
                 if os.path.exists(absolute_path):
@@ -911,7 +911,7 @@ class ChatDialog(ModalScreen):
     def _has_available_pdfs(self) -> bool:
         """Check if any papers have available PDF files."""
         for paper in self.papers:
-            fields = self._get_paper_fields(paper)
+            fields = dialog_utils.get_paper_fields(paper)
             if fields["pdf_path"]:
                 absolute_path = self.pdf_manager.get_absolute_path(fields["pdf_path"])
                 if os.path.exists(absolute_path):
@@ -967,14 +967,14 @@ class ChatDialog(ModalScreen):
 
         try:
             # Get data directory and create chats subdirectory
-            data_dir = DialogUtilsService.get_data_directory()
+            data_dir = dialog_utils.get_data_directory()
             chats_dir = data_dir / "chats"
 
             # Generate filename and create safe filepath
-            filename = DialogUtilsService.generate_filename_from_paper(
+            filename = dialog_utils.generate_filename_from_paper(
                 self.papers[0], ".md"
             )
-            final_filepath = DialogUtilsService.create_safe_filename(
+            final_filepath = dialog_utils.create_safe_filename(
                 filename, chats_dir
             )
 
@@ -1011,7 +1011,7 @@ class ChatDialog(ModalScreen):
         if self.papers:
             lines.append("## Papers Discussed")
             for i, paper in enumerate(self.papers, 1):
-                fields = self._get_paper_fields(paper)
+                fields = dialog_utils.get_paper_fields(paper)
                 lines.append(f"**Paper {i}**: {fields['title']}")
                 lines.append(f"- Authors: {fields['authors']}")
                 lines.append(f"- Venue: {fields['venue']} ({fields['year']})")

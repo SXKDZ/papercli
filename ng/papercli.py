@@ -112,10 +112,13 @@ class PaperCLIApp(App):
             {"timestamp": datetime.now(), "action": action, "details": details}
         )
 
-        # Directly update log panel if it's visible
         if self.main_screen:
-            log_panel = self.main_screen.query_one(LogPanel)
-            log_panel.refresh_if_visible()
+            try:
+                log_panel = self.main_screen.query_one(LogPanel)
+                log_panel.refresh_if_visible()
+            except Exception:
+                # LogPanel may not be initialized yet during startup
+                pass
 
     def load_papers(self):
         """Load papers from database and update the PaperList widget."""
@@ -140,15 +143,13 @@ class PaperCLIApp(App):
 
             if main_screen_to_update:
                 main_screen_to_update.update_paper_list(papers)
-
         except Exception as e:
             self._add_log("load_papers_error", f"Error loading papers: {e}")
 
     def _set_terminal_title(self) -> None:
-        """Set terminal window title using standard OSC escape sequence."""
-        title = f"PaperCLI v{get_version()}"
-        sys.stdout.write(f"\033]0;{title}\007")
-        sys.stdout.flush()
+        if hasattr(self, "console") and self.console is not None:
+            self.console.set_window_title(f'PaperCLI v{get_version()}')
+            return
 
     def action_cursor_up(self) -> None:
         """Move cursor up in paper list."""

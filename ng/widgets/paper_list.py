@@ -6,7 +6,7 @@ from textual.message import Message
 from textual.widgets import DataTable
 
 from ng.db.models import Paper
-from ng.services import ThemeService
+from ng.services import theme
 
 
 class PaperList(DataTable):
@@ -54,7 +54,7 @@ class PaperList(DataTable):
     def _get_selection_style(self) -> str:
         """Get the theme-appropriate selection style."""
         app = getattr(self, "app", None)
-        success_color = ThemeService.get_color("success", app=app)
+        success_color = theme.get_color("success", app=app)
         return f"bold {success_color}"
 
     def on_mount(self) -> None:
