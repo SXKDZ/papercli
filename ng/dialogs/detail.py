@@ -7,7 +7,7 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, Static
+from textual.widgets import Button, Markdown, Static
 
 from ng.db.models import Paper
 from ng.dialogs.chat import ChatDialog
@@ -84,7 +84,7 @@ class DetailDialog(ModalScreen):
         with Container(id="detail-container"):
             yield Static("Paper Details", classes="dialog-title")
             with VerticalScroll(id="detail-content"):
-                yield Static("", id="detail-text")
+                yield Markdown("", id="detail-text")
             with Horizontal(id="button-bar"):
                 yield Button("Open PDF", id="pdf-button", disabled=True)
                 yield Button("Open Folder", id="folder-button", disabled=True)
@@ -100,14 +100,14 @@ class DetailDialog(ModalScreen):
 
     def on_mount(self) -> None:
         """Initialize the detail display with paper information."""
-        detail_text_widget = self.query_one("#detail-text", Static)
+        detail_text_widget = self.query_one("#detail-text", Markdown)
 
         if not self.paper:
             detail_text_widget.update("No paper selected for detail view.")
             return
 
-        # Format the detail text with rich formatting
-        formatted_content = self._format_paper_details_rich(self.paper)
+        # Format the detail text with markdown formatting
+        formatted_content = self._format_paper_details_markdown(self.paper)
         detail_text_widget.update(formatted_content)
 
         # Enable/disable buttons based on availability
@@ -208,59 +208,74 @@ class DetailDialog(ModalScreen):
         """Open the chat dialog for the current paper."""
         self.app.push_screen(ChatDialog(papers=[self.paper], callback=None))
 
-    def _format_paper_details_rich(self, paper: Paper) -> Text:
-        """Format paper details with rich formatting."""
-        content = Text()
-        colors = theme.get_colors(app=self.app)
+    def _format_paper_details_markdown(self, paper: Paper) -> str:
+        """Format paper details with markdown formatting."""
+        content = []
 
         # Title
-        content.append("Title:\n", style=colors["header"])
-        content.append(f"{paper.title}\n\n", style=colors["text"])
+        content.append("## Title")
+        content.append(f"{paper.title}")
+        content.append("")
 
         # Authors
-        content.append("Authors:\n", style=colors["header"])
+        content.append("## Authors")
         authors = paper.author_names if paper.author_names else "Unknown Authors"
-        content.append(f"{authors}\n\n", style=colors["text"])
+        content.append(f"{authors}")
+        content.append("")
 
         # Year and Venue
-        content.append("Venue:\n", style=colors["header"])
+        content.append("## Venue")
         year = str(paper.year) if paper.year else "Unknown"
         venue = paper.venue_full or paper.venue_acronym or "Unknown Venue"
-        content.append(f"{venue} ({year})\n\n", style=colors["text"])
+        content.append(f"{venue} ({year})")
+        content.append("")
 
-        # Abstract
-        if paper.abstract:
-            content.append("Abstract:\n", style=colors["header"])
-            content.append(f"{paper.abstract}\n\n", style=colors["text"])
+        # Publication Details
+        publication_items = []
+        if hasattr(paper, "volume") and paper.volume:
+            publication_items.append(f"* **Volume:** {paper.volume}")
+        if hasattr(paper, "issue") and paper.issue:
+            publication_items.append(f"* **Issue:** {paper.issue}")
+        if paper.pages:
+            publication_items.append(f"* **Pages:** {paper.pages}")
+
+        if publication_items:
+            content.append("## Publication Details")
+            content.extend(publication_items)
+            content.append("")
+
 
         # DOI
         if paper.doi:
-            content.append("DOI:\n", style=colors["header"])
-            content.append(f"{paper.doi}\n\n", style=colors["text"])
+            content.append("## DOI")
+            content.append(f"`{paper.doi}`")
+            content.append("")
 
         # URL
         if paper.url:
-            content.append("Website:\n", style=colors["header"])
-            content.append(f"{paper.url}\n\n", style=colors["link"])
+            content.append("## Website")
+            content.append(f"[{paper.url}]({paper.url})")
+            content.append("")
 
         # Preprint ID
         if paper.preprint_id:
-            content.append("Preprint ID:\n", style=colors["header"])
-            content.append(f"{paper.preprint_id}\n\n", style=colors["text"])
+            content.append("## Preprint ID")
+            content.append(f"`{paper.preprint_id}`")
+            content.append("")
 
         # Category (e.g., cs.LG for arXiv papers)
         if paper.category:
-            content.append("Category:\n", style=colors["header"])
-            content.append(f"{paper.category}\n\n", style=colors["text"])
+            content.append("## Category")
+            content.append(f"`{paper.category}`")
+            content.append("")
 
         # PDF Path and Info
+        content.append("## PDF")
         if paper.pdf_path:
-            content.append("PDF:\n", style=colors["header"])
             # Display absolute path for user convenience
             pdf_manager = PDFManager(app=self.app)
             pdf_service = PDFService(app=self.app)
             absolute_path = pdf_manager.get_absolute_path(paper.pdf_path)
-            content.append(f"{absolute_path}\n", style=colors["success"])
 
             # Get and display enhanced PDF info using both services
             pdf_info = pdf_manager.get_pdf_info(paper.pdf_path)
@@ -270,7 +285,7 @@ class DetailDialog(ModalScreen):
                 # Use formatting utility for better formatting
                 if pdf_info["size_bytes"] > 0:
                     formatted_size = format_file_size(pdf_info["size_bytes"])
-                    info_parts.append(f"Size: {formatted_size}")
+                    info_parts.append(formatted_size)
 
                 # Get page count using PDFService
                 page_count = pdf_service.get_pdf_page_count(absolute_path)
@@ -279,56 +294,48 @@ class DetailDialog(ModalScreen):
                     info_parts.append(f"{page_count} {page_text}")
 
                 if info_parts:
-                    content.append(
-                        f"({', '.join(info_parts)})\n\n", style=colors["text"]
-                    )
+                    content.append(f"{absolute_path} ({', '.join(info_parts)})")
                 else:
-                    content.append("\n", style=colors["text"])
+                    content.append(f"{absolute_path}")
             elif pdf_info["error"]:
-                content.append(f"({pdf_info['error']})\n\n", style=colors["warning"])
+                content.append(f"{absolute_path} ({pdf_info['error']})")
             else:
-                content.append("\n", style=colors["text"])
+                content.append(f"{absolute_path}")
         else:
-            content.append("PDF:\n", style=colors["header"])
-            content.append("No PDF available\n\n", style=colors["error"])
+            content.append("*No PDF available*")
+        content.append("")
 
         # Collections
         if hasattr(paper, "collections") and paper.collections:
-            content.append("Collections:\n", style=colors["header"])
+            content.append("## Collections")
             collection_names = [c.name for c in paper.collections]
-            content.append(
-                f"{', '.join(collection_names)}\n\n", style=colors["warning"]
-            )
+            collection_list = "\n".join([f"- {name}" for name in collection_names])
+            content.append(collection_list)
+            content.append("")
+
+        # Abstract
+        if paper.abstract:
+            content.append("## Abstract")
+            content.append(f"{paper.abstract}")
+            content.append("")
 
         # Notes
         if paper.notes:
-            content.append("Notes:\n", style=colors["header"])
-            content.append(f"{paper.notes}\n\n", style=colors["text"])
+            content.append("## Notes")
+            content.append(f"{paper.notes}")
+            content.append("")
 
         # Metadata
-        content.append("Metadata:\n", style=colors["header"])
-        content.append(
-            f"Paper Type: {paper.paper_type or 'Unknown'}\n", style=colors["dim"]
-        )
-        content.append(
-            f"Category: {paper.category or 'Unknown'}\n", style=colors["dim"]
-        )
-        if hasattr(paper, "volume") and paper.volume:
-            content.append(f"Volume: {paper.volume}\n", style=colors["dim"])
-        if hasattr(paper, "issue") and paper.issue:
-            content.append(f"Issue: {paper.issue}\n", style=colors["dim"])
-        if paper.pages:
-            content.append(f"Pages: {paper.pages}\n", style=colors["dim"])
+        content.append("## Metadata")
+        metadata_items = []
+        if paper.paper_type:
+            metadata_items.append(f"* **Type:** {paper.paper_type}")
+        metadata_items.append(f"* **Added:** {paper.added_date or 'Unknown'}")
+        metadata_items.append(f"* **Modified:** {paper.modified_date or 'Unknown'}")
 
-        # Dates
-        content.append(
-            f"\nAdded: {paper.added_date or 'Unknown'}\n", style=colors["dim"]
-        )
-        content.append(
-            f"Modified: {paper.modified_date or 'Unknown'}\n", style=colors["dim"]
-        )
+        content.extend(metadata_items)
 
-        return content
+        return "\n".join(content)
 
     def _handle_edit_paper(self) -> None:
         """Open the edit dialog for the current paper using existing command handler logic."""

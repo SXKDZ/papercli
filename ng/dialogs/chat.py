@@ -187,7 +187,7 @@ class ChatDialog(ModalScreen):
         self.chat_display_content = ""
         self.openai_client = None
         self.model_name = os.getenv("OPENAI_MODEL", "gpt-4o")
-        self.pdf_manager = PDFManager()
+        self.pdf_manager = PDFManager(self.app)
         self.summary_in_progress = False
         self.default_pdf_pages_limit = int(os.getenv("PAPERCLI_PDF_PAGES", "10"))
         self.pdf_start_page = 1
@@ -199,7 +199,7 @@ class ChatDialog(ModalScreen):
         self.llm_service = LLMSummaryService(
             paper_service=self.paper_service,
             background_service=self.background_service,
-            app=None,
+            app=self.app,
         )
         self.system_service = SystemService(self.pdf_manager, app=self.app)
 
@@ -287,9 +287,8 @@ class ChatDialog(ModalScreen):
 
     def on_mount(self) -> None:
         """Initialize the chat following app version logic."""
-        # Set app references for services
+        # Set app reference for background service
         self.background_service.app = self.app
-        self.llm_service.app = self.app
 
         user_input = self.query_one("#user-input", Input)
         # Ensure Input is properly configured for input

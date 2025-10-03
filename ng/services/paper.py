@@ -132,7 +132,7 @@ class PaperService:
                         pass
                     else:
                         # Process the PDF path (URL or local file)
-                        pdf_manager = PDFManager()
+                        pdf_manager = PDFManager(self.app)
 
                         current_paper_data = {
                             "title": paper_data.get("title", paper.title),
@@ -352,7 +352,7 @@ class PaperService:
     ) -> None:
         """Delete a PDF file given a stored relative path."""
         try:
-            pdf_manager = PDFManager()
+            pdf_manager = PDFManager(self.app)
             full_pdf_path = pdf_manager.get_absolute_path(relative_pdf_path)
             if os.path.exists(full_pdf_path):
                 os.remove(full_pdf_path)

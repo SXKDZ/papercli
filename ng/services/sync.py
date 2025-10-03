@@ -364,14 +364,8 @@ class SyncService:
             self._sync_collections_by_timestamp(result)
             time.sleep(0.1)
 
-            # Step 5: Cleanup orphan PDFs on both sides after paper/path updates
-            try:
-                # Consolidated orphan PDF cleanup for local and remote
-                self._cleanup_orphan_pdfs(self.local_pdf_dir, self.local_db_path, "local")
-                self._cleanup_orphan_pdfs(self.remote_pdf_dir, self.remote_db_path, "remote")
-            except Exception as e:
-                if self.app:
-                    self.app._add_log("sync_cleanup_error", f"PDF cleanup error: {e}")
+            # Note: Orphan PDF cleanup removed - should only be done when explicitly requested by user
+            # Use /doctor clean command to manually clean orphaned PDFs
 
         except Exception as e:
             result.errors.append(f"Sync failed: {str(e)}")
@@ -799,7 +793,7 @@ class SyncService:
                         if self.app:
                             self.app._add_log(
                                 "sync_remote_to_local",
-                                f"Deleted local paper: '{op.item_id}' (replaced by remote version)",
+                                f"Updating local paper '{op.item_id}' with remote version",
                             )
                     elif op.item_type == "pdf":
                         pdf_path = self.local_pdf_dir / op.item_id
@@ -808,7 +802,7 @@ class SyncService:
                             if self.app:
                                 self.app._add_log(
                                     "sync_remote_to_local",
-                                    f"Deleted local PDF: {op.item_id} (replaced by remote version)",
+                                    f"Updating local PDF: {op.item_id} with remote version",
                                 )
 
     def _sync_local_to_remote(
@@ -852,7 +846,7 @@ class SyncService:
                         if self.app:
                             self.app._add_log(
                                 "sync_local_to_remote",
-                                f"Deleted remote paper: '{op.item_id}' (replaced by local version)",
+                                f"Updating remote paper '{op.item_id}' with local version",
                             )
                     elif op.item_type == "pdf":
                         pdf_path = self.remote_pdf_dir / op.item_id
@@ -861,7 +855,7 @@ class SyncService:
                             if self.app:
                                 self.app._add_log(
                                     "sync_local_to_remote",
-                                    f"Deleted remote PDF: {op.item_id} (replaced by local version)",
+                                    f"Updating remote PDF: {op.item_id} with local version",
                                 )
 
     def _copy_pdf_file(self, source: Path, destination: Path):

@@ -286,7 +286,7 @@ class EditDialog(ModalScreen):
             self.background_service = BackgroundOperationService(app=self.parent_app)
 
         self.collection_service = CollectionService()
-        self.pdf_manager = PDFManager()
+        self.pdf_manager = PDFManager(self.parent_app)
 
         self.input_widgets: Dict[str, Input | TextArea] = {}
         self.current_paper_type = paper_data.get("paper_type", "conference")

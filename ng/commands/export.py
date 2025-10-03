@@ -74,15 +74,15 @@ class ExportCommandHandler(CommandHandler):
             destination = export_params["destination"]
 
             if export_format == "bibtex":
-                content = self.export_service.export_to_bibtex(papers_to_export)
+                content = export.export_to_bibtex(papers_to_export)
             elif export_format == "ieee":
-                content = self.export_service.export_to_ieee(papers_to_export)
+                content = export.export_to_ieee(papers_to_export)
             elif export_format == "markdown":
-                content = self.export_service.export_to_markdown(papers_to_export)
+                content = export.export_to_markdown(papers_to_export)
             elif export_format == "html":
-                content = self.export_service.export_to_html(papers_to_export)
+                content = export.export_to_html(papers_to_export)
             elif export_format == "json":
-                content = self.export_service.export_to_json(papers_to_export)
+                content = export.export_to_json(papers_to_export)
             else:
                 self.app.notify("Unknown export format", severity="error")
                 return

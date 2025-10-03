@@ -4,6 +4,7 @@ import importlib.util
 import os
 import shutil
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
@@ -620,9 +621,38 @@ class DatabaseHealthService:
                     .filter(Paper.pdf_path.isnot(None))
                     .all()
                 }
+                
+                # Get current time for age-based filtering
+                current_time = time.time()
+                
                 for pdf_file in pdf_dir.glob("*.pdf"):
                     if pdf_file.name not in db_pdf_paths:
+                        # Safety checks to avoid deleting files during active operations
                         try:
+                            # Check 1: Don't delete files that are very recent (< 2 minutes old)
+                            # This protects against deleting files that are still being downloaded/processed
+                            file_age = current_time - pdf_file.stat().st_mtime
+                            if file_age < 120:  # Less than 2 minutes old
+                                self._add_log(
+                                    "clean_pdf_skip", 
+                                    f"Skipping recent file (age: {file_age:.1f}s): {pdf_file.name}"
+                                )
+                                continue
+                            
+                            # Check 2: Don't delete files with temporary naming patterns
+                            # These patterns indicate active download/processing operations
+                            if (pdf_file.name.endswith('_temp00.pdf') or 
+                                '_temp' in pdf_file.name or
+                                len(pdf_file.name.split('_')[-1].replace('.pdf', '')) == 6):  # 6-char hash pattern
+                                # Additional check: if it's a temp file that's old enough, it might be stale
+                                if file_age < 300:  # Less than 5 minutes old
+                                    self._add_log(
+                                        "clean_pdf_skip", 
+                                        f"Skipping potential temp file: {pdf_file.name}"
+                                    )
+                                    continue
+                            
+                            # File passed all safety checks, safe to delete
                             os.remove(pdf_file)
                             cleaned_count += 1
                             self._add_log(
@@ -632,6 +662,11 @@ class DatabaseHealthService:
                             self._add_log(
                                 "clean_pdf_error",
                                 f"Error deleting {pdf_file.name}: {e}",
+                            )
+                        except Exception as e:
+                            self._add_log(
+                                "clean_pdf_error",
+                                f"Error checking {pdf_file.name}: {e}",
                             )
             except Exception as e:
                 self._add_log("clean_pdf_error", f"Error finding PDFs to clean: {e}")
