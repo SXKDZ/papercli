@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict
 
 from dotenv import load_dotenv, set_key
+from ng.services import dialog_utils, llm_utils
 from openai import OpenAI
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
@@ -20,8 +21,6 @@ from textual.widgets import (
     TabPane,
     TextArea,
 )
-
-from ng.services import dialog_utils, llm_utils
 
 
 class ConfigDialog(ModalScreen):
@@ -141,6 +140,8 @@ class ConfigDialog(ModalScreen):
             "OPENAI_API_KEY": "",
             "OPENAI_MAX_TOKENS": "4000",
             "OPENAI_TEMPERATURE": "0.7",
+            "OPENAI_SHOW_THINKING": "false",
+            "OPENAI_REASONING_EFFORT": "medium",
             "PAPERCLI_REMOTE_PATH": "",
             "PAPERCLI_AUTO_SYNC": "false",
             "PAPERCLI_AUTO_SYNC_INTERVAL": "5",
@@ -280,6 +281,55 @@ class ConfigDialog(ModalScreen):
                                 classes="form-input",
                             )
 
+                        # Show Thinking (for reasoning models)
+                        with Horizontal(classes="form-row"):
+                            yield Label("Show Thinking:", classes="form-label")
+                            with RadioSet(
+                                id="show-thinking-radio-set", classes="form-radio-set"
+                            ):
+                                show_thinking = (
+                                    os.getenv("OPENAI_SHOW_THINKING", "false").lower()
+                                    == "true"
+                                )
+                                yield RadioButton(
+                                    "Enable",
+                                    value=show_thinking,
+                                    id="show-thinking-enable",
+                                )
+                                yield RadioButton(
+                                    "Disable",
+                                    value=not show_thinking,
+                                    id="show-thinking-disable",
+                                )
+
+                        # Reasoning Effort (for reasoning models)
+                        with Horizontal(classes="form-row"):
+                            yield Label("Reasoning Effort:", classes="form-label")
+                            with RadioSet(
+                                id="reasoning-effort-radio-set", classes="form-radio-set"
+                            ):
+                                current_effort = os.getenv("OPENAI_REASONING_EFFORT", "medium")
+                                yield RadioButton(
+                                    "Minimal",
+                                    value=(current_effort == "minimal"),
+                                    id="reasoning-effort-minimal",
+                                )
+                                yield RadioButton(
+                                    "Low",
+                                    value=(current_effort == "low"),
+                                    id="reasoning-effort-low",
+                                )
+                                yield RadioButton(
+                                    "Medium",
+                                    value=(current_effort == "medium"),
+                                    id="reasoning-effort-medium",
+                                )
+                                yield RadioButton(
+                                    "High",
+                                    value=(current_effort == "high"),
+                                    id="reasoning-effort-high",
+                                )
+
                 # Sync Tab
                 with TabPane("Sync", id="sync-tab"):
                     with VerticalScroll():
@@ -398,6 +448,12 @@ class ConfigDialog(ModalScreen):
             api_key_input = self.query_one("#api-key-input", TextArea)
             max_tokens_input = self.query_one("#max-tokens-input", Input)
             temperature_input = self.query_one("#temperature-input", Input)
+            show_thinking_radio_set = self.query_one(
+                "#show-thinking-radio-set", RadioSet
+            )
+            reasoning_effort_radio_set = self.query_one(
+                "#reasoning-effort-radio-set", RadioSet
+            )
             remote_path_input = self.query_one("#remote-path-input", Input)
             auto_sync_radio_set = self.query_one("#auto-sync-radio-set", RadioSet)
             auto_sync_interval_input = self.query_one(
@@ -471,6 +527,33 @@ class ConfigDialog(ModalScreen):
             # Temperature
             if str(temperature) != os.getenv("OPENAI_TEMPERATURE", "0.7"):
                 changes["OPENAI_TEMPERATURE"] = str(temperature)
+
+            # Show Thinking
+            show_thinking_value = "false"  # default
+            if show_thinking_radio_set.pressed_button:
+                show_thinking_value = (
+                    "true"
+                    if show_thinking_radio_set.pressed_button.id
+                    == "show-thinking-enable"
+                    else "false"
+                )
+            if show_thinking_value != os.getenv("OPENAI_SHOW_THINKING", "false"):
+                changes["OPENAI_SHOW_THINKING"] = show_thinking_value
+
+            # Reasoning Effort
+            reasoning_effort_value = "medium"  # default
+            if reasoning_effort_radio_set.pressed_button:
+                button_id = reasoning_effort_radio_set.pressed_button.id
+                if button_id == "reasoning-effort-minimal":
+                    reasoning_effort_value = "minimal"
+                elif button_id == "reasoning-effort-low":
+                    reasoning_effort_value = "low"
+                elif button_id == "reasoning-effort-medium":
+                    reasoning_effort_value = "medium"
+                elif button_id == "reasoning-effort-high":
+                    reasoning_effort_value = "high"
+            if reasoning_effort_value != os.getenv("OPENAI_REASONING_EFFORT", "medium"):
+                changes["OPENAI_REASONING_EFFORT"] = reasoning_effort_value
 
             # Remote Path
             remote_path = os.path.expanduser(remote_path_input.value.strip())
@@ -597,6 +680,35 @@ class ConfigDialog(ModalScreen):
 
             temperature_input = self.query_one("#temperature-input", Input)
             temperature_input.value = self.default_config["OPENAI_TEMPERATURE"]
+
+            # Reset show-thinking radio buttons
+            show_thinking_radio_set = self.query_one(
+                "#show-thinking-radio-set", RadioSet
+            )
+            show_thinking_disable = self.query_one(
+                "#show-thinking-disable", RadioButton
+            )
+            show_thinking_enable = self.query_one("#show-thinking-enable", RadioButton)
+
+            is_show_thinking_enabled = (
+                self.default_config["OPENAI_SHOW_THINKING"].lower() == "true"
+            )
+            show_thinking_enable.value = is_show_thinking_enabled
+            show_thinking_disable.value = not is_show_thinking_enabled
+
+            # Reset reasoning-effort radio buttons
+            reasoning_effort_radio_set = self.query_one(
+                "#reasoning-effort-radio-set", RadioSet
+            )
+            default_effort = self.default_config["OPENAI_REASONING_EFFORT"]
+            for effort in ["minimal", "low", "medium", "high"]:
+                try:
+                    button = self.query_one(
+                        f"#reasoning-effort-{effort}", RadioButton
+                    )
+                    button.value = (effort == default_effort)
+                except Exception:
+                    pass
 
             remote_path_input = self.query_one("#remote-path-input", Input)
             remote_path_input.value = self.default_config["PAPERCLI_REMOTE_PATH"]
