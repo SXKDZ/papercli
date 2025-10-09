@@ -88,29 +88,50 @@ class ChatService:
             url = provider_urls.get(provider, "https://claude.ai")
             webbrowser.open(url)
 
-            # Reveal PDF files using SystemService
+            # Reveal files using SystemService (PDF for regular papers, HTML for websites)
             opened_files = []
             failed_files = []
 
             for paper in papers:
-                if paper.pdf_path:
-                    absolute_path = self.pdf_manager.get_absolute_path(paper.pdf_path)
-                    if os.path.exists(absolute_path):
-                        try:
-                            success, error = self.app.system_service.open_file_location(
-                                absolute_path
-                            )
-                            if success:
-                                opened_files.append(paper.title)
-                            else:
-                                failed_files.append(f"{paper.title}: {error}")
-                        except Exception as e:
-                            error_msg = f"{paper.title}: {str(e)}"
-                            failed_files.append(error_msg)
-                            self.app._add_log(
-                                "chat_pdf_error",
-                                f"Failed to open PDF for {paper.title}: {traceback.format_exc()}",
-                            )
+                file_path = None
+                file_type = None
+
+                # For website papers, open HTML snapshot folder
+                if paper.paper_type == "website":
+                    if (
+                        hasattr(paper, "html_snapshot_path")
+                        and paper.html_snapshot_path
+                    ):
+                        from ng.db.database import get_db_manager
+
+                        db_manager = get_db_manager()
+                        data_dir = os.path.dirname(db_manager.db_path)
+                        html_snapshot_dir = os.path.join(data_dir, "html_snapshots")
+                        file_path = os.path.join(
+                            html_snapshot_dir, paper.html_snapshot_path
+                        )
+                        file_type = "HTML"
+                # For non-website papers, open PDF folder
+                elif paper.pdf_path:
+                    file_path = self.pdf_manager.get_absolute_path(paper.pdf_path)
+                    file_type = "PDF"
+
+                if file_path and os.path.exists(file_path):
+                    try:
+                        success, error = self.app.system_service.open_file_location(
+                            file_path
+                        )
+                        if success:
+                            opened_files.append(paper.title)
+                        else:
+                            failed_files.append(f"{paper.title}: {error}")
+                    except Exception as e:
+                        error_msg = f"{paper.title}: {str(e)}"
+                        failed_files.append(error_msg)
+                        self.app._add_log(
+                            "chat_file_error",
+                            f"Failed to open {file_type} for {paper.title}: {traceback.format_exc()}",
+                        )
 
             # Prepare result message
             result_parts = []
@@ -122,10 +143,10 @@ class ChatService:
             else:
                 result_parts.append(f"Warning: {clipboard_result['message']}")
 
-            # Add browser/PDF opening results
+            # Add browser/file opening results
             if opened_files:
                 result_parts.append(
-                    f"Opened {provider_name} and {self._pluralizer.pluralize('PDF file', len(opened_files), True)}"
+                    f"Opened {provider_name} and {self._pluralizer.pluralize('file', len(opened_files), True)}"
                 )
             else:
                 result_parts.append(f"Opened {provider_name}")
@@ -227,8 +248,52 @@ class ChatService:
             if fields["abstract"]:
                 paper_context += f"Abstract: {fields['abstract']}\n"
 
-            pdf_content_added = False
-            if fields["pdf_path"]:
+            content_added = False
+
+            # For website papers, use HTML snapshot instead of PDF
+            if (
+                paper.paper_type == "website"
+                and hasattr(paper, "html_snapshot_path")
+                and paper.html_snapshot_path
+            ):
+                try:
+                    from ng.db.database import get_db_manager
+                    from bs4 import BeautifulSoup
+
+                    db_manager = get_db_manager()
+                    data_dir = os.path.dirname(db_manager.db_path)
+                    html_snapshot_dir = os.path.join(data_dir, "html_snapshots")
+                    html_absolute_path = os.path.join(
+                        html_snapshot_dir, paper.html_snapshot_path
+                    )
+
+                    if os.path.exists(html_absolute_path):
+                        with open(html_absolute_path, "r", encoding="utf-8") as f:
+                            html_content = f.read()
+
+                        soup = BeautifulSoup(html_content, "html.parser")
+                        text_content = soup.get_text(separator="\n", strip=True)
+
+                        # Limit text length to avoid token limits (similar to PDF pages)
+                        max_chars = 20000
+                        if len(text_content) > max_chars:
+                            text_content = (
+                                text_content[:max_chars] + "\n... (content truncated)"
+                            )
+
+                        paper_context += (
+                            f"Webpage content attached to this chat:\n{text_content}\n"
+                        )
+                        content_added = True
+                except Exception as e:
+                    if self.app:
+                        self.app._add_log(
+                            "html_extract_error",
+                            f"Failed to extract HTML content for '{fields['title']}': {e}",
+                        )
+
+            # For non-website papers, use PDF
+            elif fields["pdf_path"]:
                 absolute_path = self.pdf_manager.get_absolute_path(fields["pdf_path"])
                 if os.path.exists(absolute_path):
                     try:
@@ -242,7 +307,7 @@ class ChatService:
                                 paper_context += f"Page {start_page} attached to this chat:\n{pdf_text}\n"
                             else:
                                 paper_context += f"Pages {start_page}-{end_page} attached to this chat:\n{pdf_text}\n"
-                            pdf_content_added = True
+                            content_added = True
                     except Exception as e:
                         if self.app:
                             self.app._add_log(
@@ -250,7 +315,7 @@ class ChatService:
                                 f"Failed to extract PDF pages for '{fields['title']}': {e}",
                             )
 
-            if not pdf_content_added and fields["notes"]:
+            if not content_added and fields["notes"]:
                 paper_context += f"Notes: {fields['notes']}\n"
 
             context_parts.append(paper_context)

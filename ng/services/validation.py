@@ -121,6 +121,40 @@ def validate_doi(doi: str) -> Tuple[bool, str]:
     return True, ""
 
 
+def validate_website_url(url: str) -> Tuple[bool, str]:
+    """
+    Validate website URL format.
+
+    Args:
+        url: The website URL to validate
+
+    Returns:
+        Tuple[bool, str]: (is_valid, error_message)
+    """
+    if not url or not url.strip():
+        return False, "Website URL cannot be empty"
+
+    clean_url = url.strip()
+
+    # Check if it's a valid URL format
+    url_pattern = r"^https?://[^\s]+"
+
+    if not re.match(url_pattern, clean_url, re.IGNORECASE):
+        return False, "Invalid URL format. Expected format: https://example.com/article"
+
+    # Check for common invalid patterns
+    if len(clean_url) < 10:
+        return False, "URL is too short to be valid"
+
+    if not any(
+        tld in clean_url.lower()
+        for tld in [".com", ".org", ".net", ".edu", ".gov", ".io", ".ai", ".co"]
+    ):
+        return False, "URL must contain a valid top-level domain"
+
+    return True, ""
+
+
 def validate_pdf_path(pdf_path: str) -> Tuple[bool, str]:
     """
     Validate PDF file path.
@@ -134,9 +168,7 @@ def validate_pdf_path(pdf_path: str) -> Tuple[bool, str]:
     if not pdf_path or not pdf_path.strip():
         return False, "PDF path cannot be empty"
 
-    return _validate_existing_file(
-        pdf_path.strip(), (".pdf",), "PDF"
-    )
+    return _validate_existing_file(pdf_path.strip(), (".pdf",), "PDF")
 
 
 def validate_bib_path(bib_path: str) -> Tuple[bool, str]:
@@ -152,9 +184,7 @@ def validate_bib_path(bib_path: str) -> Tuple[bool, str]:
     if not bib_path or not bib_path.strip():
         return False, "BibTeX file path cannot be empty"
 
-    return _validate_existing_file(
-        bib_path.strip(), (".bib", ".bibtex"), "BibTeX"
-    )
+    return _validate_existing_file(bib_path.strip(), (".bib", ".bibtex"), "BibTeX")
 
 
 def validate_ris_path(ris_path: str) -> Tuple[bool, str]:
@@ -170,9 +200,7 @@ def validate_ris_path(ris_path: str) -> Tuple[bool, str]:
     if not ris_path or not ris_path.strip():
         return False, "RIS file path cannot be empty"
 
-    return _validate_existing_file(
-        ris_path.strip(), (".ris", ".txt"), "RIS"
-    )
+    return _validate_existing_file(ris_path.strip(), (".ris", ".txt"), "RIS")
 
 
 def validate_manual_title(title: str) -> Tuple[bool, str]:
@@ -248,6 +276,8 @@ def validate_input(source: str, path_id: str) -> Tuple[bool, str]:
         return validate_openreview_id(path_id)
     elif source == "doi":
         return validate_doi(path_id)
+    elif source == "website":
+        return validate_website_url(path_id)
     elif source == "pdf":
         return validate_pdf_path(path_id)
     elif source == "bib":

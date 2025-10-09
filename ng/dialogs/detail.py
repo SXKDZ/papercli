@@ -87,6 +87,7 @@ class DetailDialog(ModalScreen):
                 yield Markdown("", id="detail-text")
             with Horizontal(id="button-bar"):
                 yield Button("Open PDF", id="pdf-button", disabled=True)
+                yield Button("Open HTML", id="html-button", disabled=True)
                 yield Button("Open Folder", id="folder-button", disabled=True)
                 yield Button(
                     "Open Website",
@@ -114,18 +115,56 @@ class DetailDialog(ModalScreen):
         website_button = self.query_one("#website-button", Button)
         pdf_button = self.query_one("#pdf-button", Button)
         folder_button = self.query_one("#folder-button", Button)
+        html_button = self.query_one("#html-button", Button)
 
         # Enable website button if URL is available
         if self.paper.url:
             website_button.disabled = False
 
-        # Enable PDF and folder buttons if PDF path is available
-        if self.paper.pdf_path:
-            pdf_manager = PDFManager(app=self.app)
-            pdf_path = pdf_manager.get_absolute_path(self.paper.pdf_path)
-            if os.path.exists(pdf_path):
-                pdf_button.disabled = False
-                folder_button.disabled = False
+        # For website papers: hide PDF button, show HTML button and folder button if snapshot exists
+        is_website = self.paper.paper_type == "website"
+
+        if is_website:
+            # Hide PDF button for websites
+            pdf_button.display = False
+
+            # Show and enable HTML button and folder button if snapshot exists
+            try:
+                if (
+                    hasattr(self.paper, "html_snapshot_path")
+                    and self.paper.html_snapshot_path
+                ):
+                    from ng.db.database import get_db_manager
+
+                    db_manager = get_db_manager()
+                    data_dir = os.path.dirname(db_manager.db_path)
+                    html_snapshot_dir = os.path.join(data_dir, "html_snapshots")
+                    html_absolute_path = os.path.join(
+                        html_snapshot_dir, self.paper.html_snapshot_path
+                    )
+                    if os.path.exists(html_absolute_path):
+                        html_button.disabled = False
+                        folder_button.disabled = False
+                    else:
+                        html_button.display = False
+                        folder_button.display = False
+                else:
+                    html_button.display = False
+                    folder_button.display = False
+            except Exception:
+                html_button.display = False
+                folder_button.display = False
+        else:
+            # For non-website papers: hide HTML button, show PDF/folder if available
+            html_button.display = False
+
+            # Enable PDF and folder buttons if PDF path is available
+            if self.paper.pdf_path:
+                pdf_manager = PDFManager(app=self.app)
+                pdf_path = pdf_manager.get_absolute_path(self.paper.pdf_path)
+                if os.path.exists(pdf_path):
+                    pdf_button.disabled = False
+                    folder_button.disabled = False
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "close-button":
@@ -136,6 +175,8 @@ class DetailDialog(ModalScreen):
             self._open_pdf()
         elif event.button.id == "folder-button":
             self._show_in_folder()
+        elif event.button.id == "html-button":
+            self._open_html()
         elif event.button.id == "chat-button":
             self._handle_chat()
         elif event.button.id == "edit-button":
@@ -155,43 +196,48 @@ class DetailDialog(ModalScreen):
                 self.app.notify(f"Failed to open website: {str(e)}", severity="error")
 
     def _open_pdf(self) -> None:
-        """Open the paper's PDF file using SystemService."""
+        """Open the paper's PDF file."""
         if not self.paper.pdf_path:
             return
-
-        try:
-            pdf_manager = PDFManager(app=self.app)
-            pdf_path = pdf_manager.get_absolute_path(self.paper.pdf_path)
-
-            # Use SystemService for cross-platform PDF opening
-            system_service = SystemService(pdf_manager=pdf_manager, app=self.app)
-            success, error_msg = system_service.open_pdf(pdf_path)
-
-            if success:
-                self.app.notify(
-                    f"Opened PDF for '{self.paper.title}'", severity="information"
-                )
-            else:
-                self.app.notify(f"Failed to open PDF: {error_msg}", severity="error")
-        except Exception as e:
-            self.app.notify(f"Failed to open PDF: {str(e)}", severity="error")
+        pdf_manager = PDFManager(app=self.app)
+        file_path = pdf_manager.get_absolute_path(self.paper.pdf_path)
+        self._open_file(file_path, "PDF")
 
     def _show_in_folder(self) -> None:
-        """Show the PDF file in Finder/File Explorer using SystemService."""
-        if not self.paper.pdf_path:
-            return
-
+        """Show the file in Finder/File Explorer - PDF for papers, HTML for websites."""
         try:
-            pdf_manager = PDFManager(app=self.app)
-            pdf_path = pdf_manager.get_absolute_path(self.paper.pdf_path)
+            # For website papers, show HTML snapshot folder
+            if self.paper.paper_type == "website":
+                if not (
+                    hasattr(self.paper, "html_snapshot_path")
+                    and self.paper.html_snapshot_path
+                ):
+                    return
+                from ng.db.database import get_db_manager
+
+                db_manager = get_db_manager()
+                data_dir = os.path.dirname(db_manager.db_path)
+                html_snapshot_dir = os.path.join(data_dir, "html_snapshots")
+                file_path = os.path.join(
+                    html_snapshot_dir, self.paper.html_snapshot_path
+                )
+                file_type = "HTML snapshot"
+            # For non-website papers, show PDF folder
+            else:
+                if not self.paper.pdf_path:
+                    return
+                pdf_manager = PDFManager(app=self.app)
+                file_path = pdf_manager.get_absolute_path(self.paper.pdf_path)
+                file_type = "PDF"
 
             # Use SystemService for cross-platform file location opening
+            pdf_manager = PDFManager(app=self.app)
             system_service = SystemService(pdf_manager=pdf_manager, app=self.app)
-            success, error_msg = system_service.open_file_location(pdf_path)
+            success, error_msg = system_service.open_file_location(file_path)
 
             if success:
                 self.app.notify(
-                    f"Revealed PDF location for '{self.paper.title}'",
+                    f"Revealed {file_type} location for '{self.paper.title}'",
                     severity="information",
                 )
             else:
@@ -200,6 +246,49 @@ class DetailDialog(ModalScreen):
                 )
         except Exception as e:
             self.app.notify(f"Failed to show file location: {str(e)}", severity="error")
+
+    def _open_html(self) -> None:
+        """Open the HTML snapshot."""
+        if not (
+            hasattr(self.paper, "html_snapshot_path") and self.paper.html_snapshot_path
+        ):
+            return
+        from ng.db.database import get_db_manager
+
+        db_manager = get_db_manager()
+        data_dir = os.path.dirname(db_manager.db_path)
+        html_snapshot_dir = os.path.join(data_dir, "html_snapshots")
+        html_absolute_path = os.path.join(
+            html_snapshot_dir, self.paper.html_snapshot_path
+        )
+        self._open_file(html_absolute_path, "HTML snapshot")
+
+    def _open_file(self, file_path: str, file_type: str) -> None:
+        """Open a file using SystemService."""
+        try:
+            if not os.path.exists(file_path):
+                self.app.notify(f"{file_type} file not found", severity="error")
+                return
+
+            pdf_manager = PDFManager(app=self.app)
+            system_service = SystemService(pdf_manager=pdf_manager, app=self.app)
+            success, error_msg = system_service.open_file(
+                file_path, file_type=file_type
+            )
+
+            if success:
+                self.app.notify(
+                    f"Opened {file_type.lower()} for '{self.paper.title}'",
+                    severity="information",
+                )
+            else:
+                self.app.notify(
+                    f"Failed to open {file_type.lower()}: {error_msg}", severity="error"
+                )
+        except Exception as e:
+            self.app.notify(
+                f"Failed to open {file_type.lower()}: {str(e)}", severity="error"
+            )
 
     def action_cancel(self) -> None:
         self.dismiss(None)
@@ -244,7 +333,6 @@ class DetailDialog(ModalScreen):
             content.extend(publication_items)
             content.append("")
 
-
         # DOI
         if paper.doi:
             content.append("## DOI")
@@ -269,41 +357,73 @@ class DetailDialog(ModalScreen):
             content.append(f"`{paper.category}`")
             content.append("")
 
-        # PDF Path and Info
-        content.append("## PDF")
-        if paper.pdf_path:
-            # Display absolute path for user convenience
-            pdf_manager = PDFManager(app=self.app)
-            pdf_service = PDFService(app=self.app)
-            absolute_path = pdf_manager.get_absolute_path(paper.pdf_path)
+        # PDF Path and Info (skip for website papers)
+        if paper.paper_type != "website":
+            content.append("## PDF")
+            if paper.pdf_path:
+                # Display absolute path for user convenience
+                pdf_manager = PDFManager(app=self.app)
+                pdf_service = PDFService(app=self.app)
+                absolute_path = pdf_manager.get_absolute_path(paper.pdf_path)
 
-            # Get and display enhanced PDF info using both services
-            pdf_info = pdf_manager.get_pdf_info(paper.pdf_path)
-            if pdf_info["exists"]:
-                info_parts = []
+                # Get and display enhanced PDF info using both services
+                pdf_info = pdf_manager.get_pdf_info(paper.pdf_path)
+                if pdf_info["exists"]:
+                    info_parts = []
 
-                # Use formatting utility for better formatting
-                if pdf_info["size_bytes"] > 0:
-                    formatted_size = format_file_size(pdf_info["size_bytes"])
-                    info_parts.append(formatted_size)
+                    # Use formatting utility for better formatting
+                    if pdf_info["size_bytes"] > 0:
+                        formatted_size = format_file_size(pdf_info["size_bytes"])
+                        info_parts.append(formatted_size)
 
-                # Get page count using PDFService
-                page_count = pdf_service.get_pdf_page_count(absolute_path)
-                if page_count > 0:
-                    page_text = "page" if page_count == 1 else "pages"
-                    info_parts.append(f"{page_count} {page_text}")
+                    # Get page count using PDFService
+                    page_count = pdf_service.get_pdf_page_count(absolute_path)
+                    if page_count > 0:
+                        page_text = "page" if page_count == 1 else "pages"
+                        info_parts.append(f"{page_count} {page_text}")
 
-                if info_parts:
-                    content.append(f"{absolute_path} ({', '.join(info_parts)})")
+                    if info_parts:
+                        content.append(f"{absolute_path} ({', '.join(info_parts)})")
+                    else:
+                        content.append(f"{absolute_path}")
+                elif pdf_info["error"]:
+                    content.append(f"{absolute_path} ({pdf_info['error']})")
                 else:
                     content.append(f"{absolute_path}")
-            elif pdf_info["error"]:
-                content.append(f"{absolute_path} ({pdf_info['error']})")
             else:
-                content.append(f"{absolute_path}")
-        else:
-            content.append("*No PDF available*")
-        content.append("")
+                content.append("*No PDF available*")
+            content.append("")
+
+        # HTML Snapshot (for website type papers)
+        if hasattr(paper, "html_snapshot_path") and paper.html_snapshot_path:
+            content.append("## HTML Snapshot")
+            # Get absolute path for HTML snapshot
+            import os
+            from ng.db.database import get_db_manager
+
+            db_manager = get_db_manager()
+            data_dir = os.path.dirname(db_manager.db_path)
+            html_snapshot_dir = os.path.join(data_dir, "html_snapshots")
+            html_absolute_path = os.path.join(
+                html_snapshot_dir, paper.html_snapshot_path
+            )
+
+            # Get file info
+            if os.path.exists(html_absolute_path):
+                file_size = os.path.getsize(html_absolute_path)
+                formatted_size = format_file_size(file_size)
+                # Display snapshot date from added_date
+                snapshot_date = (
+                    paper.added_date.strftime("%Y-%m-%d %H:%M:%S")
+                    if paper.added_date
+                    else "Unknown"
+                )
+                content.append(
+                    f"{html_absolute_path} ({formatted_size}, captured {snapshot_date})"
+                )
+            else:
+                content.append(f"{html_absolute_path} (file not found)")
+            content.append("")
 
         # Collections
         if hasattr(paper, "collections") and paper.collections:

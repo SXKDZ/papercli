@@ -73,9 +73,7 @@ def export_to_bibtex(papers: List[Paper]) -> str:
 
         if paper.pages:
             pages_bibtex = (
-                paper.pages.replace("-", "--")
-                if "-" in paper.pages
-                else paper.pages
+                paper.pages.replace("-", "--") if "-" in paper.pages else paper.pages
             )
             entry["pages"] = pages_bibtex
 
@@ -123,9 +121,7 @@ def export_to_ieee(papers: List[Paper]) -> str:
             elif len(author_list) == 2:
                 authors_str = f"{author_list[0]} and {author_list[1]}"
             else:
-                authors_str = (
-                    ", ".join(author_list[:-1]) + f", and {author_list[-1]}"
-                )
+                authors_str = ", ".join(author_list[:-1]) + f", and {author_list[-1]}"
 
             ref += authors_str + ", "
 
@@ -153,9 +149,7 @@ def export_to_ieee(papers: List[Paper]) -> str:
                 ref += f", no. {paper.issue}"
             if paper.pages:
                 pages_ieee = (
-                    paper.pages.replace("-", "–")
-                    if "-" in paper.pages
-                    else paper.pages
+                    paper.pages.replace("-", "–") if "-" in paper.pages else paper.pages
                 )
                 ref += f", pp. {pages_ieee}"
             if paper.year:
@@ -175,9 +169,7 @@ def export_to_ieee(papers: List[Paper]) -> str:
                 ref += f", {paper.year}"
             if paper.pages:
                 pages_ieee = (
-                    paper.pages.replace("-", "–")
-                    if "-" in paper.pages
-                    else paper.pages
+                    paper.pages.replace("-", "–") if "-" in paper.pages else paper.pages
                 )
                 ref += f", pp. {pages_ieee}"
             ref += "."
@@ -265,9 +257,7 @@ def export_to_json(papers: List[Paper]) -> str:
             "category": paper.category,
             "url": paper.url,
             "collections": [collection.name for collection in paper.collections],
-            "added_date": (
-                paper.added_date.isoformat() if paper.added_date else None
-            ),
+            "added_date": (paper.added_date.isoformat() if paper.added_date else None),
             "modified_date": (
                 paper.modified_date.isoformat() if paper.modified_date else None
             ),

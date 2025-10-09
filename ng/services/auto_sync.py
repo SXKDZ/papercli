@@ -153,7 +153,9 @@ class AutoSyncService:
                 summary: Dict[str, int] = {}
                 for op in pending_ops:
                     if isinstance(op, dict):
-                        key = f"{op.get('resource', 'unknown')}::{op.get('op', 'change')}"
+                        key = (
+                            f"{op.get('resource', 'unknown')}::{op.get('op', 'change')}"
+                        )
                     else:
                         key = "unknown::change"
                     summary[key] = summary.get(key, 0) + 1

@@ -235,7 +235,7 @@ class EditDialog(ModalScreen):
             "author_names",
             "year",
             "url",
-            "pdf_path",
+            "html_snapshot_path",
             "collections",
             "abstract",
             "notes",
@@ -263,6 +263,7 @@ class EditDialog(ModalScreen):
     current_paper_type = reactive("conference")
     changed_fields = reactive(set())
     dialog_height = reactive("90%")
+    show_snapshot_button = reactive(False)
 
     def __init__(
         self,
@@ -329,6 +330,20 @@ class EditDialog(ModalScreen):
         if not pdf_path:
             return ""
         return self.pdf_manager.get_absolute_path(pdf_path)
+
+    def _get_full_html_snapshot_path(self):
+        """Get the full absolute path for the HTML snapshot file."""
+        html_path = self.paper_data.get("html_snapshot_path", "")
+        if not html_path:
+            return ""
+        # HTML snapshots are stored in html_snapshots folder
+        import os
+        from ng.db.database import get_db_manager
+
+        db_manager = get_db_manager()
+        data_dir = os.path.dirname(db_manager.db_path)
+        html_snapshot_dir = os.path.join(data_dir, "html_snapshots")
+        return os.path.join(html_snapshot_dir, html_path)
 
     def _process_pdf_path(self, pdf_path: str) -> str:
         """Process PDF path: copy file if needed and return relative path for database."""
@@ -410,6 +425,7 @@ class EditDialog(ModalScreen):
             with Horizontal(classes="button-row"):
                 yield Button("Extract", id="extract-button", variant="default")
                 yield Button("Summarize", id="summarize-button", variant="default")
+                yield Button("Snapshot", id="snapshot-button", variant="default")
                 yield Button("Save", id="save-button", variant="primary")
                 yield Button("Cancel", id="cancel-button", variant="default")
 
@@ -453,6 +469,24 @@ class EditDialog(ModalScreen):
         content_switcher = self.query_one("#content-switcher", ContentSwitcher)
         content_switcher.current = self.current_paper_type
 
+        # Set initial snapshot button visibility
+        self.show_snapshot_button = self.current_paper_type == "website"
+        self._update_snapshot_button_visibility()
+
+    def _update_snapshot_button_visibility(self):
+        """Update snapshot button visibility based on paper type."""
+        try:
+            snapshot_button = self.query_one("#snapshot-button", Button)
+            snapshot_button.display = self.show_snapshot_button
+        except Exception:
+            # Button not yet available
+            pass
+
+    def watch_current_paper_type(self, new_type: str) -> None:
+        """Update snapshot button visibility when paper type changes."""
+        self.show_snapshot_button = new_type == "website"
+        self._update_snapshot_button_visibility()
+
     def _create_all_paper_type_containers(self):
         """Create field containers for each paper type with their specific fields."""
         # Get all field values from paper data
@@ -484,6 +518,7 @@ class EditDialog(ModalScreen):
             "category": self.paper_data.get("category", ""),
             "url": self.paper_data.get("url", ""),
             "pdf_path": self._get_full_pdf_path(),
+            "html_snapshot_path": self._get_full_html_snapshot_path(),
             "collections": collection_names,
             "abstract": self.paper_data.get("abstract", ""),
             "notes": self.paper_data.get("notes", ""),
@@ -493,6 +528,7 @@ class EditDialog(ModalScreen):
         label_mappings = {
             "doi": "DOI",
             "pdf_path": "PDF Path",
+            "html_snapshot_path": "HTML Path",
             "url": "URL",
             "venue_acronym": "Venue Acronym",
             "author_names": "Authors",
@@ -593,6 +629,8 @@ class EditDialog(ModalScreen):
             self.action_extract_pdf()
         elif event.button.id == "summarize-button":
             self.action_summarize()
+        elif event.button.id == "snapshot-button":
+            self.action_refresh_snapshot()
 
     def action_save(self) -> None:
         """Handle save action."""
@@ -704,7 +742,102 @@ class EditDialog(ModalScreen):
         self.dismiss(None)
 
     def action_extract_pdf(self) -> None:
-        """Handle Extract PDF action."""
+        """Handle Extract action - from PDF or HTML depending on paper type."""
+        title = self.paper_data.get("title", "Unknown Title")
+        paper_id = self.paper_data.get("id", "unknown")
+
+        # For website papers, extract from HTML
+        if self.current_paper_type == "website":
+            html_path = self.paper_data.get("html_snapshot_path")
+            if not html_path:
+                self.error_display_callback(
+                    "Extract Error",
+                    "No HTML snapshot file path specified for this paper.",
+                )
+                return
+
+            # Get absolute path
+            from ng.db.database import get_db_manager
+
+            db_manager = get_db_manager()
+            data_dir = os.path.dirname(db_manager.db_path)
+            html_snapshot_dir = os.path.join(data_dir, "html_snapshots")
+            html_absolute_path = os.path.join(html_snapshot_dir, html_path)
+
+            if not os.path.exists(html_absolute_path):
+                self.error_display_callback(
+                    "Extract Error",
+                    f"HTML snapshot file not found: {html_absolute_path}",
+                )
+                return
+
+            # Get URL from form
+            url_widget_key = f"url_{self.current_paper_type}"
+            url = ""
+            if url_widget_key in self.input_widgets:
+                url = self.input_widgets[url_widget_key].value.strip()
+
+            def extract_from_html_operation():
+                """Extract metadata from HTML snapshot."""
+                # Read HTML content
+                with open(html_absolute_path, "r", encoding="utf-8") as f:
+                    html_content = f.read()
+
+                # Extract metadata
+                metadata_extractor = MetadataExtractor(
+                    pdf_manager=self.pdf_manager, app=self.parent_app
+                )
+                metadata = metadata_extractor.extract_from_webpage(
+                    url or "unknown", html_content
+                )
+                return metadata
+
+            def on_extraction_success(extracted_data):
+                if not extracted_data:
+                    if self.parent_app:
+                        self.parent_app.notify(
+                            "No metadata extracted from HTML",
+                            severity="warning",
+                        )
+                    return
+
+                changes = self._compare_extracted_with_current_form(extracted_data)
+                if not changes:
+                    if self.parent_app:
+                        self.parent_app.notify(
+                            "No changes found: extracted metadata matches current values",
+                            severity="information",
+                        )
+                    return
+                self._update_fields_with_extracted_data(extracted_data)
+
+            def on_extract_complete(result, error):
+                if error:
+                    if self.parent_app:
+                        self.parent_app.notify(
+                            f"Failed to extract metadata: {error}", severity="error"
+                        )
+                    return
+                on_extraction_success(result)
+
+            if self.background_service:
+                self.background_service.run_operation(
+                    operation_func=extract_from_html_operation,
+                    operation_name=f"edit_extract_{paper_id}",
+                    initial_message=f"Extracting metadata from HTML for '{title}'...",
+                    on_complete=on_extract_complete,
+                )
+            else:
+                # Fallback: run synchronously
+                try:
+                    extracted_data = extract_from_html_operation()
+                    on_extract_complete(extracted_data, None)
+                except Exception as e:
+                    on_extract_complete(None, str(e))
+
+            return
+
+        # For non-website papers, extract from PDF
         pdf_path = self.paper_data.get("pdf_path")
         if not pdf_path:
             self.error_display_callback(
@@ -722,9 +855,6 @@ class EditDialog(ModalScreen):
                 f"PDF file not found. Original path: '{original_path}', Resolved path: '{pdf_path}'. Please ensure the file exists.",
             )
             return
-
-        title = self.paper_data.get("title", "Unknown Title")
-        paper_id = self.paper_data.get("id", "unknown")
 
         # Use extraction handler to manage the operation
         extraction_handler = PDFExtractionHandler(self.parent_app, self.pdf_manager)
@@ -761,7 +891,110 @@ class EditDialog(ModalScreen):
                 on_extract_complete(None, str(e))
 
     def action_summarize(self) -> None:
-        """Handle Summarize action."""
+        """Handle Summarize action - from PDF or HTML depending on paper type."""
+        title = self.paper_data.get("title", "Unknown Title")
+        paper_id = self.paper_data.get("id", "unknown")
+
+        # For website papers, summarize from HTML
+        if self.current_paper_type == "website":
+            html_path = self.paper_data.get("html_snapshot_path")
+            if not html_path:
+                self.error_display_callback(
+                    "Summarize Error",
+                    "No HTML snapshot file path specified for this paper.",
+                )
+                return
+
+            # Get absolute path
+            from ng.db.database import get_db_manager
+
+            db_manager = get_db_manager()
+            data_dir = os.path.dirname(db_manager.db_path)
+            html_snapshot_dir = os.path.join(data_dir, "html_snapshots")
+            html_absolute_path = os.path.join(html_snapshot_dir, html_path)
+
+            if not os.path.exists(html_absolute_path):
+                self.error_display_callback(
+                    "Summarize Error",
+                    f"HTML snapshot file not found: {html_absolute_path}",
+                )
+                return
+
+            def generate_summary_from_html_operation():
+                """Generate summary from HTML using metadata service."""
+                extractor = MetadataExtractor(
+                    pdf_manager=self.pdf_manager, app=self.parent_app
+                )
+                summary = extractor.generate_webpage_summary(html_path)
+                if not summary:
+                    raise Exception("Failed to generate summary - empty response")
+                return {"summary": summary}
+
+            def on_summary_complete(result, error):
+                if error:
+                    if self.parent_app:
+                        self.parent_app.notify(
+                            f"Failed to generate summary: {error}", severity="error"
+                        )
+                    return
+
+                if not result:
+                    if self.parent_app:
+                        self.parent_app.notify("No summary generated", severity="error")
+                    return
+
+                summary = result["summary"]
+                notes_widget_key = f"notes_{self.current_paper_type}"
+                if summary and notes_widget_key in self.input_widgets:
+                    notes_widget = self.input_widgets[notes_widget_key]
+                    current_notes = (
+                        notes_widget.text
+                        if hasattr(notes_widget, "text")
+                        else notes_widget.value
+                    )
+                    if current_notes.strip() != summary.strip():
+                        if hasattr(notes_widget, "text"):
+                            notes_widget.text = summary
+                        else:
+                            notes_widget.value = summary
+                        self.changed_fields.add("notes")
+                        self._update_field_styling()
+                        if self.parent_app:
+                            self.parent_app.notify(
+                                "Summary generated and applied to notes field",
+                                severity="information",
+                            )
+                    else:
+                        if self.parent_app:
+                            self.parent_app.notify(
+                                "Summary matches existing notes - no changes made",
+                                severity="information",
+                            )
+                else:
+                    if self.parent_app:
+                        self.parent_app.notify(
+                            "Failed to generate summary or notes field not available",
+                            severity="error",
+                        )
+
+            if self.background_service:
+                self.background_service.run_operation(
+                    operation_func=generate_summary_from_html_operation,
+                    operation_name=f"edit_summary_{paper_id}",
+                    initial_message=f"Generating summary from HTML for '{title}'...",
+                    on_complete=on_summary_complete,
+                )
+            else:
+                # Fallback: run synchronously
+                try:
+                    result = generate_summary_from_html_operation()
+                    on_summary_complete(result, None)
+                except Exception as e:
+                    on_summary_complete(None, str(e))
+
+            return
+
+        # For non-website papers, summarize from PDF
         pdf_path = self.paper_data.get("pdf_path")
         if not pdf_path:
             self.error_display_callback(
@@ -779,9 +1012,6 @@ class EditDialog(ModalScreen):
                 f"PDF file not found. Original path: '{original_path}', Resolved path: '{pdf_path}'. Please ensure the file exists.",
             )
             return
-
-        title = self.paper_data.get("title", "Unknown Title")
-        paper_id = self.paper_data.get("id", "unknown")
 
         def generate_summary_operation():
             extractor = MetadataExtractor(
@@ -854,6 +1084,133 @@ class EditDialog(ModalScreen):
                 on_summary_complete(result, None)
             except Exception as e:
                 on_summary_complete(None, str(e))
+
+    def action_refresh_snapshot(self) -> None:
+        """Handle Refresh Snapshot action for website papers."""
+        if self.current_paper_type != "website":
+            if self.parent_app:
+                self.parent_app.notify(
+                    "Snapshot refresh is only available for website papers",
+                    severity="warning",
+                )
+            return
+
+        # Get the current URL from the form
+        url_widget_key = f"url_{self.current_paper_type}"
+        if url_widget_key not in self.input_widgets:
+            if self.parent_app:
+                self.parent_app.notify("URL field not found", severity="error")
+            return
+
+        url_widget = self.input_widgets[url_widget_key]
+        url = url_widget.value.strip()
+
+        if not url:
+            if self.parent_app:
+                self.parent_app.notify(
+                    "Please enter a URL before refreshing snapshot",
+                    severity="warning",
+                )
+            return
+
+        title = self.paper_data.get("title", "Unknown Title")
+        paper_id = self.paper_data.get("id", "unknown")
+
+        def refresh_snapshot_operation():
+            """Refresh the webpage snapshot."""
+            from ng.services.webpage import WebpageSnapshotService
+            from ng.services.pdf import get_pdf_directory
+            import os
+
+            # Get directories
+            pdf_dir = get_pdf_directory()
+            data_dir = os.path.dirname(pdf_dir)
+            html_snapshot_dir = os.path.join(data_dir, "html_snapshots")
+
+            # Get initial title for filename
+            import requests
+            from bs4 import BeautifulSoup
+
+            try:
+                response = requests.get(url, timeout=30)
+                soup = BeautifulSoup(response.content, "html.parser")
+                title_tag = soup.find("title")
+                initial_title = (
+                    title_tag.get_text(strip=True) if title_tag else "webpage"
+                )
+            except Exception:
+                initial_title = title or "webpage"
+
+            # Create snapshot
+            webpage_service = WebpageSnapshotService(app=self.parent_app)
+            html_path, html_content = webpage_service.snapshot_webpage(
+                url=url,
+                title=initial_title,
+                html_output_dir=html_snapshot_dir,
+            )
+
+            # Extract metadata
+            metadata_extractor = MetadataExtractor(
+                pdf_manager=self.pdf_manager, app=self.parent_app
+            )
+            metadata = metadata_extractor.extract_from_webpage(url, html_content)
+
+            # Convert to relative path
+            relative_html_path = os.path.relpath(html_path, html_snapshot_dir)
+
+            return {
+                "html_snapshot_path": relative_html_path,
+                "html_absolute_path": html_path,
+                "metadata": metadata,
+            }
+
+        def on_snapshot_complete(result, error):
+            """Handle snapshot completion."""
+            if error:
+                if self.parent_app:
+                    self.parent_app.notify(
+                        f"Failed to refresh snapshot: {error}", severity="error"
+                    )
+                return
+
+            if not result:
+                if self.parent_app:
+                    self.parent_app.notify("No snapshot created", severity="error")
+                return
+
+            # Update the html_snapshot_path field
+            html_path_widget_key = f"html_snapshot_path_{self.current_paper_type}"
+            if html_path_widget_key in self.input_widgets:
+                html_path_widget = self.input_widgets[html_path_widget_key]
+                html_path_widget.value = result["html_absolute_path"]
+                self.changed_fields.add("html_snapshot_path")
+
+            # Update metadata fields if extracted
+            metadata = result.get("metadata", {})
+            if metadata:
+                self._update_fields_with_extracted_data(metadata)
+
+            self._update_field_styling()
+
+            if self.parent_app:
+                self.parent_app.notify(
+                    "Snapshot refreshed successfully", severity="information"
+                )
+
+        if self.background_service:
+            self.background_service.run_operation(
+                operation_func=refresh_snapshot_operation,
+                operation_name=f"edit_snapshot_{paper_id}",
+                initial_message=f"Refreshing snapshot for '{title}'...",
+                on_complete=on_snapshot_complete,
+            )
+        else:
+            # Fallback: run synchronously
+            try:
+                result = refresh_snapshot_operation()
+                on_snapshot_complete(result, None)
+            except Exception as e:
+                on_snapshot_complete(None, str(e))
 
     def _update_fields_with_extracted_data(self, extracted_data):
         """Update form fields with extracted PDF data."""

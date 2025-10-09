@@ -53,17 +53,20 @@ class SystemCommandHandler(CommandHandler):
                 )
                 cleaned_records = self.db_health_service.clean_orphaned_records()
                 cleaned_pdfs = self.db_health_service.clean_orphaned_pdfs()
+                cleaned_htmls = self.db_health_service.clean_orphaned_htmls()
                 fixed_paths = self.db_health_service.fix_absolute_pdf_paths()
                 renamed_files = self.db_health_service.clean_pdf_filenames()
 
                 total_cleaned_records = sum(cleaned_records.values())
                 total_cleaned_pdfs = sum(cleaned_pdfs.values())
+                total_cleaned_htmls = sum(cleaned_htmls.values())
                 total_fixed_paths = sum(fixed_paths.values())
                 total_renamed = sum(renamed_files.values())
 
                 if (
                     total_cleaned_records > 0
                     or total_cleaned_pdfs > 0
+                    or total_cleaned_htmls > 0
                     or total_fixed_paths > 0
                     or total_renamed > 0
                 ):
@@ -72,6 +75,8 @@ class SystemCommandHandler(CommandHandler):
                         details.append(f"Records: {total_cleaned_records}")
                     if total_cleaned_pdfs > 0:
                         details.append(f"PDF files: {total_cleaned_pdfs}")
+                    if total_cleaned_htmls > 0:
+                        details.append(f"HTML files: {total_cleaned_htmls}")
                     if total_fixed_paths > 0:
                         details.append(f"PDF paths: {total_fixed_paths}")
                     if total_renamed > 0:
@@ -87,6 +92,12 @@ class SystemCommandHandler(CommandHandler):
                     if total_cleaned_pdfs > 0:
                         cleanup_summary.append(
                             self._pluralizer.pluralize("PDF", total_cleaned_pdfs, True)
+                        )
+                    if total_cleaned_htmls > 0:
+                        cleanup_summary.append(
+                            self._pluralizer.pluralize(
+                                "HTML file", total_cleaned_htmls, True
+                            )
                         )
                     if total_fixed_paths > 0:
                         cleanup_summary.append(
@@ -109,7 +120,10 @@ class SystemCommandHandler(CommandHandler):
 
                     # Trigger auto-sync if enabled and available
                     try:
-                        if hasattr(self.app, "auto_sync_service") and self.app.auto_sync_service:
+                        if (
+                            hasattr(self.app, "auto_sync_service")
+                            and self.app.auto_sync_service
+                        ):
                             # Provide a specific op marker for observability
                             self.app.auto_sync_service.enqueue(
                                 {
@@ -118,6 +132,7 @@ class SystemCommandHandler(CommandHandler):
                                     "summary": {
                                         "records": total_cleaned_records,
                                         "pdfs": total_cleaned_pdfs,
+                                        "htmls": total_cleaned_htmls,
                                         "paths": total_fixed_paths,
                                         "renamed": total_renamed,
                                     },
@@ -137,13 +152,13 @@ class SystemCommandHandler(CommandHandler):
 ### Usage
 
 - `/doctor` — Run full diagnostic check
-- `/doctor clean` — Clean orphaned records, files, and rename PDFs to follow naming convention
+- `/doctor clean` — Clean orphaned records, PDF/HTML files, and rename PDFs to follow naming convention
 - `/doctor help` — Show this help
 
 ### What it checks
 
 - Database integrity and structure
-- Orphaned association records and PDF files
+- Orphaned association records, PDF files, and HTML snapshots
 - Papers with absolute PDF paths (should be relative)
 - Papers with missing PDF files
 - System dependencies
@@ -182,16 +197,16 @@ Notes:
             f"*Generated: {report['timestamp'][:19]}*",
             "",
             "## Database Health",
-            "📊 *Database integrity and structure*",
+            "*Database integrity and structure*",
             "",
         ]
 
         db_checks = report["database_checks"]
         health_items = [
-            f"- **Database exists:** {'✅ Yes' if db_checks['database_exists'] else '❌ No'}",
-            f"- **Tables exist:** {'✅ Yes' if db_checks['tables_exist'] else '❌ No'}",
+            f"- **Database exists:** {'Yes' if db_checks['database_exists'] else 'No'}",
+            f"- **Tables exist:** {'Yes' if db_checks['tables_exist'] else 'No'}",
             f"- **Database size:** {db_checks.get('database_size', 0) // 1024:,} KB",
-            f"- **Foreign key constraints:** {'✅ Enabled' if db_checks['foreign_key_constraints'] else '❌ Disabled'}",
+            f"- **Foreign key constraints:** {'Enabled' if db_checks['foreign_key_constraints'] else 'Disabled'}",
         ]
         markdown_lines.extend(health_items)
 
@@ -204,7 +219,7 @@ Notes:
             [
                 "",
                 "## Orphaned Records",
-                "🔗 *Records and files without valid references*",
+                "*Records and files without valid references*",
                 "",
             ]
         )
@@ -222,6 +237,11 @@ Notes:
         if pdf_count > 0:
             orphan_items.append(f"- **Orphaned PDF files:** {pdf_count:,}")
 
+        orphaned_htmls = report.get("orphaned_htmls", {}).get("summary", {})
+        html_count = orphaned_htmls.get("orphaned_html_files", 0)
+        if html_count > 0:
+            orphan_items.append(f"- **Orphaned HTML files:** {html_count:,}")
+
         absolute_paths = report.get("absolute_pdf_paths", {}).get("summary", {})
         absolute_count = absolute_paths.get("absolute_path_count", 0)
         if absolute_count > 0:
@@ -230,16 +250,23 @@ Notes:
             )
 
         missing_pdfs = report.get("missing_pdfs", {}).get("summary", {})
-        missing_count = missing_pdfs.get("missing_pdf_count", 0)
-        if missing_count > 0:
+        missing_pdf_count = missing_pdfs.get("missing_pdf_count", 0)
+        if missing_pdf_count > 0:
             orphan_items.append(
-                f"- **Papers with missing PDF files:** {missing_count:,}"
+                f"- **Papers with missing PDF files:** {missing_pdf_count:,}"
+            )
+
+        missing_htmls = report.get("missing_htmls", {}).get("summary", {})
+        missing_html_count = missing_htmls.get("missing_html_count", 0)
+        if missing_html_count > 0:
+            orphan_items.append(
+                f"- **Papers with missing HTML snapshots:** {missing_html_count:,}"
             )
 
         markdown_lines.extend(orphan_items)
 
         # Add detailed missing PDF information if available
-        if missing_count > 0:
+        if missing_pdf_count > 0:
             missing_pdf_details = report.get("missing_pdfs", {}).get("details", [])
             if missing_pdf_details:
                 markdown_lines.extend(["", "### Missing PDF Files Details", ""])
@@ -257,6 +284,25 @@ Notes:
                         f"- ... and {remaining} more papers with missing PDFs"
                     )
 
+        # Add detailed missing HTML information if available
+        if missing_html_count > 0:
+            missing_html_details = report.get("missing_htmls", {}).get("details", [])
+            if missing_html_details:
+                markdown_lines.extend(["", "### Missing HTML Snapshot Files Details", ""])
+                for detail in missing_html_details[:10]:  # Limit to first 10 for display
+                    paper_id = detail.get("paper_id", "Unknown")
+                    title = detail.get("title", "No title")
+                    html_path = detail.get("html_snapshot_path", "No path")
+                    path_type = detail.get("path_type", "unknown")
+                    markdown_lines.append(f"- **Paper {paper_id}**: {title}")
+                    markdown_lines.append(f"  - Path: `{html_path}` ({path_type})")
+
+                if len(missing_html_details) > 10:
+                    remaining = len(missing_html_details) - 10
+                    markdown_lines.append(
+                        f"- ... and {remaining} more papers with missing HTML snapshots"
+                    )
+
         # Add PDF statistics section
         pdf_stats = report.get("pdf_statistics", {})
         if pdf_stats:
@@ -264,7 +310,7 @@ Notes:
                 [
                     "",
                     "## PDF Collection",
-                    "📁 *PDF folder statistics and information*",
+                    "*PDF folder statistics and information*",
                     "",
                 ]
             )
@@ -282,11 +328,39 @@ Notes:
             else:
                 pdf_folder_path = pdf_stats.get("pdf_folder_path", "Unknown")
                 markdown_lines.append(
-                    f"- **PDF folder:** ❌ Does not exist (`{pdf_folder_path}`)"
+                    f"- **PDF folder:** Does not exist (`{pdf_folder_path}`)"
+                )
+
+        # Add HTML statistics section
+        html_stats = report.get("html_statistics", {})
+        if html_stats:
+            markdown_lines.extend(
+                [
+                    "",
+                    "## HTML Snapshots Collection",
+                    "*HTML snapshots folder statistics and information*",
+                    "",
+                ]
+            )
+
+            if html_stats.get("html_folder_exists", False):
+                total_files = html_stats.get("total_html_files", 0)
+                total_size = html_stats.get("total_size_formatted", "0 B")
+
+                html_info = [
+                    f"- **Total HTML files:** {total_files:,}",
+                    f"- **Total folder size:** {total_size}",
+                ]
+
+                markdown_lines.extend(html_info)
+            else:
+                html_folder_path = html_stats.get("html_folder_path", "Unknown")
+                markdown_lines.append(
+                    f"- **HTML snapshots folder:** Does not exist (`{html_folder_path}`)"
                 )
 
         markdown_lines.extend(
-            ["", "## System Health", "💻 *Python environment and dependencies*", ""]
+            ["", "## System Health", "*Python environment and dependencies*", ""]
         )
         sys_checks = report["system_checks"]
         python_version = (
@@ -298,18 +372,27 @@ Notes:
 
         # Show dependencies as individual list items
         markdown_lines.extend(["", "### Dependencies", ""])
-        for dep, status in sys_checks["dependencies"].items():
-            status_icon = "✅" if status else "❌"
-            markdown_lines.append(f"- `{dep}`: {status_icon}")
+        for dep, info in sys_checks["dependencies"].items():
+            if isinstance(info, dict):
+                # New format with version info
+                if info.get("installed"):
+                    version = info.get("version", "unknown")
+                    markdown_lines.append(f"- `{dep}`: {version}")
+                else:
+                    markdown_lines.append(f"- `{dep}`: Missing")
+            else:
+                # Fallback for old format (boolean)
+                status_text = "Installed" if info else "Missing"
+                markdown_lines.append(f"- `{dep}`: {status_text}")
 
         markdown_lines.extend(
-            ["", "## Terminal Setup", "🖥️ *Terminal capabilities and configuration*", ""]
+            ["", "## Terminal Setup", "*Terminal capabilities and configuration*", ""]
         )
         term_checks = report["terminal_checks"]
         terminal_items = [
             f"- **Terminal type:** `{term_checks['terminal_type']}`",
-            f"- **Unicode support:** {'✅ Yes' if term_checks['unicode_support'] else '❌ No'}",
-            f"- **Color support:** {'✅ Yes' if term_checks['color_support'] else '❌ No'}",
+            f"- **Unicode support:** {'Yes' if term_checks['unicode_support'] else 'No'}",
+            f"- **Color support:** {'Yes' if term_checks['color_support'] else 'No'}",
         ]
 
         if "terminal_size" in term_checks and "columns" in term_checks["terminal_size"]:
@@ -325,10 +408,10 @@ Notes:
                 [
                     "",
                     "### Textual Application Features",
-                    f"- **Rich rendering:** {'✅ Yes' if textual_features.get('rich_rendering') else '❌ No'}",
-                    f"- **Mouse support:** {'✅ Yes' if textual_features.get('mouse_support') else '❌ No'}",
-                    f"- **Keyboard events:** {'✅ Yes' if textual_features.get('keyboard_events') else '❌ No'}",
-                    f"- **Async events:** {'✅ Yes' if textual_features.get('async_events') else '❌ No'}",
+                    f"- **Rich rendering:** {'Yes' if textual_features.get('rich_rendering') else 'No'}",
+                    f"- **Mouse support:** {'Yes' if textual_features.get('mouse_support') else 'No'}",
+                    f"- **Keyboard events:** {'Yes' if textual_features.get('keyboard_events') else 'No'}",
+                    f"- **Async events:** {'Yes' if textual_features.get('async_events') else 'No'}",
                 ]
             )
 
@@ -337,7 +420,7 @@ Notes:
         # Issues and recommendations
         if report["issues_found"]:
             markdown_lines.extend(
-                ["", "## Issues Found", "⚠️ *Problems detected that need attention*", ""]
+                ["", "## Issues Found", "*Problems detected that need attention*", ""]
             )
             for issue in report["issues_found"]:
                 markdown_lines.append(f"- {issue}")
@@ -347,19 +430,25 @@ Notes:
                 [
                     "",
                     "## Recommendations",
-                    "💡 *Suggested actions to improve database health*",
+                    "*Suggested actions to improve database health*",
                     "",
                 ]
             )
             for rec in report["recommendations"]:
                 markdown_lines.append(f"- {rec}")
 
-        if pc_count > 0 or pa_count > 0 or absolute_count > 0 or pdf_count > 0:
+        if (
+            pc_count > 0
+            or pa_count > 0
+            or absolute_count > 0
+            or pdf_count > 0
+            or html_count > 0
+        ):
             markdown_lines.extend(
                 [
                     "",
                     "## Quick Fix",
-                    "🧹 *Automatic cleanup command*",
+                    "*Automatic cleanup command*",
                     "",
                     "To automatically clean up issues, run:",
                     "```",

@@ -63,6 +63,49 @@ class SystemService:
         except Exception as e:
             return False, f"Error opening PDF: {str(e)}"
 
+    def open_file(self, file_path: str, file_type: str = "file") -> Tuple[bool, str]:
+        """Open file in system default application. Returns (success, error_message)."""
+        try:
+            if not os.path.exists(file_path):
+                return False, f"{file_type} file not found: {file_path}"
+
+            # Cross-platform file opening
+            if platform.system() == "Windows":  # Windows
+                os.startfile(file_path)
+            elif platform.system() == "Darwin":  # macOS
+                result = subprocess.run(
+                    ["open", file_path], capture_output=True, text=True
+                )
+                if result.returncode != 0:
+                    return False, f"Failed to open {file_type}: {result.stderr}"
+            else:  # Linux and other Unix-like systems
+                # Check if xdg-open is available
+                try:
+                    result = subprocess.run(
+                        ["which", "xdg-open"], capture_output=True, text=True
+                    )
+                    if result.returncode != 0:
+                        return (
+                            False,
+                            "xdg-open not found. Please install xdg-utils.",
+                        )
+
+                    result = subprocess.run(
+                        ["xdg-open", file_path], capture_output=True, text=True
+                    )
+                    if result.returncode != 0:
+                        return False, f"Failed to open {file_type}: {result.stderr}"
+                except FileNotFoundError:
+                    return (
+                        False,
+                        "xdg-open not found. Please install xdg-utils.",
+                    )
+
+            return True, ""
+
+        except Exception as e:
+            return False, f"Error opening {file_type}: {str(e)}"
+
     def copy_to_clipboard(self, text: str) -> bool:
         """Copy text to system clipboard."""
         pyperclip.copy(text)

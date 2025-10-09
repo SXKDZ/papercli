@@ -14,12 +14,14 @@ from typing import Dict, Optional, Tuple
 import requests
 from packaging import version
 
+
 def _get_version_from_toml() -> str:
     """Read version from pyproject.toml file."""
     toml_path = Path(__file__).parent.parent / "pyproject.toml"
     with open(toml_path, "rb") as f:
         data = tomllib.load(f)
     return data["project"]["version"]
+
 
 __version__ = _get_version_from_toml()
 

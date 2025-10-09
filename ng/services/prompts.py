@@ -90,7 +90,12 @@ def metadata_venue_extraction_system_message() -> str:
     return "You are a helpful assistant that extracts venue information from academic paper titles."
 
 
-def metadata_venue_extraction_prompt(venue_field: str) -> str:
+def venue_extraction_system_message() -> str:
+    """System message for venue extraction."""
+    return "You are a helpful assistant that extracts venue information from academic paper titles."
+
+
+def venue_extraction_prompt(venue_field: str) -> str:
     """Prompt for extracting venue information from DBLP venue field."""
     return f"""Given this conference/journal venue field from a DBLP BibTeX entry: "{venue_field}"
 
@@ -130,4 +135,26 @@ def metadata_extraction_prompt(pdf_text: str) -> str:
 
         Paper text:
         {pdf_text[:8000]}
+        """
+
+
+def webpage_metadata_extraction_prompt(html_text: str, url: str) -> str:
+    """Prompt for extracting metadata from webpage HTML content."""
+    return f"""
+        Extract the following metadata from this webpage content. This may be a blog post, article, technical report, or other web content. Return your response as a JSON object with these exact keys:
+
+        - title: The page title or article title
+        - authors: List of author names as strings (if available, otherwise empty list)
+        - abstract: A brief summary or description of the content (if available)
+        - year: Publication year as integer (if available)
+        - venue_full: Publisher/website name (e.g., "arXiv", "Google AI Blog", "Nature")
+        - venue_acronym: Abbreviated name if applicable (otherwise empty string)
+        - paper_type: Should be "website" for web content
+        - doi: DOI (if available)
+        - url: Use this URL: {url}
+
+        If any field is not available, use null for that field (empty list for authors if not available).
+
+        Webpage HTML (first 8000 characters):
+        {html_text[:8000]}
         """

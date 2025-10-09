@@ -215,8 +215,59 @@ def normalize_paper_data(paper_data: dict) -> dict:
     normalized_data = paper_data.copy()
 
     if normalized_data.get("title"):
-        normalized_data["title"] = fix_broken_lines(normalized_data["title"])
-        normalized_data["title"] = titlecase(normalized_data["title"])
+        # Fix line breaks/whitespace
+        fixed = fix_broken_lines(str(normalized_data["title"]))
+
+        # Build acronym set from original (standalone + hyphen segments)
+        acronyms = set(re.findall(r"\b[A-Z]{2,}\b", fixed))
+        # Add known acronyms to always preserve (even if source was not uppercase)
+        known_acronyms = {"OR", "LLM"}
+        acronyms.update(known_acronyms)
+        for token in re.findall(r"[A-Za-z-]+", fixed):
+            if "-" in token:
+                for seg in token.split("-"):
+                    if len(seg) >= 2 and seg.isupper():
+                        acronyms.add(seg)
+
+        def _tc_callback(word: str, **kwargs):
+            if word.upper() in acronyms:
+                return word.upper()
+            if "-" in word:
+                parts = word.split("-")
+                out = []
+                changed = False
+                for p in parts:
+                    if p.upper() in acronyms:
+                        out.append(p.upper())
+                        changed = True
+                    else:
+                        out.append(p)
+                if changed:
+                    return "-".join(out)
+            return None
+
+        cased = titlecase(fixed, callback=_tc_callback)
+
+        # Keep full title including subtitles (no colon trimming)
+        # Keep user-provided trailing clauses (no generic deletions)
+
+        # Ensure both segments in hyphenated words are capitalized (e.g., In-Context)
+        def _cap_hyphen(m):
+            left_word = m.group(1)
+            right_word = m.group(2)
+            if left_word.upper() in acronyms:
+                left = left_word.upper()
+            else:
+                left = left_word[:1].upper() + left_word[1:]
+            if right_word.upper() in acronyms:
+                right = right_word.upper()
+            else:
+                right = right_word[:1].upper() + right_word[1:]
+            return f"{left}-{right}"
+
+        cased = re.sub(r"\b([A-Za-z]+)-([A-Za-z]+)\b", _cap_hyphen, cased)
+
+        normalized_data["title"] = re.sub(r"\s+", " ", cased).strip()
 
     if normalized_data.get("pages"):
         normalized_data["pages"] = (

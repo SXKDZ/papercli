@@ -265,10 +265,30 @@ class ChatDialog(ModalScreen):
         papers_needing_summaries = []
         for paper in self.papers:
             fields = dialog_utils.get_paper_fields(paper)
-            if not fields["notes"] and fields["pdf_path"]:
-                absolute_path = self.pdf_manager.get_absolute_path(fields["pdf_path"])
-                if os.path.exists(absolute_path):
-                    papers_needing_summaries.append(paper)
+            if not fields["notes"]:
+                # Website papers: check for HTML snapshot
+                if (
+                    paper.paper_type == "website"
+                    and hasattr(paper, "html_snapshot_path")
+                    and paper.html_snapshot_path
+                ):
+                    from ng.db.database import get_db_manager
+
+                    db_manager = get_db_manager()
+                    data_dir = os.path.dirname(db_manager.db_path)
+                    html_snapshot_dir = os.path.join(data_dir, "html_snapshots")
+                    html_absolute_path = os.path.join(
+                        html_snapshot_dir, paper.html_snapshot_path
+                    )
+                    if os.path.exists(html_absolute_path):
+                        papers_needing_summaries.append(paper)
+                # Non-website papers: check for PDF
+                elif fields["pdf_path"]:
+                    absolute_path = self.pdf_manager.get_absolute_path(
+                        fields["pdf_path"]
+                    )
+                    if os.path.exists(absolute_path):
+                        papers_needing_summaries.append(paper)
 
         # Generate summaries if needed (following app version)
         if papers_needing_summaries:
@@ -556,7 +576,10 @@ class ChatDialog(ModalScreen):
         # separator between thinking and content yet; only add it on completion.
         display_content = content
         if thinking:
-            display_content = f"**◆ Thinking**\n\n{thinking}\n\n{content}"
+            # Format thinking as markdown quote block with header included
+            thinking_lines = thinking.split("\n")
+            quoted_thinking = "\n".join(f">{f' {line}' if line else ''}" for line in thinking_lines)
+            display_content = f"> **◆ Thinking**\n>\n{quoted_thinking}\n\n{content}"
 
         if self._streaming_widget:
             self._streaming_widget.update(display_content)
@@ -592,8 +615,11 @@ class ChatDialog(ModalScreen):
         # Build display content with thinking prepended if available
         display_content = final_content
         if final_thinking:
+            # Format thinking as markdown quote block with header included
+            thinking_lines = final_thinking.split("\n")
+            quoted_thinking = "\n".join(f">{f' {line}' if line else ''}" for line in thinking_lines)
             display_content = (
-                f"**◆ Thinking**\n\n{final_thinking}\n\n---\n\n{final_content}"
+                f"> **◆ Thinking**\n>\n{quoted_thinking}\n\n{final_content}"
             )
 
         # Add token info to response
@@ -803,8 +829,12 @@ class ChatDialog(ModalScreen):
         return max_pages
 
     def _has_available_pdfs(self) -> bool:
-        """Check if any papers have available PDF files."""
+        """Check if any papers have available PDF files. Website papers use HTML, not PDFs."""
         for paper in self.papers:
+            # Skip website papers - they use HTML snapshots instead
+            if paper.paper_type == "website":
+                continue
+
             fields = dialog_utils.get_paper_fields(paper)
             if fields["pdf_path"]:
                 absolute_path = self.pdf_manager.get_absolute_path(fields["pdf_path"])
@@ -830,8 +860,14 @@ class ChatDialog(ModalScreen):
             end_input.disabled = not has_pdfs
 
             if not has_pdfs:
-                start_input.placeholder = "No PDF"
-                end_input.placeholder = "No PDF"
+                # Check if we have website papers (use HTML content instead)
+                all_websites = all(p.paper_type == "website" for p in self.papers)
+                if all_websites:
+                    start_input.placeholder = "HTML"
+                    end_input.placeholder = "content"
+                else:
+                    start_input.placeholder = "No PDF"
+                    end_input.placeholder = "No PDF"
                 start_input.value = ""
                 end_input.value = ""
             else:

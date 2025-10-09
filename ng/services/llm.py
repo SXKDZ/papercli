@@ -35,19 +35,33 @@ class LLMSummaryService:
         self._pluralizer = Pluralizer()
 
     def _filter_papers_with_pdfs(self, papers: List[Paper]) -> List[Paper]:
-        """Filter papers that have accessible PDF files (resolving relative paths)."""
+        """Filter papers that have accessible PDF files or HTML snapshots (for websites)."""
         # Normalize to list
         if not isinstance(papers, list):
             papers = [papers]
 
-        papers_with_pdfs = []
+        papers_with_content = []
         for p in papers:
-            if p.pdf_path:
+            # Website papers: check for HTML snapshot
+            if p.paper_type == "website":
+                if hasattr(p, "html_snapshot_path") and p.html_snapshot_path:
+                    from ng.db.database import get_db_manager
+
+                    db_manager = get_db_manager()
+                    data_dir = os.path.dirname(db_manager.db_path)
+                    html_snapshot_dir = os.path.join(data_dir, "html_snapshots")
+                    html_absolute_path = os.path.join(
+                        html_snapshot_dir, p.html_snapshot_path
+                    )
+                    if os.path.exists(html_absolute_path):
+                        papers_with_content.append(p)
+            # Non-website papers: check for PDF
+            elif p.pdf_path:
                 absolute_path = self.pdf_manager.get_absolute_path(p.pdf_path)
                 if os.path.exists(absolute_path):
-                    papers_with_pdfs.append(p)
+                    papers_with_content.append(p)
 
-        return papers_with_pdfs
+        return papers_with_content
 
     def generate_summaries(
         self,
@@ -123,14 +137,29 @@ class LLMSummaryService:
         )
 
     def _generate_summary(self, operation_prefix: str, current_paper: Paper):
-        """Generate summary for a single paper."""
+        """Generate summary for a single paper (PDF or HTML based on paper type)."""
         if self.app:
             self.app._add_log(
                 f"{operation_prefix}_starting_{current_paper.id}",
                 f"Starting summary for paper ID {current_paper.id}: '{format_title_by_words(current_paper.title)}'",
             )
 
-        summary = self.metadata_extractor.generate_paper_summary(current_paper.pdf_path)
+        # For website papers, use HTML snapshot
+        if (
+            current_paper.paper_type == "website"
+            and hasattr(current_paper, "html_snapshot_path")
+            and current_paper.html_snapshot_path
+        ):
+            summary = self.metadata_extractor.generate_webpage_summary(
+                current_paper.html_snapshot_path
+            )
+        # For other papers, use PDF
+        elif current_paper.pdf_path:
+            summary = self.metadata_extractor.generate_paper_summary(
+                current_paper.pdf_path
+            )
+        else:
+            return None
 
         if not summary:
             return None

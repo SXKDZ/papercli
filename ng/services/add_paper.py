@@ -167,7 +167,7 @@ class AddPaperService:
             else:
                 self.app._add_log(
                     "pdf_download_error",
-                    f"Download failed: {pdf_error or 'Unknown error'}"
+                    f"Download failed: {pdf_error or 'Unknown error'}",
                 )
 
             if pdf_path and not pdf_error:
@@ -695,3 +695,103 @@ class AddPaperService:
 
         except Exception as e:
             raise Exception(f"Failed to add manual paper: {str(e)}")
+
+    def add_website_paper_async(self, url: str) -> Dict[str, Any]:
+        """
+        Add a paper from a website URL with HTML snapshot.
+
+        This method snapshots the webpage, extracts metadata using LLM,
+        and creates a paper entry with HTML snapshot (no PDF).
+
+        Args:
+            url: The URL of the website to snapshot
+
+        Returns:
+            Dictionary with paper object and snapshot information
+        """
+        from ng.services.webpage import WebpageSnapshotService
+
+        try:
+            # Get directories for snapshots
+            pdf_dir = get_pdf_directory()
+            data_dir = os.path.dirname(pdf_dir)
+            html_snapshot_dir = os.path.join(data_dir, "html_snapshots")
+
+            self.app._add_log(
+                "website_paper_start", f"Starting website paper addition for: {url}"
+            )
+
+            # First, do a quick fetch to get the page title for the snapshot filename
+            # We'll use a simple fetch to get the title before doing the full snapshot
+            import requests
+            from bs4 import BeautifulSoup
+
+            try:
+                response = requests.get(url, timeout=30)
+                soup = BeautifulSoup(response.content, "html.parser")
+                title_tag = soup.find("title")
+                initial_title = (
+                    title_tag.get_text(strip=True) if title_tag else "webpage"
+                )
+            except Exception as e:
+                self.app._add_log(
+                    "website_title_fetch_warning",
+                    f"Could not pre-fetch title: {str(e)}, using 'webpage'",
+                )
+                initial_title = "webpage"
+
+            # Snapshot the webpage using Playwright (HTML only, no PDF)
+            webpage_service = WebpageSnapshotService(app=self.app)
+
+            html_path, html_content = webpage_service.snapshot_webpage(
+                url=url,
+                title=initial_title,
+                html_output_dir=html_snapshot_dir,
+            )
+
+            self.app._add_log(
+                "website_snapshot_complete",
+                f"HTML snapshot created: {os.path.basename(html_path)}",
+            )
+
+            # Extract metadata from the HTML content
+            metadata = self.metadata_extractor.extract_from_webpage(url, html_content)
+
+            # Convert absolute path to relative path for storage
+            relative_html_path = os.path.relpath(html_path, html_snapshot_dir)
+
+            # Build paper data (no PDF for websites)
+            paper_data = self._build_paper_data(
+                metadata,
+                overrides={
+                    "paper_type": "website",
+                    "url": url,
+                    "pdf_path": None,  # Websites don't have PDFs
+                    "html_snapshot_path": relative_html_path,
+                },
+            )
+
+            # Add to database
+            authors = paper_data.get("authors", [])
+            collections = []
+
+            paper = self.paper_service.add_paper_from_metadata(
+                paper_data, authors, collections
+            )
+
+            self.app._add_log(
+                "website_paper_success",
+                f"Website paper added: {paper.title} (ID={paper.id})",
+            )
+
+            return {
+                "paper": paper,
+                "html_path": html_path,
+                "pdf_path": None,  # No PDF for websites
+                "url": url,
+            }
+
+        except Exception as e:
+            error_msg = f"Failed to add website paper: {str(e)}"
+            self.app._add_log("website_paper_error", error_msg)
+            raise Exception(error_msg)

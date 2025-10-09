@@ -50,9 +50,12 @@ class DatabaseHealthService:
                 "database_checks": self._check_database_integrity(),
                 "orphaned_records": self._find_orphaned_records(),
                 "orphaned_pdfs": self._find_orphaned_pdfs(),
+                "orphaned_htmls": self._find_orphaned_htmls(),
                 "absolute_pdf_paths": self._find_absolute_pdf_paths(),
                 "missing_pdfs": self._find_missing_pdfs(),
+                "missing_htmls": self._find_missing_htmls(),
                 "pdf_statistics": self._get_pdf_statistics(),
+                "html_statistics": self._get_html_statistics(),
                 "system_checks": self._check_system_health(),
                 "terminal_checks": self._check_terminal_capabilities(),
                 "issues_found": [],
@@ -97,6 +100,12 @@ class DatabaseHealthService:
             )
             report["recommendations"].append("Run '/doctor clean' to remove them.")
 
+        if report["orphaned_htmls"]["summary"]["orphaned_html_files"] > 0:
+            report["issues_found"].append(
+                "Orphaned HTML files found (not linked to any paper)."
+            )
+            report["recommendations"].append("Run '/doctor clean' to remove them.")
+
         if report["absolute_pdf_paths"]["summary"]["absolute_path_count"] > 0:
             report["issues_found"].append(
                 "Papers with absolute PDF paths found (should be relative)."
@@ -107,6 +116,12 @@ class DatabaseHealthService:
             report["issues_found"].append("Papers with missing PDF files found.")
             report["recommendations"].append(
                 "Verify PDF file locations or remove missing papers."
+            )
+
+        if report["missing_htmls"]["summary"]["missing_html_count"] > 0:
+            report["issues_found"].append("Papers with missing HTML snapshot files found.")
+            report["recommendations"].append(
+                "Verify HTML snapshot file locations or remove missing papers."
             )
 
         self._add_log(
@@ -263,6 +278,37 @@ class DatabaseHealthService:
             "details": orphaned_pdf_files,
         }
 
+    def _find_orphaned_htmls(self) -> Dict[str, Any]:
+        """Finds HTML files in the html_snapshots directory not linked to any paper."""
+        from ng.db.database import get_db_manager
+
+        db_manager = get_db_manager()
+        data_dir = Path(os.path.dirname(db_manager.db_path))
+        html_dir = data_dir / "html_snapshots"
+        orphaned_html_files = []
+        if html_dir.is_dir():
+            session = self.Session()
+            try:
+                db_html_paths = {
+                    Path(p.html_snapshot_path).name
+                    for p in session.query(Paper)
+                    .filter(Paper.html_snapshot_path.isnot(None))
+                    .all()
+                }
+                for html_file in html_dir.glob("*.html"):
+                    if html_file.name not in db_html_paths:
+                        orphaned_html_files.append(str(html_file))
+            except Exception as e:
+                self._add_log(
+                    "orphaned_htmls_error", f"Error finding orphaned HTML files: {e}"
+                )
+            finally:
+                session.close()
+        return {
+            "summary": {"orphaned_html_files": len(orphaned_html_files)},
+            "details": orphaned_html_files,
+        }
+
     def _find_absolute_pdf_paths(self) -> Dict[str, Any]:
         """Finds papers with absolute PDF paths instead of relative ones."""
         session = self.Session()
@@ -313,23 +359,8 @@ class DatabaseHealthService:
                 f"Found {len(all_papers)} total papers: {len(papers_with_paths)} with PDF paths, {len(papers_without_paths)} without PDF paths",
             )
 
-            # Check papers without PDF paths first
-            for paper in papers_without_paths:
-                missing_pdfs.append(paper.id)
-                missing_pdf_details.append(
-                    {
-                        "paper_id": paper.id,
-                        "title": format_title_by_words(paper.title or ""),
-                        "pdf_path": "No PDF path set",
-                        "resolved_path": "N/A",
-                        "path_type": "none",
-                    }
-                )
-                self._add_log(
-                    "missing_pdfs_found", f"Paper {paper.id} has no PDF path set"
-                )
-
-            # Then check papers with PDF paths for file existence
+            # Only check papers that have PDF paths set for file existence
+            # (papers without PDF paths are not considered "missing" - they just don't have PDFs)
             for paper in papers_with_paths:
                 if paper.pdf_path:
                     # Handle both relative and absolute paths properly
@@ -373,6 +404,78 @@ class DatabaseHealthService:
         return {
             "summary": {"missing_pdf_count": len(missing_pdfs)},
             "details": missing_pdf_details,
+        }
+
+    def _find_missing_htmls(self) -> Dict[str, Any]:
+        """Finds papers whose linked HTML snapshot files are missing from disk."""
+        from ng.db.database import get_db_manager
+
+        session = self.Session()
+        missing_htmls = []
+        missing_html_details = []
+
+        db_manager = get_db_manager()
+        data_dir = Path(os.path.dirname(db_manager.db_path))
+        html_dir = data_dir / "html_snapshots"
+
+        self._add_log("missing_htmls_start", f"Checking for missing HTML snapshots in {html_dir}")
+
+        try:
+            # Get all papers
+            all_papers = session.query(Paper).all()
+            papers_with_html = [p for p in all_papers if p.html_snapshot_path]
+            papers_without_html = [p for p in all_papers if not p.html_snapshot_path]
+
+            self._add_log(
+                "missing_htmls_info",
+                f"Found {len(all_papers)} total papers: {len(papers_with_html)} with HTML paths, {len(papers_without_html)} without HTML paths",
+            )
+
+            # Only check papers that have HTML snapshot paths set
+            # (unlike PDFs, not having an HTML snapshot is normal, so we don't report it)
+            for paper in papers_with_html:
+                if paper.html_snapshot_path:
+                    # Handle both relative and absolute paths properly
+                    if Path(paper.html_snapshot_path).is_absolute():
+                        # Absolute path - check directly
+                        full_path = Path(paper.html_snapshot_path)
+                    else:
+                        # Relative path - resolve relative to HTML directory
+                        full_path = html_dir / paper.html_snapshot_path
+
+                    if not full_path.exists():
+                        missing_htmls.append(paper.id)
+                        missing_html_details.append(
+                            {
+                                "paper_id": paper.id,
+                                "title": format_title_by_words(paper.title or ""),
+                                "html_snapshot_path": paper.html_snapshot_path,
+                                "resolved_path": str(full_path),
+                                "path_type": (
+                                    "absolute"
+                                    if Path(paper.html_snapshot_path).is_absolute()
+                                    else "relative"
+                                ),
+                            }
+                        )
+                        self._add_log(
+                            "missing_htmls_found",
+                            f"Missing HTML snapshot for paper {paper.id}: {paper.html_snapshot_path}",
+                        )
+
+        except Exception as e:
+            self._add_log("missing_htmls_error", f"Error finding missing HTML snapshots: {e}")
+        finally:
+            session.close()
+
+        self._add_log(
+            "missing_htmls_complete",
+            f"Found {len(missing_htmls)} papers with missing HTML snapshot files",
+        )
+
+        return {
+            "summary": {"missing_html_count": len(missing_htmls)},
+            "details": missing_html_details,
         }
 
     def _get_pdf_statistics(self) -> Dict[str, Any]:
@@ -425,6 +528,60 @@ class DatabaseHealthService:
 
         return stats
 
+    def _get_html_statistics(self) -> Dict[str, Any]:
+        """Get statistics about the HTML snapshots folder including file count and total size."""
+        from ng.db.database import get_db_manager
+
+        db_manager = get_db_manager()
+        data_dir = Path(os.path.dirname(db_manager.db_path))
+        html_dir = data_dir / "html_snapshots"
+
+        self._add_log("html_stats_start", f"Collecting HTML statistics from {html_dir}")
+
+        stats = {
+            "html_folder_exists": False,
+            "total_html_files": 0,
+            "total_size_bytes": 0,
+            "total_size_formatted": "0 B",
+            "html_folder_path": str(html_dir),
+        }
+
+        try:
+            if not html_dir.exists():
+                self._add_log("html_stats_info", "HTML snapshots folder does not exist")
+                return stats
+
+            stats["html_folder_exists"] = True
+            html_files = list(html_dir.glob("*.html"))
+            stats["total_html_files"] = len(html_files)
+
+            if html_files:
+                total_size = 0
+                for html_file in html_files:
+                    try:
+                        size = html_file.stat().st_size
+                        total_size += size
+                    except Exception as e:
+                        self._add_log(
+                            "html_stats_warning",
+                            f"Error getting size for {html_file.name}: {e}",
+                        )
+                        continue
+
+                stats["total_size_bytes"] = total_size
+                stats["total_size_formatted"] = format_file_size(total_size)
+
+            self._add_log(
+                "html_stats_complete",
+                f"Found {stats['total_html_files']} HTML files, total size: {stats['total_size_formatted']}",
+            )
+
+        except Exception as e:
+            self._add_log("html_stats_error", f"Error collecting HTML statistics: {e}")
+            stats["error"] = str(e)
+
+        return stats
+
     def _check_system_health(self) -> Dict[str, Any]:
         """Checks system-level health (Python version, dependencies)."""
         self._add_log("system_health_start", "Checking system health")
@@ -436,30 +593,115 @@ class DatabaseHealthService:
             )
 
             dependencies = {}
-            dep_modules = [
-                "sqlalchemy",
-                "rich",
-                "textual",
-                "prompt_toolkit",
-                "requests",
-                "openai",
-            ]
-
-            for module_name in dep_modules:
+            
+            # Mapping of package names to their actual import names (for special cases)
+            package_to_module = {
+                "beautifulsoup4": "bs4",
+                "pypdf2": "PyPDF2",
+                "python-levenshtein": "Levenshtein",
+                "python-dotenv": "dotenv",
+            }
+            
+            # Read dependencies from requirements.txt
+            requirements_path = Path(__file__).parent.parent.parent / "requirements.txt"
+            dep_modules = []
+            
+            if requirements_path.exists():
                 try:
-                    dependencies[module_name] = (
-                        importlib.util.find_spec(module_name) is not None
-                    )
+                    with open(requirements_path, "r") as f:
+                        for line in f:
+                            line = line.strip()
+                            # Skip empty lines and comments
+                            if not line or line.startswith("#"):
+                                continue
+                            # Extract package name (remove version specifiers)
+                            # Handle formats like: package>=1.0.0, package==1.0.0, package
+                            package_name = line.split(">=")[0].split("==")[0].split("<")[0].split(">")[0].split("~=")[0].strip()
+                            if package_name:
+                                package_lower = package_name.lower()
+                                # Check if there's a special mapping, otherwise use default conversion
+                                if package_lower in package_to_module:
+                                    module_name = package_to_module[package_lower]
+                                else:
+                                    # Default: lowercase and replace hyphens with underscores
+                                    module_name = package_lower.replace("-", "_")
+                                dep_modules.append((module_name, package_name))
+                    
                     self._add_log(
-                        "system_health_info",
-                        f"Module {module_name}: {'Found' if dependencies[module_name] else 'Missing'}",
+                        "system_health_info", 
+                        f"Found {len(dep_modules)} dependencies in requirements.txt"
                     )
+                except Exception as e:
+                    self._add_log(
+                        "system_health_warning",
+                        f"Error reading requirements.txt: {e}",
+                    )
+                    # Fallback to hardcoded list if requirements.txt can't be read
+                    dep_modules = [
+                        ("sqlalchemy", "SQLAlchemy"),
+                        ("rich", "rich"),
+                        ("textual", "textual"),
+                        ("requests", "requests"),
+                        ("openai", "openai"),
+                    ]
+            else:
+                self._add_log(
+                    "system_health_warning",
+                    f"requirements.txt not found at {requirements_path}",
+                )
+                # Fallback to hardcoded list
+                dep_modules = [
+                    ("sqlalchemy", "SQLAlchemy"),
+                    ("rich", "rich"),
+                    ("textual", "textual"),
+                    ("requests", "requests"),
+                    ("openai", "openai"),
+                ]
+
+            for module_name, package_name in dep_modules:
+                try:
+                    if importlib.util.find_spec(module_name) is not None:
+                        # Try to get version
+                        version = None
+                        try:
+                            # First try to import and get __version__
+                            module = importlib.import_module(module_name)
+                            if hasattr(module, "__version__"):
+                                version = module.__version__
+                            elif hasattr(module, "VERSION"):
+                                version = module.VERSION
+                        except:
+                            pass
+                        
+                        # If that didn't work, try pkg_resources or importlib.metadata
+                        if not version:
+                            try:
+                                from importlib.metadata import version as get_version
+                                version = get_version(package_name)
+                            except:
+                                try:
+                                    import pkg_resources
+                                    version = pkg_resources.get_distribution(package_name).version
+                                except:
+                                    version = "installed"
+                        
+                        dependencies[module_name] = {"installed": True, "version": version}
+                        self._add_log(
+                            "system_health_info",
+                            f"Module {module_name}: Found (version {version})",
+                        )
+                    else:
+                        dependencies[module_name] = {"installed": False, "version": None}
+                        self._add_log(
+                            "system_health_info",
+                            f"Module {module_name}: Missing",
+                        )
                 except Exception as e:
                     self._add_log(
                         "system_health_warning",
                         f"Error checking module {module_name}: {e}",
                     )
-                    dependencies[module_name] = False
+                    dependencies[module_name] = {"installed": False, "version": None}
 
             # Basic disk space check (for the drive where the DB is)
             disk_space = {}
@@ -621,10 +863,10 @@ class DatabaseHealthService:
                     .filter(Paper.pdf_path.isnot(None))
                     .all()
                 }
-                
+
                 # Get current time for age-based filtering
                 current_time = time.time()
-                
+
                 for pdf_file in pdf_dir.glob("*.pdf"):
                     if pdf_file.name not in db_pdf_paths:
                         # Safety checks to avoid deleting files during active operations
@@ -634,24 +876,27 @@ class DatabaseHealthService:
                             file_age = current_time - pdf_file.stat().st_mtime
                             if file_age < 120:  # Less than 2 minutes old
                                 self._add_log(
-                                    "clean_pdf_skip", 
-                                    f"Skipping recent file (age: {file_age:.1f}s): {pdf_file.name}"
+                                    "clean_pdf_skip",
+                                    f"Skipping recent file (age: {file_age:.1f}s): {pdf_file.name}",
                                 )
                                 continue
-                            
+
                             # Check 2: Don't delete files with temporary naming patterns
                             # These patterns indicate active download/processing operations
-                            if (pdf_file.name.endswith('_temp00.pdf') or 
-                                '_temp' in pdf_file.name or
-                                len(pdf_file.name.split('_')[-1].replace('.pdf', '')) == 6):  # 6-char hash pattern
+                            if (
+                                pdf_file.name.endswith("_temp00.pdf")
+                                or "_temp" in pdf_file.name
+                                or len(pdf_file.name.split("_")[-1].replace(".pdf", ""))
+                                == 6
+                            ):  # 6-char hash pattern
                                 # Additional check: if it's a temp file that's old enough, it might be stale
                                 if file_age < 300:  # Less than 5 minutes old
                                     self._add_log(
-                                        "clean_pdf_skip", 
-                                        f"Skipping potential temp file: {pdf_file.name}"
+                                        "clean_pdf_skip",
+                                        f"Skipping potential temp file: {pdf_file.name}",
                                     )
                                     continue
-                            
+
                             # File passed all safety checks, safe to delete
                             os.remove(pdf_file)
                             cleaned_count += 1
@@ -673,6 +918,61 @@ class DatabaseHealthService:
             finally:
                 session.close()
         return {"deleted_pdfs": cleaned_count}
+
+    def clean_orphaned_htmls(self) -> Dict[str, int]:
+        """Deletes HTML files from html_snapshots directory not linked to any paper."""
+        from ng.db.database import get_db_manager
+
+        db_manager = get_db_manager()
+        data_dir = Path(os.path.dirname(db_manager.db_path))
+        html_dir = data_dir / "html_snapshots"
+        cleaned_count = 0
+        if html_dir.is_dir():
+            session = self.Session()
+            try:
+                db_html_paths = {
+                    Path(p.html_snapshot_path).name
+                    for p in session.query(Paper)
+                    .filter(Paper.html_snapshot_path.isnot(None))
+                    .all()
+                }
+
+                current_time = time.time()
+
+                for html_file in html_dir.glob("*.html"):
+                    if html_file.name not in db_html_paths:
+                        try:
+                            # Don't delete files that are very recent (< 2 minutes old)
+                            file_age = current_time - html_file.stat().st_mtime
+                            if file_age < 120:
+                                self._add_log(
+                                    "clean_html_skip",
+                                    f"Skipping recent file (age: {file_age:.1f}s): {html_file.name}",
+                                )
+                                continue
+
+                            os.remove(html_file)
+                            cleaned_count += 1
+                            self._add_log(
+                                "clean_html", f"Deleted orphaned HTML: {html_file.name}"
+                            )
+                        except OSError as e:
+                            self._add_log(
+                                "clean_html_error",
+                                f"Error deleting {html_file.name}: {e}",
+                            )
+                        except Exception as e:
+                            self._add_log(
+                                "clean_html_error",
+                                f"Error checking {html_file.name}: {e}",
+                            )
+            except Exception as e:
+                self._add_log(
+                    "clean_html_error", f"Error finding HTML files to clean: {e}"
+                )
+            finally:
+                session.close()
+        return {"deleted_htmls": cleaned_count}
 
     def fix_absolute_pdf_paths(self) -> Dict[str, int]:
         """Converts absolute PDF paths in the database to relative paths."""

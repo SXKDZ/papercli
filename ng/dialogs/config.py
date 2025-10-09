@@ -306,9 +306,12 @@ class ConfigDialog(ModalScreen):
                         with Horizontal(classes="form-row"):
                             yield Label("Reasoning Effort:", classes="form-label")
                             with RadioSet(
-                                id="reasoning-effort-radio-set", classes="form-radio-set"
+                                id="reasoning-effort-radio-set",
+                                classes="form-radio-set",
                             ):
-                                current_effort = os.getenv("OPENAI_REASONING_EFFORT", "medium")
+                                current_effort = os.getenv(
+                                    "OPENAI_REASONING_EFFORT", "medium"
+                                )
                                 yield RadioButton(
                                     "Minimal",
                                     value=(current_effort == "minimal"),
@@ -703,10 +706,8 @@ class ConfigDialog(ModalScreen):
             default_effort = self.default_config["OPENAI_REASONING_EFFORT"]
             for effort in ["minimal", "low", "medium", "high"]:
                 try:
-                    button = self.query_one(
-                        f"#reasoning-effort-{effort}", RadioButton
-                    )
-                    button.value = (effort == default_effort)
+                    button = self.query_one(f"#reasoning-effort-{effort}", RadioButton)
+                    button.value = effort == default_effort
                 except Exception:
                     pass
 

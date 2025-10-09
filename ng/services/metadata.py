@@ -64,7 +64,6 @@ class MetadataExtractor:
                 title_elem.text.strip() if title_elem is not None else "Unknown Title"
             )
             title = fix_broken_lines(title)
-            title = titlecase(title)
 
             summary_elem = entry.find("atom:summary", ns)
             abstract = summary_elem.text.strip() if summary_elem is not None else ""
@@ -351,7 +350,6 @@ class MetadataExtractor:
 
         title = content.get("title", {}).get("value", "Unknown Title")
         title = fix_broken_lines(title)
-        title = titlecase(title)
 
         abstract = content.get("abstract", {}).get("value", "")
         if abstract:
@@ -447,7 +445,6 @@ class MetadataExtractor:
         if isinstance(title, dict):
             title = title.get("value", "Unknown Title")
         title = fix_broken_lines(title)
-        title = titlecase(title)
 
         # Extract abstract
         abstract = content.get("abstract", "")
@@ -697,6 +694,87 @@ class MetadataExtractor:
             )
             return ""  # Return empty string if summarization fails, don't break the workflow
 
+    def generate_webpage_summary(self, html_snapshot_path: str) -> str:
+        """Generate an academic summary of a webpage using LLM analysis of the HTML content."""
+        try:
+            from ng.db.database import get_db_manager
+            from bs4 import BeautifulSoup
+
+            # Get absolute path to HTML snapshot
+            db_manager = get_db_manager()
+            data_dir = os.path.dirname(db_manager.db_path)
+            html_snapshot_dir = os.path.join(data_dir, "html_snapshots")
+            html_absolute_path = os.path.join(html_snapshot_dir, html_snapshot_path)
+
+            if not os.path.exists(html_absolute_path):
+                return ""
+
+            # Read HTML and extract text
+            with open(html_absolute_path, "r", encoding="utf-8") as f:
+                html_content = f.read()
+
+            soup = BeautifulSoup(html_content, "html.parser")
+            full_text = soup.get_text(separator="\n", strip=True)
+
+            if not full_text.strip():
+                return ""
+
+            # Limit text length (similar to PDF page limit)
+            max_chars = 20000
+            if len(full_text) > max_chars:
+                full_text = full_text[:max_chars]
+
+            client = OpenAI()
+            model_name = os.getenv("OPENAI_MODEL", "gpt-4o")
+
+            prompt = prompts.summary_academic_summary(full_text)
+
+            # Log the LLM request
+            self.app._add_log(
+                "llm_summarization_request",
+                f"Requesting webpage summary for HTML: {html_absolute_path}",
+            )
+            truncated_prompt, length_info = _truncate_for_logging(prompt, 300)
+            self.app._add_log(
+                "llm_summarization_prompt",
+                f"Prompt sent to {model_name} {length_info}: {truncated_prompt}",
+            )
+
+            # Build parameters using centralized utility
+            params = llm_utils.get_model_parameters(model_name)
+            params["messages"] = [
+                {
+                    "role": "system",
+                    "content": prompts.summary_system_message(),
+                },
+                {"role": "user", "content": prompt},
+            ]
+
+            response = client.chat.completions.create(**params)
+
+            summary_response = response.choices[0].message.content.strip()
+
+            # Log the LLM response
+            self.app._add_log(
+                "llm_summarization_response",
+                f"{model_name} response received ({len(summary_response)} chars)",
+            )
+            truncated_content, length_info = _truncate_for_logging(
+                summary_response, 300
+            )
+            self.app._add_log(
+                "llm_summarization_content",
+                f"Generated summary {length_info}: {truncated_content}",
+            )
+
+            return summary_response
+
+        except Exception as e:
+            self.app._add_log(
+                "webpage_summary_error", f"Failed to generate webpage summary: {e}"
+            )
+            return ""
+
     def extract_from_bibtex(self, bib_path: str) -> List[Dict[str, Any]]:
         """Extract metadata from BibTeX file."""
         try:
@@ -907,3 +985,128 @@ class MetadataExtractor:
             raise Exception(f"Failed to fetch DOI metadata: {e}")
         except Exception as e:
             raise Exception(f"Failed to extract metadata from DOI: {e}")
+
+    def extract_from_webpage(self, url: str, html_content: str) -> Dict[str, Any]:
+        """
+        Extract metadata from webpage HTML content using LLM.
+
+        Args:
+            url: The webpage URL
+            html_content: The HTML content of the webpage
+
+        Returns:
+            Dictionary with paper metadata
+        """
+        try:
+            from bs4 import BeautifulSoup
+
+            soup = BeautifulSoup(html_content, "html.parser")
+
+            for script in soup(["script", "style"]):
+                script.decompose()
+
+            text_content = soup.get_text(separator="\n", strip=True)
+
+            client = OpenAI()
+            model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+
+            prompt = prompts.webpage_metadata_extraction_prompt(text_content, url)
+
+            if self.app:
+                self.app._add_log(
+                    "llm_webpage_metadata_request",
+                    f"Requesting metadata extraction for webpage: {url}",
+                )
+            truncated_prompt, length_info = _truncate_for_logging(prompt, 300)
+            if self.app:
+                self.app._add_log(
+                    "llm_webpage_metadata_prompt",
+                    f"Prompt sent to {model_name} {length_info}:\n{truncated_prompt}",
+                )
+
+            params = llm_utils.get_model_parameters(model_name, temperature=0)
+            params["messages"] = [
+                {
+                    "role": "system",
+                    "content": prompts.metadata_system_message(),
+                },
+                {"role": "user", "content": prompt},
+            ]
+
+            response = client.chat.completions.create(**params)
+            response_content = response.choices[0].message.content.strip()
+
+            if self.app:
+                self.app._add_log(
+                    "llm_webpage_metadata_response",
+                    f"{model_name} response received ({len(response_content)} chars)",
+                )
+            truncated_content, length_info = _truncate_for_logging(
+                response_content, 300
+            )
+            if self.app:
+                self.app._add_log(
+                    "llm_webpage_metadata_content",
+                    f"Raw response {length_info}:\n{truncated_content}",
+                )
+
+            if response_content.startswith("```json"):
+                response_content = response_content[7:]
+            if response_content.startswith("```"):
+                response_content = response_content[3:]
+            if response_content.endswith("```"):
+                response_content = response_content[:-3]
+            response_content = response_content.strip()
+
+            if not response_content:
+                raise Exception("Empty response from LLM")
+
+            try:
+                metadata = json.loads(response_content)
+            except json.JSONDecodeError as e:
+                if self.app:
+                    self.app._add_log(
+                        "webpage_extraction_warning",
+                        f"LLM JSON parsing failed: {e}. Using fallback extraction.",
+                    )
+
+                title_tag = soup.find("title")
+                title = title_tag.get_text(strip=True) if title_tag else "Unknown Title"
+
+                meta_description = soup.find("meta", attrs={"name": "description"})
+                abstract = (
+                    meta_description["content"]
+                    if meta_description and "content" in meta_description.attrs
+                    else ""
+                )
+
+                year_match = re.search(r"\b(19|20)\d{2}\b", text_content)
+                year = int(year_match.group()) if year_match else None
+
+                metadata = {
+                    "title": title,
+                    "authors": [],
+                    "abstract": abstract,
+                    "year": year,
+                    "venue_full": "",
+                    "venue_acronym": "",
+                    "paper_type": "website",
+                    "doi": "",
+                    "url": url,
+                    "category": "",
+                }
+
+            if not metadata.get("authors"):
+                metadata["authors"] = ""
+            elif isinstance(metadata.get("authors"), list):
+                metadata["authors"] = " and ".join(metadata["authors"])
+
+            metadata["paper_type"] = "website"
+            metadata["url"] = url
+
+            metadata = normalize_paper_data(metadata)
+
+            return metadata
+
+        except Exception as e:
+            raise Exception(f"Failed to extract metadata from webpage: {e}")

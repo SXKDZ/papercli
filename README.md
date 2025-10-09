@@ -35,7 +35,10 @@ A powerful command-line paper management system for researchers and academics. P
 - **PDF Management**: Automatic PDF downloading and organization
 
 ### 🔧 Advanced Features
-- **OneDrive Sync**: Comprehensive synchronization with conflict detection and resolution options
+- **OneDrive Sync**: Comprehensive synchronization with UUID-based paper matching
+  - Conflict detection and resolution options
+  - Edit paper titles without creating duplicates
+  - Automatic schema migration and UUID synchronization
 - **Database Health**: Built-in diagnostic tools for database maintenance
 - **Interactive UI**: Modern terminal interface with auto-completion and consistent status messaging
 - **Multi-selection**: Batch operations on multiple papers
@@ -283,10 +286,22 @@ The application will check for `.env` files in this order:
 ## Database Schema
 
 PaperCLI uses a SQLite database with the following main entities:
-- **Papers**: Title, abstract, venue, year, authors, collections, PDF path, notes
+- **Papers**: UUID (unique identifier), title, abstract, venue, year, authors, collections, PDF path, notes
 - **Authors**: Name, email, affiliation with ordered relationships
 - **Collections**: Custom paper groupings
 - **Metadata**: DOI, preprint IDs, URLs, paper types
+
+### Schema Migrations
+
+PaperCLI uses Alembic for database schema migrations. When you upgrade to a new version:
+- Database schema is automatically upgraded on first sync
+- The upgrade process is safe and preserves all your data
+- If using OneDrive sync, both local and remote databases must be accessible during migration
+
+**Note**: As of v2.2.0, papers are identified by UUID instead of title. This enables:
+- Editing paper titles without creating duplicates during sync
+- More reliable synchronization across devices
+- Better handling of papers with similar titles
 
 ## Keyboard Shortcuts
 

@@ -114,9 +114,7 @@ class PaperService:
                 # Use change tracker to capture original state
                 original_simple_fields = paper_tracker.extract_original_fields(paper)
                 original_authors = paper_tracker.extract_original_authors(paper)
-                original_collections = paper_tracker.extract_original_collections(
-                    paper
-                )
+                original_collections = paper_tracker.extract_original_collections(paper)
                 if "pdf_path" in paper_data and paper_data["pdf_path"]:
                     # Check if this is a direct path update (relative path from background download)
                     # or needs processing (URL/local file from user input)
@@ -229,9 +227,7 @@ class PaperService:
                 )
 
                 if self.app and changes:
-                    details = paper_tracker.format_change_log_details(
-                        paper.id, changes
-                    )
+                    details = paper_tracker.format_change_log_details(paper.id, changes)
                     self.app._add_log("paper_update_fields", details)
 
                 if self.app:
@@ -510,6 +506,7 @@ class PaperService:
             "category": paper.category,
             "url": paper.url,
             "pdf_path": paper.pdf_path,
+            "html_snapshot_path": getattr(paper, "html_snapshot_path", None),
             "notes": paper.notes,
             "added_date": paper.added_date,
             "modified_date": paper.modified_date,

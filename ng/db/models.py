@@ -2,6 +2,7 @@
 Database models for PaperCLI using SQLAlchemy ORM.
 """
 
+import uuid
 from datetime import datetime
 from typing import List, Optional
 
@@ -93,6 +94,13 @@ class Paper(Base):
     __tablename__ = "papers"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    uuid: Mapped[str] = mapped_column(
+        String(36),
+        unique=True,
+        nullable=False,
+        default=lambda: str(uuid.uuid4()),
+        index=True,
+    )
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     abstract: Mapped[Optional[str]] = mapped_column(Text)
 
@@ -119,6 +127,7 @@ class Paper(Base):
 
     # File information
     pdf_path: Mapped[Optional[str]] = mapped_column(String(500))
+    html_snapshot_path: Mapped[Optional[str]] = mapped_column(String(500))
 
     # User notes
     notes: Mapped[Optional[str]] = mapped_column(Text)

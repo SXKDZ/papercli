@@ -85,6 +85,7 @@ class CollectionService:
             session.commit()
             if self.app and added_count:
                 from pluralizer import Pluralizer
+
                 paper_list = ", ".join(str(pid) for pid in paper_ids)
                 count_text = Pluralizer().pluralize("paper", added_count, True)
                 self.app._add_log(
@@ -129,6 +130,7 @@ class CollectionService:
             session.commit()
             if self.app and removed_count:
                 from pluralizer import Pluralizer
+
                 paper_list = ", ".join(str(pid) for pid in paper_ids)
                 count_text = Pluralizer().pluralize("paper", removed_count, True)
                 self.app._add_log(

@@ -48,9 +48,7 @@ def extract_original_collections(paper) -> List[str]:
         return []
 
 
-def compare_simple_fields(
-    original_fields: Dict[str, Any], updated_paper
-) -> List[str]:
+def compare_simple_fields(original_fields: Dict[str, Any], updated_paper) -> List[str]:
     """Compare simple fields and return list of change descriptions."""
     changes = []
 
@@ -82,9 +80,7 @@ def compare_authors(original_authors: List[str], updated_paper) -> List[str]:
     return changes
 
 
-def compare_collections(
-    original_collections: List[str], updated_paper
-) -> List[str]:
+def compare_collections(original_collections: List[str], updated_paper) -> List[str]:
     """Compare collections and return list of change descriptions."""
     changes = []
 
@@ -115,9 +111,7 @@ def build_complete_change_log(
     all_changes.extend(compare_authors(original_authors, updated_paper))
 
     # Compare collections
-    all_changes.extend(
-        compare_collections(original_collections, updated_paper)
-    )
+    all_changes.extend(compare_collections(original_collections, updated_paper))
 
     return all_changes
 

@@ -148,7 +148,7 @@ class PaperCLIApp(App):
 
     def _set_terminal_title(self) -> None:
         if hasattr(self, "console") and self.console is not None:
-            self.console.set_window_title(f'PaperCLI v{get_version()}')
+            self.console.set_window_title(f"PaperCLI v{get_version()}")
             return
 
     def action_cursor_up(self) -> None:
@@ -239,7 +239,7 @@ class PaperCLIApp(App):
         elif cmd == "/delete":
             await self.paper_commands.handle_delete_command()
         elif cmd == "/open":
-            await self.paper_commands.handle_open_command()
+            await self.paper_commands.handle_open_command(parts[1:])
         elif cmd == "/detail":
             await self.paper_commands.handle_detail_command()
         elif cmd == "/collect":
@@ -252,7 +252,7 @@ class PaperCLIApp(App):
             await self.export_commands.handle_export_command(parts[1:])
         elif cmd == "/chat":
             await self.export_commands.handle_chat_command(
-                parts[1:] if len(parts) > 1 else None
+                parts[1] if len(parts) > 1 else None
             )
         elif cmd == "/copy-prompt":
             await self.export_commands.handle_copy_prompt_command()
@@ -271,7 +271,7 @@ class PaperCLIApp(App):
 
     def action_open_paper(self) -> None:
         """Open paper (F2)."""
-        self.run_worker(self.paper_commands.handle_open_command(), exclusive=False)
+        self.run_worker(self.paper_commands.handle_open_command([]), exclusive=False)
 
     def action_chat_paper(self) -> None:
         """Chat with paper (F4)."""

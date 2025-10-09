@@ -6,6 +6,7 @@ import os
 import shutil
 import sqlite3
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -152,6 +153,8 @@ class SyncService:
         self.remote_db_path = self.remote_data_dir / "papers.db"
         self.local_pdf_dir = self.local_data_dir / "pdfs"
         self.remote_pdf_dir = self.remote_data_dir / "pdfs"
+        self.local_html_snapshots_dir = self.local_data_dir / "html_snapshots"
+        self.remote_html_snapshots_dir = self.remote_data_dir / "html_snapshots"
         self.progress_callback = progress_callback
         self.app = app
 
@@ -160,7 +163,9 @@ class SyncService:
         self.remote_lock_file = self.remote_data_dir / ".papercli_sync.lock"
 
         # Track title changes during keep_both resolution for collection syncing
-        self.title_mappings = {}  # Maps original_title -> new_title
+        self.title_mappings = (
+            {}
+        )  # Maps original_title -> new_title  # Maps original_title -> new_title
 
     def _acquire_locks(self) -> bool:
         """Acquire sync locks on both local and remote directories."""
@@ -260,6 +265,13 @@ class SyncService:
                 self.progress_callback("Creating remote directory...")
             self.remote_data_dir.mkdir(parents=True, exist_ok=True)
             self.remote_pdf_dir.mkdir(parents=True, exist_ok=True)
+            self.remote_html_snapshots_dir.mkdir(parents=True, exist_ok=True)
+            time.sleep(0.1)
+
+            # Upgrade local database schema if needed
+            if self.progress_callback:
+                self.progress_callback("Checking local database schema...")
+            self._upgrade_database_schema(self.local_db_path)
             time.sleep(0.1)
 
             # If remote database doesn't exist, copy from local
@@ -278,6 +290,45 @@ class SyncService:
                         f"Initial sync complete: {papers_count} papers copied",
                     )
                 return result
+
+            # Upgrade remote database schema if needed
+            if self.progress_callback:
+                self.progress_callback("Checking remote database schema...")
+            remote_upgraded = self._upgrade_database_schema(self.remote_db_path)
+            time.sleep(0.1)
+
+            # Check schema compatibility (both auto and manual sync)
+            local_has_uuid_col = self._database_has_uuid_column(self.local_db_path)
+            remote_has_uuid_col = self._database_has_uuid_column(self.remote_db_path)
+
+            if local_has_uuid_col and not remote_has_uuid_col:
+                if auto_sync_mode:
+                    error_msg = (
+                        "Schema mismatch: Local has UUID column but remote does not. "
+                        "Auto-sync paused. Please run manual sync to upgrade remote."
+                    )
+                else:
+                    error_msg = (
+                        "Schema mismatch: Local has UUID column but remote does not. "
+                        "Auto-upgrade failed. Manually run: alembic upgrade head"
+                    )
+                if self.app:
+                    self.app._add_log("sync_error", error_msg)
+                raise Exception(error_msg)
+            elif not local_has_uuid_col and remote_has_uuid_col:
+                error_msg = (
+                    "Schema mismatch: Remote has UUID column but local does not."
+                )
+                if self.app:
+                    self.app._add_log("sync_error", error_msg)
+                raise Exception(error_msg)
+
+            # If both have UUID column, sync UUIDs before operations
+            if local_has_uuid_col and remote_has_uuid_col:
+                if self.progress_callback:
+                    self.progress_callback("Synchronizing UUIDs...")
+                self._sync_uuids()
+                time.sleep(0.1)
 
             # Step 1: Generate all operations needed
             if self.progress_callback:
@@ -449,40 +500,53 @@ class SyncService:
         """Generate all sync operations needed to make databases identical."""
         operations = []
 
+        # Get papers from both databases
         local_papers = self._get_papers_dict(self.local_db_path)
         remote_papers = self._get_papers_dict(self.remote_db_path)
 
-        local_by_title = {paper["title"]: paper for paper in local_papers.values()}
-        remote_by_title = {paper["title"]: paper for paper in remote_papers.values()}
+        # Use UUID-based matching
+        matched_remote_uuids = set()
 
-        # Find papers that exist in both but are different (conflicts)
-        for title, local_paper in local_by_title.items():
-            if title in remote_by_title:
-                remote_paper = remote_by_title[title]
+        # Process local papers
+        for local_uuid, local_paper in local_papers.items():
+            if local_uuid in remote_papers:
+                # Found matching paper by UUID
+                remote_paper = remote_papers[local_uuid]
+                matched_remote_uuids.add(local_uuid)
+
+                # Check if they differ
                 if self._papers_differ(local_paper, remote_paper):
                     operations.append(
                         SyncOperation(
                             "conflict",
                             "both",
                             "paper",
-                            title,
+                            local_paper["title"],  # Use title for display
                             {"local": local_paper, "remote": remote_paper},
                         )
                     )
             else:
+                # Paper only exists locally, add to remote
                 operations.append(
-                    SyncOperation("add", "remote", "paper", title, local_paper)
+                    SyncOperation(
+                        "add", "remote", "paper", local_paper["title"], local_paper
+                    )
                 )
 
-        # Papers only in remote
-        for title, remote_paper in remote_by_title.items():
-            if title not in local_by_title:
+        # Process unmatched remote papers (papers only in remote)
+        for remote_uuid, remote_paper in remote_papers.items():
+            if remote_uuid not in matched_remote_uuids:
                 operations.append(
-                    SyncOperation("add", "local", "paper", title, remote_paper)
+                    SyncOperation(
+                        "add", "local", "paper", remote_paper["title"], remote_paper
+                    )
                 )
 
         # Check PDF conflicts
         operations.extend(self._generate_pdf_operations())
+
+        # Check HTML snapshot conflicts
+        operations.extend(self._generate_html_snapshot_operations())
 
         return operations
 
@@ -596,6 +660,80 @@ class SyncService:
         for filename in remote_pdfs.keys() - local_pdfs.keys():
             operations.append(
                 SyncOperation("add", "local", "pdf", filename, remote_pdfs[filename])
+            )
+
+        return operations
+
+    def _generate_html_snapshot_operations(self) -> List[SyncOperation]:
+        """Generate HTML snapshot sync operations."""
+        operations = []
+
+        if not (
+            self.local_html_snapshots_dir.exists()
+            and self.remote_html_snapshots_dir.exists()
+        ):
+            # Create directories if they don't exist
+            self.local_html_snapshots_dir.mkdir(parents=True, exist_ok=True)
+            self.remote_html_snapshots_dir.mkdir(parents=True, exist_ok=True)
+
+        # Only consider HTML snapshots that are referenced by papers in respective databases
+        local_papers = self._get_papers_dict(self.local_db_path)
+        remote_papers = self._get_papers_dict(self.remote_db_path)
+
+        def referenced_html_names(papers: Dict[int, Dict]) -> set[str]:
+            names = set()
+            for p in papers.values():
+                html_path = p.get("html_snapshot_path")
+                if html_path:
+                    try:
+                        names.add(Path(html_path).name)
+                    except Exception:
+                        pass
+            return names
+
+        local_refs = referenced_html_names(local_papers)
+        remote_refs = referenced_html_names(remote_papers)
+
+        local_htmls = {
+            f.name: self._get_file_info(f)
+            for f in self.local_html_snapshots_dir.glob("*.html")
+            if f.name in local_refs
+        }
+        remote_htmls = {
+            f.name: self._get_file_info(f)
+            for f in self.remote_html_snapshots_dir.glob("*.html")
+            if f.name in remote_refs
+        }
+
+        # HTML snapshots that exist in both but are different
+        for filename in set(local_htmls.keys()) & set(remote_htmls.keys()):
+            local_info = local_htmls[filename]
+            remote_info = remote_htmls[filename]
+            if local_info.get("hash") != remote_info.get("hash"):
+                operations.append(
+                    SyncOperation(
+                        "conflict",
+                        "both",
+                        "html_snapshot",
+                        filename,
+                        {"local": local_info, "remote": remote_info},
+                    )
+                )
+
+        # HTML snapshots only in local
+        for filename in local_htmls.keys() - remote_htmls.keys():
+            operations.append(
+                SyncOperation(
+                    "add", "remote", "html_snapshot", filename, local_htmls[filename]
+                )
+            )
+
+        # HTML snapshots only in remote
+        for filename in remote_htmls.keys() - local_htmls.keys():
+            operations.append(
+                SyncOperation(
+                    "add", "local", "html_snapshot", filename, remote_htmls[filename]
+                )
             )
 
         return operations
@@ -786,6 +924,20 @@ class SyncService:
                                 "sync_remote_to_local",
                                 f"Copied PDF from remote: {op.item_id}",
                             )
+                    elif op.item_type == "html_snapshot":
+                        self._copy_pdf_file(
+                            self.remote_html_snapshots_dir / op.item_id,
+                            self.local_html_snapshots_dir / op.item_id,
+                        )
+                        result.changes_applied["pdfs_copied"] += 1
+                        result.detailed_changes["pdfs_copied"].append(
+                            f"'{op.item_id}' (HTML from remote)"
+                        )
+                        if self.app:
+                            self.app._add_log(
+                                "sync_remote_to_local",
+                                f"Copied HTML snapshot from remote: {op.item_id}",
+                            )
 
                 elif op.operation_type == "delete":
                     if op.item_type == "paper":
@@ -803,6 +955,15 @@ class SyncService:
                                 self.app._add_log(
                                     "sync_remote_to_local",
                                     f"Updating local PDF: {op.item_id} with remote version",
+                                )
+                    elif op.item_type == "html_snapshot":
+                        html_path = self.local_html_snapshots_dir / op.item_id
+                        if html_path.exists():
+                            html_path.unlink()
+                            if self.app:
+                                self.app._add_log(
+                                    "sync_remote_to_local",
+                                    f"Updating local HTML snapshot: {op.item_id} with remote version",
                                 )
 
     def _sync_local_to_remote(
@@ -839,6 +1000,20 @@ class SyncService:
                                 "sync_local_to_remote",
                                 f"Copied PDF to remote: {op.item_id}",
                             )
+                    elif op.item_type == "html_snapshot":
+                        self._copy_pdf_file(
+                            self.local_html_snapshots_dir / op.item_id,
+                            self.remote_html_snapshots_dir / op.item_id,
+                        )
+                        result.changes_applied["pdfs_copied"] += 1
+                        result.detailed_changes["pdfs_copied"].append(
+                            f"'{op.item_id}' (HTML)"
+                        )
+                        if self.app:
+                            self.app._add_log(
+                                "sync_local_to_remote",
+                                f"Copied HTML snapshot to remote: {op.item_id}",
+                            )
 
                 elif op.operation_type == "delete":
                     if op.item_type == "paper":
@@ -856,6 +1031,15 @@ class SyncService:
                                 self.app._add_log(
                                     "sync_local_to_remote",
                                     f"Updating remote PDF: {op.item_id} with local version",
+                                )
+                    elif op.item_type == "html_snapshot":
+                        html_path = self.remote_html_snapshots_dir / op.item_id
+                        if html_path.exists():
+                            html_path.unlink()
+                            if self.app:
+                                self.app._add_log(
+                                    "sync_local_to_remote",
+                                    f"Updating remote HTML snapshot: {op.item_id} with local version",
                                 )
 
     def _copy_pdf_file(self, source: Path, destination: Path):
@@ -1006,8 +1190,123 @@ class SyncService:
         finally:
             conn.close()
 
-    def _get_papers_dict(self, db_path: Path) -> Dict[int, Dict]:
-        """Get papers from database as a dictionary."""
+    def _database_has_uuid_column(self, db_path: Path) -> bool:
+        """Check if database has the uuid column in papers table."""
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        try:
+            cursor.execute("PRAGMA table_info(papers)")
+            columns = [row[1] for row in cursor.fetchall()]
+            return "uuid" in columns
+        finally:
+            conn.close()
+
+    def _sync_uuids(self):
+        """
+        Synchronize UUIDs between local and remote databases.
+
+        Strategy:
+        1. Match papers by title
+        2. For matching papers, use local UUID if exists, otherwise remote UUID
+        3. If neither has UUID, generate new one
+        4. Update both databases to have the same UUID
+        """
+        local_conn = sqlite3.connect(self.local_db_path)
+        local_conn.row_factory = sqlite3.Row
+        local_cursor = local_conn.cursor()
+
+        remote_conn = sqlite3.connect(self.remote_db_path)
+        remote_conn.row_factory = sqlite3.Row
+        remote_cursor = remote_conn.cursor()
+
+        try:
+            # Get all papers from both databases
+            local_cursor.execute("SELECT id, title, uuid FROM papers")
+            local_papers = {
+                row["title"]: (row["id"], row["uuid"])
+                for row in local_cursor.fetchall()
+            }
+
+            remote_cursor.execute("SELECT id, title, uuid FROM papers")
+            remote_papers = {
+                row["title"]: (row["id"], row["uuid"])
+                for row in remote_cursor.fetchall()
+            }
+
+            synced_count = 0
+
+            # Process papers that exist in both databases
+            for title in local_papers.keys():
+                if title in remote_papers:
+                    local_id, local_uuid = local_papers[title]
+                    remote_id, remote_uuid = remote_papers[title]
+
+                    # Determine which UUID to use
+                    if local_uuid and remote_uuid:
+                        # Both have UUIDs - use local as source of truth
+                        if local_uuid != remote_uuid:
+                            remote_cursor.execute(
+                                "UPDATE papers SET uuid = ? WHERE id = ?",
+                                (local_uuid, remote_id),
+                            )
+                            synced_count += 1
+                    elif local_uuid and not remote_uuid:
+                        # Only local has UUID - copy to remote
+                        remote_cursor.execute(
+                            "UPDATE papers SET uuid = ? WHERE id = ?",
+                            (local_uuid, remote_id),
+                        )
+                        synced_count += 1
+                    elif not local_uuid and remote_uuid:
+                        # Only remote has UUID - copy to local
+                        local_cursor.execute(
+                            "UPDATE papers SET uuid = ? WHERE id = ?",
+                            (remote_uuid, local_id),
+                        )
+                        synced_count += 1
+                    elif not local_uuid and not remote_uuid:
+                        # Neither has UUID - generate new one and set both
+                        new_uuid = str(uuid.uuid4())
+                        local_cursor.execute(
+                            "UPDATE papers SET uuid = ? WHERE id = ?",
+                            (new_uuid, local_id),
+                        )
+                        remote_cursor.execute(
+                            "UPDATE papers SET uuid = ? WHERE id = ?",
+                            (new_uuid, remote_id),
+                        )
+                        synced_count += 1
+
+            # Handle papers only in local (generate UUID if needed)
+            for title, (local_id, local_uuid) in local_papers.items():
+                if title not in remote_papers and not local_uuid:
+                    new_uuid = str(uuid.uuid4())
+                    local_cursor.execute(
+                        "UPDATE papers SET uuid = ? WHERE id = ?", (new_uuid, local_id)
+                    )
+
+            # Handle papers only in remote (generate UUID if needed)
+            for title, (remote_id, remote_uuid) in remote_papers.items():
+                if title not in local_papers and not remote_uuid:
+                    new_uuid = str(uuid.uuid4())
+                    remote_cursor.execute(
+                        "UPDATE papers SET uuid = ? WHERE id = ?", (new_uuid, remote_id)
+                    )
+
+            local_conn.commit()
+            remote_conn.commit()
+
+            if self.app and synced_count > 0:
+                self.app._add_log(
+                    "sync_uuid", f"Synchronized UUIDs for {synced_count} papers"
+                )
+
+        finally:
+            local_conn.close()
+            remote_conn.close()
+
+    def _get_papers_dict(self, db_path: Path) -> Dict[str, Dict]:
+        """Get papers from database as a dictionary keyed by UUID."""
         papers = {}
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
@@ -1024,7 +1323,10 @@ class SyncService:
             """
             )
             for row in cursor.fetchall():
-                papers[row["id"]] = dict(row)
+                paper_dict = dict(row)
+                # Use UUID as the key, fall back to title for old databases
+                key = paper_dict.get("uuid") or paper_dict.get("title")
+                papers[key] = paper_dict
         finally:
             conn.close()
         return papers
@@ -1146,11 +1448,23 @@ class SyncService:
             if "modified_date" not in paper_dict or not paper_dict["modified_date"]:
                 paper_dict["modified_date"] = datetime.now().isoformat()
 
-            # Insert paper (excluding id and authors, filtering None values)
+            # Get available columns in target database
+            cursor.execute("PRAGMA table_info(papers)")
+            available_columns = {row[1] for row in cursor.fetchall()}
+
+            # Generate UUID if target has uuid column but paper doesn't have one
+            if "uuid" in available_columns and not paper_dict.get("uuid"):
+                paper_dict["uuid"] = str(uuid.uuid4())
+
+            # Insert paper (excluding id and authors, filtering None values, and checking column existence)
             filtered_fields = []
             filtered_values = []
             for field, value in paper_dict.items():
-                if field not in ["id", "authors"] and value is not None:
+                if (
+                    field not in ["id", "authors"]
+                    and value is not None
+                    and field in available_columns
+                ):
                     filtered_fields.append(field)
                     filtered_values.append(value)
 
@@ -1200,11 +1514,23 @@ class SyncService:
             if "modified_date" not in paper_dict or not paper_dict["modified_date"]:
                 paper_dict["modified_date"] = datetime.now().isoformat()
 
-            # Insert paper (excluding id and authors, filtering None values)
+            # Get available columns in target database
+            cursor.execute("PRAGMA table_info(papers)")
+            available_columns = {row[1] for row in cursor.fetchall()}
+
+            # Generate UUID if target has uuid column but paper doesn't have one
+            if "uuid" in available_columns and not paper_dict.get("uuid"):
+                paper_dict["uuid"] = str(uuid.uuid4())
+
+            # Insert paper (excluding id and authors, filtering None values, and checking column existence)
             filtered_fields = []
             filtered_values = []
             for field, value in paper_dict.items():
-                if field not in ["id", "authors"] and value is not None:
+                if (
+                    field not in ["id", "authors"]
+                    and value is not None
+                    and field in available_columns
+                ):
                     filtered_fields.append(field)
                     filtered_values.append(value)
 
@@ -1543,7 +1869,9 @@ class SyncService:
             except Exception:
                 pass
 
-    def _collection_name_by_id(self, db_path: Path, collection_id: int) -> Optional[str]:
+    def _collection_name_by_id(
+        self, db_path: Path, collection_id: int
+    ) -> Optional[str]:
         try:
             conn = sqlite3.connect(db_path)
             cur = conn.cursor()
@@ -1609,3 +1937,86 @@ class SyncService:
                 self.app._add_log(
                     "sync_prep_error", f"Failed to fix PDF paths: {str(e)}"
                 )
+
+    def _upgrade_database_schema(self, db_path: Path) -> bool:
+        """Upgrade database schema using Alembic migrations. Returns True if successful."""
+        try:
+            import ng
+            from alembic import command
+            from alembic.config import Config
+            from alembic.script import ScriptDirectory
+            from alembic.runtime.migration import MigrationContext
+
+            # Try to find alembic.ini
+            alembic_ini_path = "alembic.ini"
+            alembic_dir = "alembic"
+
+            if not os.path.exists(alembic_ini_path):
+                # Look for it relative to the ng package
+                ng_path = Path(ng.__file__).parent
+                alembic_ini_path = ng_path / "alembic.ini"
+                alembic_dir = ng_path / "alembic"
+
+                if not alembic_ini_path.exists():
+                    # Alembic not available, skip upgrade
+                    return False
+
+            alembic_cfg = Config(str(alembic_ini_path))
+            alembic_cfg.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
+            alembic_cfg.set_main_option("script_location", str(alembic_dir))
+
+            # Check current database revision
+            from sqlalchemy import create_engine
+
+            engine = create_engine(f"sqlite:///{db_path}")
+            with engine.connect() as connection:
+                context = MigrationContext.configure(connection)
+                current_rev = context.get_current_revision()
+
+            # Get the head revision from scripts
+            script = ScriptDirectory.from_config(alembic_cfg)
+            head_rev = script.get_current_head()
+
+            # Only upgrade if versions differ
+            if current_rev == head_rev:
+                # Already at latest version, skip
+                return True
+
+            # Check if schema is already correct but alembic version is wrong
+            # (This can happen if migration was run manually or interrupted)
+            if self._database_has_uuid_column(db_path) and head_rev == "10f8534b9062":
+                # UUID column exists, just update alembic version
+                conn = sqlite3.connect(db_path)
+                cursor = conn.cursor()
+                try:
+                    cursor.execute(
+                        "UPDATE alembic_version SET version_num = ?", (head_rev,)
+                    )
+                    conn.commit()
+                    if self.app:
+                        self.app._add_log(
+                            "sync_db_fix",
+                            f"Fixed alembic version for {db_path.name} (schema already correct)",
+                        )
+                    return True
+                finally:
+                    conn.close()
+
+            if self.app:
+                self.app._add_log(
+                    "sync_db_upgrade",
+                    f"Upgrading database schema: {db_path.name} from {current_rev or 'base'} to {head_rev}",
+                )
+
+            # Run upgrade to head
+            command.upgrade(alembic_cfg, "head")
+
+            if self.app:
+                self.app._add_log(
+                    "sync_db_upgrade_success",
+                    f"Successfully upgraded database schema: {db_path.name}",
+                )
+            return True
+        except Exception as e:
+            # Silently fail for auto-sync, don't spam logs
+            return False

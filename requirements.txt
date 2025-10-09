@@ -20,3 +20,4 @@ pyperclip>=1.8.0
 textual
 textual-autocomplete
 pluralizer>=2.0.0
+playwright>=1.48.0

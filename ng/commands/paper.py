@@ -185,6 +185,37 @@ class PaperCommandHandler(CommandHandler):
             return self._handle_async_paper_with_pdf(
                 source_lower, path_id, self.add_paper_service.add_openreview_paper_async
             )
+        elif source_lower == "website":
+            # Run website addition in background to avoid freezing the UI
+            def operation():
+                return self.add_paper_service.add_website_paper_async(path_id)
+
+            def on_complete(result, error):
+                if error:
+                    self.app.notify(
+                        f"Error adding website: {str(error)}", severity="error"
+                    )
+                    return
+                if not result or not result.get("paper"):
+                    self.app.notify(
+                        f"Failed to add website: {path_id} - No paper created",
+                        severity="error",
+                    )
+                    return
+                paper = result["paper"]
+                self.app.notify(
+                    f"Successfully added website: {paper.title}",
+                    severity="information",
+                )
+                self.app.load_papers()
+
+            self.background_service.run_operation(
+                operation,
+                f"website_add_{path_id}",
+                f"Adding website: {path_id}...",
+                on_complete,
+            )
+            return True
         elif source_lower == "dblp":
             return self._handle_sync_paper(
                 source_lower, path_id, self.add_paper_service.add_dblp_paper
@@ -328,8 +359,8 @@ class PaperCommandHandler(CommandHandler):
             ConfirmDialog("Confirm Deletion", confirm_message, confirm_callback)
         )
 
-    async def handle_open_command(self):
-        """Handle /open command."""
+    async def handle_open_command(self, args: List[str] = None):
+        """Handle /open command - opens HTML for websites, PDF for others."""
         papers_to_open = self._get_target_papers()
         if not papers_to_open:
             self.app.notify(
@@ -338,27 +369,67 @@ class PaperCommandHandler(CommandHandler):
             return
 
         for paper in papers_to_open:
-            if paper.pdf_path:
-                full_pdf_path = self.app.system_service.pdf_manager.get_absolute_path(
-                    paper.pdf_path
-                )
-                success, error_message = self.app.system_service.open_pdf(full_pdf_path)
-                if success:
-                    self.app.notify(
-                        f"Opened PDF for '{paper.title}'", severity="information"
-                    )
+            # For website papers, always open HTML (no PDF support)
+            is_website = paper.paper_type == "website"
+            has_pdf = bool(paper.pdf_path)
+            has_html = bool(
+                hasattr(paper, "html_snapshot_path") and paper.html_snapshot_path
+            )
+
+            # Website papers: always open HTML
+            if is_website:
+                if has_html:
+                    await self._open_html_file(paper)
                 else:
                     self.app.notify(
-                        (
-                            f"Failed to open PDF for '{paper.title}': "
-                            f"{error_message}"
-                        ),
-                        severity="error",
+                        f"No HTML snapshot available for '{paper.title}'",
+                        severity="warning",
                     )
+            # Non-website papers: open PDF
+            elif has_pdf:
+                await self._open_pdf_file(paper)
             else:
                 self.app.notify(
-                    f"No PDF path found for '{paper.title}'", severity="warning"
+                    f"No file available to open for '{paper.title}'",
+                    severity="warning",
                 )
+
+    async def _open_pdf_file(self, paper: Paper):
+        """Open PDF file for a paper."""
+        full_pdf_path = self.app.system_service.pdf_manager.get_absolute_path(
+            paper.pdf_path
+        )
+        success, error_message = self.app.system_service.open_pdf(full_pdf_path)
+        if success:
+            self.app.notify(f"Opened PDF for '{paper.title}'", severity="information")
+        else:
+            self.app.notify(
+                f"Failed to open PDF for '{paper.title}': {error_message}",
+                severity="error",
+            )
+
+    async def _open_html_file(self, paper: Paper):
+        """Open HTML snapshot file for a paper."""
+        import os
+        from ng.db.database import get_db_manager
+
+        db_manager = get_db_manager()
+        data_dir = os.path.dirname(db_manager.db_path)
+        html_snapshot_dir = os.path.join(data_dir, "html_snapshots")
+        html_absolute_path = os.path.join(html_snapshot_dir, paper.html_snapshot_path)
+
+        success, error_message = self.app.system_service.open_file(
+            html_absolute_path, "HTML snapshot"
+        )
+        if success:
+            self.app.notify(
+                f"Opened HTML snapshot for '{paper.title}'", severity="information"
+            )
+        else:
+            self.app.notify(
+                f"Failed to open HTML snapshot for '{paper.title}': {error_message}",
+                severity="error",
+            )
 
     async def handle_detail_command(self):
         """Handle /detail command."""

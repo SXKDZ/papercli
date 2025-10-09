@@ -6,7 +6,7 @@ from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.events import Click, MouseDown, MouseUp
 from textual.reactive import reactive
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Label, ListItem, ListView, Static
+from textual.widgets import Button, Input, Label, ListItem, ListView, Static, Rule
 
 from ng.db.models import Collection, Paper
 from ng.services import dialog_utils
@@ -70,6 +70,11 @@ class CollectDialog(ModalScreen):
         scrollbar-size: 1 1;
         overflow-y: auto;
     }
+    CollectDialog .paper-details-scroll {
+        height: 1fr;
+        scrollbar-size: 1 1;
+        overflow-y: auto;
+    }
     /* Button styles */
     CollectDialog Button {
         height: 3;
@@ -113,6 +118,16 @@ class CollectDialog(ModalScreen):
         height: 3;
         border: solid $border;
     }
+    CollectDialog .paper-search-input {
+        height: 1;
+        border: none;
+        background: $surface;
+        color: $text;
+    }
+    CollectDialog .paper-search-input:focus {
+        border: none;
+        background: $surface-darken-1;
+    }
     CollectDialog .edit-collection-input {
         background: $warning;
         color: $text;
@@ -148,6 +163,17 @@ class CollectDialog(ModalScreen):
         height: 6;
         border: solid $border;
         margin: 1;
+    }
+    /* Separator between search box and list (thin rule) */
+    CollectDialog .list-separator {
+        height: 1;
+        min-height: 1;
+        max-height: 1;
+        margin: 0 !important;
+        padding: 0 !important;
+        border: none;
+        color: $border;
+        background: transparent;
     }
     """
 
@@ -187,6 +213,10 @@ class CollectDialog(ModalScreen):
 
         # Track last click times per item for double-click detection
         self._last_click_time: Dict[str, float] = {}
+        
+        # Track filter text for paper lists
+        self.collection_papers_filter = ""
+        self.all_papers_filter = ""
 
     def compose(self) -> ComposeResult:
         with Container():
@@ -228,6 +258,12 @@ class CollectDialog(ModalScreen):
                             classes="column-title",
                             id="collection-papers-title",
                         )
+                        yield Input(
+                            placeholder="Search papers...",
+                            id="collection-papers-search",
+                            classes="paper-search-input",
+                        )
+                        yield Rule(classes="list-separator")
                         with VerticalScroll(
                             classes="list-container", id="collection-papers-scroll"
                         ):
@@ -243,6 +279,12 @@ class CollectDialog(ModalScreen):
                     # Column 3: All Remaining Papers (30%)
                     with Vertical(classes="column-30"):
                         yield Static("All Papers", classes="column-title")
+                        yield Input(
+                            placeholder="Search papers...",
+                            id="all-papers-search",
+                            classes="paper-search-input",
+                        )
+                        yield Rule(classes="list-separator")
                         with VerticalScroll(
                             classes="list-container", id="all-papers-scroll"
                         ):
@@ -251,10 +293,11 @@ class CollectDialog(ModalScreen):
             # Paper Details Panel
             with Vertical(classes="paper-details"):
                 yield Static("Paper Details", classes="paper-details-title")
-                yield Static(
-                    "Select a paper to view details",
-                    id="paper-details-text",
-                )
+                with VerticalScroll(classes="paper-details-scroll"):
+                    yield Static(
+                        "Select a paper to view details",
+                        id="paper-details-text",
+                    )
 
             # Bottom buttons
             with Horizontal(classes="bottom-buttons"):
@@ -277,6 +320,22 @@ class CollectDialog(ModalScreen):
     def _is_paper_changed(self, paper_id: int) -> bool:
         """Check if a paper has been moved to/from collections."""
         return any(move[0] == paper_id for move in self.paper_moves)
+    
+    def _is_paper_changed_in_collection(self, paper_id: int, collection_name: str) -> bool:
+        """Check if a paper was added to a specific collection in this session."""
+        return any(
+            move[0] == paper_id and move[1] == collection_name and move[2] == "add"
+            for move in self.paper_moves
+        )
+    
+    def _is_paper_changed_in_all_papers(self, paper_id: int, collection_name: str = None) -> bool:
+        """Check if a paper was removed from the currently selected collection."""
+        if not collection_name:
+            return False
+        return any(
+            move[0] == paper_id and move[1] == collection_name and move[2] == "remove"
+            for move in self.paper_moves
+        )
 
     def populate_collections_list(self) -> None:
         """Populate the collections list."""
@@ -360,6 +419,14 @@ class CollectDialog(ModalScreen):
         else:
             available_papers = self.papers
 
+        # Apply search filter (case-insensitive partial match on title)
+        filter_text = (self.all_papers_filter or "").strip().lower()
+        if filter_text:
+            def matches(p):
+                title = (p.title or "").lower()
+                return filter_text in title
+            available_papers = [p for p in available_papers if matches(p)]
+
         # Sort available papers by modified date (newest first)
         sorted_available_papers = sorted(
             available_papers,
@@ -369,7 +436,9 @@ class CollectDialog(ModalScreen):
 
         for idx, paper in enumerate(sorted_available_papers):
             title = format_title_by_words(paper.title or "")
-            is_changed = self._is_paper_changed(paper.id)
+            # Only show italic if removed from current collection
+            collection_name = self.selected_collection.name if self.selected_collection else None
+            is_changed = self._is_paper_changed_in_all_papers(paper.id, collection_name)
             label_classes = "changed-paper" if is_changed else ""
             label = Label(title, classes=label_classes)
             item = ListItem(label, id=f"all-paper-{paper.id}-{idx}-{timestamp}")
@@ -389,10 +458,7 @@ class CollectDialog(ModalScreen):
         # Sort papers by: 1) newly added in this session (top), 2) modified date (newest first)
         def sort_key(paper):
             # Check if this paper was added in the current session
-            is_newly_added = any(
-                move[0] == paper.id and move[1] == collection.name and move[2] == "add"
-                for move in self.paper_moves
-            )
+            is_newly_added = self._is_paper_changed_in_collection(paper.id, collection.name)
             if is_newly_added:
                 return (0, 0)  # Highest priority - newly added papers go to top
             else:
@@ -400,11 +466,20 @@ class CollectDialog(ModalScreen):
                 date_value = paper.modified_date or paper.added_date
                 return (1, -date_value.timestamp() if date_value else 0)
 
-        sorted_papers = sorted(collection.papers, key=sort_key)
+        # Apply search filter (case-insensitive partial match on title)
+        papers_source = collection.papers
+        filter_text = (self.collection_papers_filter or "").strip().lower()
+        if filter_text:
+            def matches(p):
+                title = (p.title or "").lower()
+                return filter_text in title
+            papers_source = [p for p in papers_source if matches(p)]
+
+        sorted_papers = sorted(papers_source, key=sort_key)
 
         for idx, paper in enumerate(sorted_papers):
             title = format_title_by_words(paper.title or "")
-            is_changed = self._is_paper_changed(paper.id)
+            is_changed = self._is_paper_changed_in_collection(paper.id, collection.name)
             label_classes = "changed-paper" if is_changed else ""
             label = Label(title, classes=label_classes)
             item = ListItem(
@@ -445,6 +520,19 @@ class CollectDialog(ModalScreen):
             # Highlight the selected collection
             collections_list = self.query_one("#collections-list", ListView)
             collections_list.index = index
+
+            # Re-apply any active filters after selection change
+            # to ensure both lists reflect current filter text
+            if self.collection_papers_filter:
+                try:
+                    self.populate_collection_papers_list(self.selected_collection)
+                except Exception:
+                    pass
+            if self.all_papers_filter:
+                try:
+                    self.populate_all_papers_list()
+                except Exception:
+                    pass
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Handle list selection events."""
@@ -566,6 +654,20 @@ class CollectDialog(ModalScreen):
         if event.input.id and event.input.id.startswith("edit-collection-"):
             self._save_collection_edit(event.input)
 
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Filter lists live as the user types in search boxes."""
+        try:
+            if event.input.id == "collection-papers-search":
+                self.collection_papers_filter = event.value or ""
+                if self.selected_collection:
+                    self.populate_collection_papers_list(self.selected_collection)
+            elif event.input.id == "all-papers-search":
+                self.all_papers_filter = event.value or ""
+                self.populate_all_papers_list()
+        except Exception:
+            # Avoid breaking the dialog if filtering fails for any reason
+            pass
+
     def on_input_blurred(self, event: Input.Blurred) -> None:
         """Handle input losing focus - auto-exit editing mode."""
         if event.input.id and event.input.id.startswith("edit-collection-"):
@@ -680,15 +782,20 @@ class CollectDialog(ModalScreen):
     def delete_selected_collection(self) -> None:
         """Delete the selected collection."""
         collections_list = self.query_one("#collections-list", ListView)
+        # Ensure the selection tracks the current cursor position before deleting
+        try:
+            collections_list.action_select_cursor()
+        except Exception:
+            pass
         index = collections_list.index
 
         if index is not None:
             if index < len(self.collections):
                 # Deleting an existing collection
-                collection = self.collections[index]
+                collection = self.collections.pop(index)
 
                 # Track all papers being removed from this collection
-                for paper in collection.papers:
+                for paper in list(collection.papers):
                     self.paper_moves.append((paper.id, collection.name, "remove"))
 
                 # Track the collection deletion
@@ -700,14 +807,21 @@ class CollectDialog(ModalScreen):
                     # Just remove it from new_collections list
                     del self.new_collections[new_collection_index]
 
-            # Refresh the collections list and clear collection papers display
+            # Refresh the collections list
             self.populate_collections_list()
-            self.populate_all_papers_list()  # Refresh to show italic styling for moved papers
-            self.query_one("#collection-papers-list", ListView).clear()
 
-            # Update the title to reflect no collection selected
-            title_widget = self.query_one("#collection-papers-title", Static)
-            title_widget.update("Papers in Collection")
+            # After deletion, select the next sensible collection if any remain
+            total_remaining = len(self.collections) + len(self.new_collections)
+            if total_remaining > 0:
+                new_index = min(index, total_remaining - 1)
+                self.select_collection(new_index)
+            else:
+                # No collections left; clear panels
+                self.selected_collection = None
+                self.query_one("#collection-papers-list", ListView).clear()
+                title_widget = self.query_one("#collection-papers-title", Static)
+                title_widget.update("Papers in Collection")
+                self.populate_all_papers_list()
 
     def add_paper_to_collection(self) -> None:
         """Add selected paper from all papers to the current collection."""
