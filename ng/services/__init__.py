@@ -25,7 +25,7 @@ from . import llm_utils
 # Level 4: Metadata services (exposed early for aggregator use)
 from .metadata import MetadataExtractor
 
-# Level 5: PDF services (depends on formatting, http_utils, may reference metadata types)
+# Level 5: PDF and snapshot services (depends on formatting, http_utils, may reference metadata types)
 from .pdf import (
     PDFManager,
     PDFService,
@@ -33,6 +33,7 @@ from .pdf import (
     PDFExtractionHandler,
     PDFDownloadTaskFactory,
 )
+from .webpage import WebpageSnapshotService
 
 # Level 6: Database services (depends on formatting, pdf)
 from .database import DatabaseHealthService
@@ -58,7 +59,6 @@ from .system import SystemService
 from .chat import ChatService
 from .llm import LLMSummaryService
 from .add_paper import AddPaperService
-from .webpage import WebpageSnapshotService
 
 __all__ = [
     "AddPaperService",
