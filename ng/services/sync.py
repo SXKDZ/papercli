@@ -9,10 +9,11 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from pluralizer import Pluralizer
 
+from ng.db.database import ensure_schema_current
 from ng.services import DatabaseHealthService
 
 _pluralizer = Pluralizer()
@@ -74,6 +75,7 @@ class SyncResult:
             "collections_updated": 0,
             "pdfs_copied": 0,
             "pdfs_updated": 0,
+            "html_snapshots_copied": 0,
         }
         self.detailed_changes: Dict[str, List[str]] = {
             "papers_added": [],
@@ -82,6 +84,7 @@ class SyncResult:
             "collections_updated": [],
             "pdfs_copied": [],
             "pdfs_updated": [],
+            "html_snapshots_copied": [],
         }
         self.errors: List[str] = []
         self.cancelled = False
@@ -133,6 +136,9 @@ class SyncResult:
         if self.changes_applied["pdfs_copied"] > 0:
             c = self.changes_applied["pdfs_copied"]
             summary_parts.append(f"{_pluralizer.pluralize('PDF', c, True)} copied")
+        if self.changes_applied["html_snapshots_copied"] > 0:
+            c = self.changes_applied["html_snapshots_copied"]
+            summary_parts.append(f"{_pluralizer.pluralize('HTML snapshot', c, True)} copied")
 
         return f"Sync completed: {', '.join(summary_parts)}"
 
@@ -166,6 +172,7 @@ class SyncService:
         self.title_mappings = (
             {}
         )  # Maps original_title -> new_title  # Maps original_title -> new_title
+        self._column_cache: Dict[Tuple[str, str, str], bool] = {}
 
     def _acquire_locks(self) -> bool:
         """Acquire sync locks on both local and remote directories."""
@@ -233,6 +240,151 @@ class SyncService:
                 except Exception:
                     pass
 
+    def _database_has_column(self, db_path: Path, table: str, column: str) -> bool:
+        """Check if a given table in the database has a specific column."""
+        cache_key = (str(db_path), table, column)
+        if cache_key in self._column_cache:
+            return self._column_cache[cache_key]
+
+        conn = sqlite3.connect(db_path)
+        try:
+            cursor = conn.cursor()
+            cursor.execute(f"PRAGMA table_info({table})")
+            has_column = any(row[1] == column for row in cursor.fetchall())
+            self._column_cache[cache_key] = has_column
+            return has_column
+        finally:
+            conn.close()
+
+    def _database_has_uuid_column(self, db_path: Path) -> bool:
+        """Determine whether the papers table contains a UUID column."""
+        return self._database_has_column(db_path, "papers", "uuid")
+
+    def _database_has_html_snapshot_column(self, db_path: Path) -> bool:
+        """Determine whether the papers table contains an HTML snapshot column."""
+        return self._database_has_column(db_path, "papers", "html_snapshot_path")
+
+    def _lookup_paper_uuid(self, db_path: Path, title: str) -> Optional[str]:
+        """Look up a paper's UUID by title within a specific database."""
+        if not self._database_has_uuid_column(db_path):
+            return None
+
+        conn = sqlite3.connect(db_path)
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT uuid FROM papers WHERE title = ?", (title,))
+            row = cursor.fetchone()
+            if row and row[0]:
+                return row[0]
+            return None
+        finally:
+            conn.close()
+
+    def _lookup_paper_uuid_in_databases(self, title: str) -> Optional[str]:
+        """Look up a paper UUID across both local and remote databases."""
+        uuid_value = self._lookup_paper_uuid(self.local_db_path, title)
+        if uuid_value:
+            return uuid_value
+        return self._lookup_paper_uuid(self.remote_db_path, title)
+
+    def _default_html_snapshot_path(self, filename: str) -> str:
+        """Return the standardized relative path for an HTML snapshot file."""
+        return filename
+
+    def _update_html_snapshot_references(
+        self,
+        db_path: Path,
+        papers: List[Dict[str, Optional[str]]],
+        snapshot_path: str,
+    ) -> None:
+        """Ensure referenced papers point to the provided HTML snapshot path."""
+        if not papers:
+            return
+
+        if not self._database_has_html_snapshot_column(db_path):
+            ensure_schema_current(str(db_path), silent=True)
+            self._column_cache.pop(
+                (str(db_path), "papers", "html_snapshot_path"), None
+            )
+            if not self._database_has_html_snapshot_column(db_path):
+                return
+
+        conn = sqlite3.connect(db_path)
+        try:
+            cursor = conn.cursor()
+            has_uuid = self._database_has_uuid_column(db_path)
+            for entry in papers:
+                updated = False
+                uuid_value = entry.get("uuid")
+                title = entry.get("title")
+
+                if uuid_value and has_uuid:
+                    cursor.execute(
+                        "UPDATE papers SET html_snapshot_path = ? WHERE uuid = ?",
+                        (snapshot_path, uuid_value),
+                    )
+                    updated = cursor.rowcount > 0
+
+                if not updated and title:
+                    cursor.execute(
+                        "UPDATE papers SET html_snapshot_path = ? WHERE title = ?",
+                        (snapshot_path, title),
+                    )
+
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _link_paper_to_collection(
+        self,
+        cursor: sqlite3.Cursor,
+        target_db_path: Path,
+        collection_id: int,
+        paper_title: str,
+        paper_uuid: Optional[str] = None,
+    ) -> bool:
+        """Link a paper to a collection using UUID when available, falling back to titles."""
+        candidates: List[Tuple[str, str]] = []
+
+        if paper_uuid:
+            candidates.append(("uuid", paper_uuid))
+        else:
+            fallback_uuid = self._lookup_paper_uuid_in_databases(paper_title)
+            if fallback_uuid:
+                candidates.append(("uuid", fallback_uuid))
+
+        candidates.append(("title", paper_title))
+
+        if paper_title in self.title_mappings:
+            candidates.append(("title", self.title_mappings[paper_title]))
+
+        if paper_title.endswith(" (Remote Version)"):
+            original_title = paper_title[: -len(" (Remote Version)")]
+            candidates.append(("title", original_title))
+
+        seen_values = set()
+        for query_type, value in candidates:
+            if not value or value in seen_values:
+                continue
+            seen_values.add(value)
+
+            if query_type == "uuid":
+                if not self._database_has_uuid_column(target_db_path):
+                    continue
+                cursor.execute("SELECT id FROM papers WHERE uuid = ?", (value,))
+            else:
+                cursor.execute("SELECT id FROM papers WHERE title = ?", (value,))
+
+            row = cursor.fetchone()
+            if row:
+                cursor.execute(
+                    "INSERT OR IGNORE INTO paper_collections (paper_id, collection_id) VALUES (?, ?)",
+                    (row[0], collection_id),
+                )
+                return True
+
+        return False
+
     def sync(self, conflict_resolver=None, auto_sync_mode=False) -> SyncResult:
         """Simplified sync: generate operations, get user confirmation, execute sync."""
         result = SyncResult()
@@ -271,7 +423,16 @@ class SyncService:
             # Upgrade local database schema if needed
             if self.progress_callback:
                 self.progress_callback("Checking local database schema...")
-            self._upgrade_database_schema(self.local_db_path)
+            local_upgraded = self._upgrade_database_schema(self.local_db_path)
+
+            # If Alembic upgrade failed, try manual upgrade
+            if not local_upgraded:
+                if self.app:
+                    self.app._add_log(
+                        "sync_manual_upgrade_attempt",
+                        "Alembic upgrade failed, attempting manual schema upgrade for local database",
+                    )
+                ensure_schema_current(str(self.local_db_path), silent=True)
             time.sleep(0.1)
 
             # If remote database doesn't exist, copy from local
@@ -295,6 +456,15 @@ class SyncService:
             if self.progress_callback:
                 self.progress_callback("Checking remote database schema...")
             remote_upgraded = self._upgrade_database_schema(self.remote_db_path)
+
+            # If Alembic upgrade failed, try manual upgrade
+            if not remote_upgraded:
+                if self.app:
+                    self.app._add_log(
+                        "sync_manual_upgrade_attempt",
+                        "Alembic upgrade failed, attempting manual schema upgrade for remote database",
+                    )
+                ensure_schema_current(str(self.remote_db_path), silent=True)
             time.sleep(0.1)
 
             # Check schema compatibility (both auto and manual sync)
@@ -316,12 +486,40 @@ class SyncService:
                     self.app._add_log("sync_error", error_msg)
                 raise Exception(error_msg)
             elif not local_has_uuid_col and remote_has_uuid_col:
-                error_msg = (
-                    "Schema mismatch: Remote has UUID column but local does not."
-                )
+                # Try manual upgrade as fallback
                 if self.app:
-                    self.app._add_log("sync_error", error_msg)
-                raise Exception(error_msg)
+                    self.app._add_log(
+                        "sync_fix",
+                        "Local database is older version. Attempting manual schema upgrade...",
+                    )
+
+                if ensure_schema_current(str(self.local_db_path), silent=True):
+                    # Successfully added UUID column, re-check
+                    local_has_uuid_col = self._database_has_uuid_column(self.local_db_path)
+                    if local_has_uuid_col:
+                        if self.app:
+                            self.app._add_log(
+                                "sync_fix_success",
+                                "Successfully upgraded local database schema",
+                            )
+                    else:
+                        error_msg = (
+                            "Schema mismatch: Remote has UUID column but local does not. "
+                            "Manual upgrade failed. Please run: python -m alembic upgrade head"
+                        )
+                        if self.app:
+                            self.app._add_log("sync_error", error_msg)
+                        raise Exception(error_msg)
+                else:
+                    error_msg = (
+                        "Schema mismatch: Remote has UUID column but local does not. "
+                        "Automatic upgrade failed. Please upgrade your local database by running:\n"
+                        "  python -m alembic upgrade head\n"
+                        "or delete the remote database to sync from scratch."
+                    )
+                    if self.app:
+                        self.app._add_log("sync_error", error_msg)
+                    raise Exception(error_msg)
 
             # If both have UUID column, sync UUIDs before operations
             if local_has_uuid_col and remote_has_uuid_col:
@@ -392,6 +590,10 @@ class SyncService:
                 )
             self._sync_remote_to_local(operations, result)
             time.sleep(0.1)
+
+            # Recover missing HTML snapshots even if no operations were scheduled
+            self._repair_missing_assets("pdf", result)
+            self._repair_missing_assets("html_snapshot", result)
 
             if self.progress_callback:
                 self.progress_callback("Synchronizing local to remote...")
@@ -465,6 +667,11 @@ class SyncService:
                             c = changes["pdfs_updated"]
                             change_details.append(
                                 f"{_pluralizer.pluralize('PDF', c, True)} updated"
+                            )
+                        if changes["html_snapshots_copied"]:
+                            c = changes["html_snapshots_copied"]
+                            change_details.append(
+                                f"{_pluralizer.pluralize('HTML snapshot', c, True)} copied"
                             )
 
                         detailed_summary = "; ".join(change_details)
@@ -542,11 +749,9 @@ class SyncService:
                     )
                 )
 
-        # Check PDF conflicts
-        operations.extend(self._generate_pdf_operations())
-
-        # Check HTML snapshot conflicts
-        operations.extend(self._generate_html_snapshot_operations())
+        # Check file-based asset conflicts (PDFs and HTML snapshots)
+        operations.extend(self._generate_asset_operations("pdf"))
+        operations.extend(self._generate_asset_operations("html_snapshot"))
 
         return operations
 
@@ -599,140 +804,144 @@ class SyncService:
                 f"Deleted {_pluralizer.pluralize(f'orphan {label} PDF', deleted, True)}",
             )
 
-    def _generate_pdf_operations(self) -> List[SyncOperation]:
-        """Generate PDF sync operations."""
-        operations = []
+    def _build_pdf_map(
+        self, db_path: Path, pdf_dir: Path
+    ) -> Dict[str, Dict[str, object]]:
+        """Collect referenced PDFs and their file info."""
+        referenced: set[str] = set()
+        papers = self._get_papers_dict(db_path)
+        for paper in papers.values():
+            pdf_path = paper.get("pdf_path")
+            if not pdf_path:
+                continue
+            try:
+                referenced.add(Path(pdf_path).name)
+            except Exception:
+                continue
 
-        if not (self.local_pdf_dir.exists() and self.remote_pdf_dir.exists()):
-            return operations
-
-        # Only consider PDFs that are referenced by papers in respective databases
-        local_papers = self._get_papers_dict(self.local_db_path)
-        remote_papers = self._get_papers_dict(self.remote_db_path)
-
-        def referenced_pdf_names(papers: Dict[int, Dict]) -> set[str]:
-            names = set()
-            for p in papers.values():
-                pdf_path = p.get("pdf_path")
-                if pdf_path:
-                    try:
-                        names.add(Path(pdf_path).name)
-                    except Exception:
-                        pass
-            return names
-
-        local_refs = referenced_pdf_names(local_papers)
-        remote_refs = referenced_pdf_names(remote_papers)
-
-        local_pdfs = {
+        return {
             f.name: self._get_file_info(f)
-            for f in self.local_pdf_dir.glob("*.pdf")
-            if f.name in local_refs
-        }
-        remote_pdfs = {
-            f.name: self._get_file_info(f)
-            for f in self.remote_pdf_dir.glob("*.pdf")
-            if f.name in remote_refs
+            for f in pdf_dir.glob("*.pdf")
+            if f.name in referenced
         }
 
-        # PDFs that exist in both but are different
-        for filename in set(local_pdfs.keys()) & set(remote_pdfs.keys()):
-            local_info = local_pdfs[filename]
-            remote_info = remote_pdfs[filename]
-            if local_info.get("hash") != remote_info.get("hash"):
-                operations.append(
-                    SyncOperation(
-                        "conflict",
-                        "both",
-                        "pdf",
-                        filename,
-                        {"local": local_info, "remote": remote_info},
-                    )
-                )
-
-        # PDFs only in local
-        for filename in local_pdfs.keys() - remote_pdfs.keys():
-            operations.append(
-                SyncOperation("add", "remote", "pdf", filename, local_pdfs[filename])
+    def _build_html_snapshot_map(
+        self, db_path: Path, snapshots_dir: Path
+    ) -> Dict[str, Dict[str, object]]:
+        """Collect referenced HTML snapshots, file info, and paper metadata."""
+        papers = self._get_papers_dict(db_path)
+        references: Dict[str, List[Dict[str, Optional[str]]]] = {}
+        for p in papers.values():
+            html_path = p.get("html_snapshot_path")
+            if not html_path:
+                continue
+            try:
+                filename = Path(html_path).name
+            except Exception:
+                continue
+            references.setdefault(filename, []).append(
+                {
+                    "uuid": p.get("uuid"),
+                    "title": p.get("title"),
+                    "stored_path": html_path,
+                }
             )
 
-        # PDFs only in remote
-        for filename in remote_pdfs.keys() - local_pdfs.keys():
-            operations.append(
-                SyncOperation("add", "local", "pdf", filename, remote_pdfs[filename])
+        snapshot_map: Dict[str, Dict[str, object]] = {}
+        for filename, entries in references.items():
+            stored_paths = [
+                entry.get("stored_path")
+                for entry in entries
+                if entry.get("stored_path")
+            ]
+            file_path = snapshots_dir / filename
+            if not file_path.exists():
+                for stored in stored_paths:
+                    if not stored:
+                        continue
+                    alt_path = snapshots_dir / stored
+                    if alt_path.exists():
+                        file_path = alt_path
+                        break
+                else:
+                    continue
+            if stored_paths:
+                relative_path = Path(stored_paths[0]).name
+            else:
+                relative_path = filename
+            simplified_entries = [
+                {"uuid": entry.get("uuid"), "title": entry.get("title")}
+                for entry in entries
+            ]
+            snapshot_map[filename] = {
+                "file": self._get_file_info(file_path),
+                "papers": simplified_entries,
+                "relative_path": relative_path,
+                "stored_paths": stored_paths,
+            }
+        return snapshot_map
+
+    def _get_asset_hash(self, asset_info: Dict[str, object]) -> Optional[str]:
+        """Extract hash value from PDF or HTML snapshot metadata."""
+        if not asset_info:
+            return None
+        if "file" in asset_info and isinstance(asset_info["file"], dict):
+            return asset_info["file"].get("hash")
+        return asset_info.get("hash")
+
+    def _generate_asset_operations(self, asset_type: str) -> List[SyncOperation]:
+        """Generate add/conflict operations for a file-based asset type."""
+        if asset_type == "pdf":
+            if not (
+                self.local_pdf_dir.exists() and self.remote_pdf_dir.exists()
+            ):
+                return []
+            local_assets = self._build_pdf_map(self.local_db_path, self.local_pdf_dir)
+            remote_assets = self._build_pdf_map(
+                self.remote_db_path, self.remote_pdf_dir
             )
-
-        return operations
-
-    def _generate_html_snapshot_operations(self) -> List[SyncOperation]:
-        """Generate HTML snapshot sync operations."""
-        operations = []
-
-        if not (
-            self.local_html_snapshots_dir.exists()
-            and self.remote_html_snapshots_dir.exists()
-        ):
-            # Create directories if they don't exist
+        elif asset_type == "html_snapshot":
             self.local_html_snapshots_dir.mkdir(parents=True, exist_ok=True)
             self.remote_html_snapshots_dir.mkdir(parents=True, exist_ok=True)
+            local_assets = self._build_html_snapshot_map(
+                self.local_db_path, self.local_html_snapshots_dir
+            )
+            remote_assets = self._build_html_snapshot_map(
+                self.remote_db_path, self.remote_html_snapshots_dir
+            )
+        else:
+            return []
 
-        # Only consider HTML snapshots that are referenced by papers in respective databases
-        local_papers = self._get_papers_dict(self.local_db_path)
-        remote_papers = self._get_papers_dict(self.remote_db_path)
+        operations: List[SyncOperation] = []
 
-        def referenced_html_names(papers: Dict[int, Dict]) -> set[str]:
-            names = set()
-            for p in papers.values():
-                html_path = p.get("html_snapshot_path")
-                if html_path:
-                    try:
-                        names.add(Path(html_path).name)
-                    except Exception:
-                        pass
-            return names
-
-        local_refs = referenced_html_names(local_papers)
-        remote_refs = referenced_html_names(remote_papers)
-
-        local_htmls = {
-            f.name: self._get_file_info(f)
-            for f in self.local_html_snapshots_dir.glob("*.html")
-            if f.name in local_refs
-        }
-        remote_htmls = {
-            f.name: self._get_file_info(f)
-            for f in self.remote_html_snapshots_dir.glob("*.html")
-            if f.name in remote_refs
-        }
-
-        # HTML snapshots that exist in both but are different
-        for filename in set(local_htmls.keys()) & set(remote_htmls.keys()):
-            local_info = local_htmls[filename]
-            remote_info = remote_htmls[filename]
-            if local_info.get("hash") != remote_info.get("hash"):
+        # Assets present in both locations but differing by hash
+        for filename in set(local_assets.keys()) & set(remote_assets.keys()):
+            local_info = local_assets[filename]
+            remote_info = remote_assets[filename]
+            if self._get_asset_hash(local_info) != self._get_asset_hash(remote_info):
                 operations.append(
                     SyncOperation(
                         "conflict",
                         "both",
-                        "html_snapshot",
+                        asset_type,
                         filename,
                         {"local": local_info, "remote": remote_info},
                     )
                 )
 
-        # HTML snapshots only in local
-        for filename in local_htmls.keys() - remote_htmls.keys():
+        # Assets only on local -> copy to remote
+        for filename in local_assets.keys() - remote_assets.keys():
             operations.append(
                 SyncOperation(
-                    "add", "remote", "html_snapshot", filename, local_htmls[filename]
+                    "add", "remote", asset_type, filename, local_assets[filename]
                 )
             )
 
-        # HTML snapshots only in remote
-        for filename in remote_htmls.keys() - local_htmls.keys():
+        # Assets only on remote -> copy to local
+        for filename in remote_assets.keys() - local_assets.keys():
             operations.append(
                 SyncOperation(
-                    "add", "local", "html_snapshot", filename, remote_htmls[filename]
+                    "add", "local", asset_type, filename, remote_assets[filename]
                 )
             )
 
@@ -911,33 +1120,48 @@ class SyncService:
                                 f"Added paper from remote: '{op.item_id}' by {authors} ({venue}, {year})",
                             )
                     elif op.item_type == "pdf":
-                        self._copy_pdf_file(
-                            self.remote_pdf_dir / op.item_id,
-                            self.local_pdf_dir / op.item_id,
-                        )
-                        result.changes_applied["pdfs_copied"] += 1
-                        result.detailed_changes["pdfs_copied"].append(
-                            f"'{op.item_id}' (from remote)"
-                        )
-                        if self.app:
-                            self.app._add_log(
-                                "sync_remote_to_local",
-                                f"Copied PDF from remote: {op.item_id}",
+                        metadata = op.data if isinstance(op.data, dict) else {}
+                        if self._copy_asset_file(
+                            "pdf",
+                            op.item_id,
+                            self.remote_pdf_dir,
+                            self.local_pdf_dir,
+                            metadata,
+                        ):
+                            result.changes_applied["pdfs_copied"] += 1
+                            result.detailed_changes["pdfs_copied"].append(
+                                f"'{op.item_id}' (from remote)"
                             )
+                            if self.app:
+                                self.app._add_log(
+                                    "sync_remote_to_local",
+                                    f"Copied PDF from remote: {op.item_id}",
+                                )
                     elif op.item_type == "html_snapshot":
-                        self._copy_pdf_file(
-                            self.remote_html_snapshots_dir / op.item_id,
-                            self.local_html_snapshots_dir / op.item_id,
-                        )
-                        result.changes_applied["pdfs_copied"] += 1
-                        result.detailed_changes["pdfs_copied"].append(
-                            f"'{op.item_id}' (HTML from remote)"
-                        )
-                        if self.app:
-                            self.app._add_log(
-                                "sync_remote_to_local",
-                                f"Copied HTML snapshot from remote: {op.item_id}",
+                        metadata = op.data if isinstance(op.data, dict) else {}
+                        if self._copy_asset_file(
+                            "html_snapshot",
+                            op.item_id,
+                            self.remote_html_snapshots_dir,
+                            self.local_html_snapshots_dir,
+                            metadata,
+                        ):
+                            self._handle_post_copy(
+                                "html_snapshot",
+                                metadata,
+                                self.local_db_path,
+                                op.item_id,
+                                self.local_html_snapshots_dir,
                             )
+                            result.changes_applied["html_snapshots_copied"] += 1
+                            result.detailed_changes["html_snapshots_copied"].append(
+                                f"'{op.item_id}' (from remote)"
+                            )
+                            if self.app:
+                                self.app._add_log(
+                                    "sync_remote_to_local",
+                                    f"Copied HTML snapshot from remote: {op.item_id}",
+                                )
 
                 elif op.operation_type == "delete":
                     if op.item_type == "paper":
@@ -989,31 +1213,46 @@ class SyncService:
                                 f"Added paper to remote: '{op.item_id}' by {authors} ({venue}, {year})",
                             )
                     elif op.item_type == "pdf":
-                        self._copy_pdf_file(
-                            self.local_pdf_dir / op.item_id,
-                            self.remote_pdf_dir / op.item_id,
-                        )
-                        result.changes_applied["pdfs_copied"] += 1
-                        result.detailed_changes["pdfs_copied"].append(f"'{op.item_id}'")
-                        if self.app:
-                            self.app._add_log(
-                                "sync_local_to_remote",
-                                f"Copied PDF to remote: {op.item_id}",
-                            )
+                        metadata = op.data if isinstance(op.data, dict) else {}
+                        if self._copy_asset_file(
+                            "pdf",
+                            op.item_id,
+                            self.local_pdf_dir,
+                            self.remote_pdf_dir,
+                            metadata,
+                        ):
+                            result.changes_applied["pdfs_copied"] += 1
+                            result.detailed_changes["pdfs_copied"].append(f"'{op.item_id}'")
+                            if self.app:
+                                self.app._add_log(
+                                    "sync_local_to_remote",
+                                    f"Copied PDF to remote: {op.item_id}",
+                                )
                     elif op.item_type == "html_snapshot":
-                        self._copy_pdf_file(
-                            self.local_html_snapshots_dir / op.item_id,
-                            self.remote_html_snapshots_dir / op.item_id,
-                        )
-                        result.changes_applied["pdfs_copied"] += 1
-                        result.detailed_changes["pdfs_copied"].append(
-                            f"'{op.item_id}' (HTML)"
-                        )
-                        if self.app:
-                            self.app._add_log(
-                                "sync_local_to_remote",
-                                f"Copied HTML snapshot to remote: {op.item_id}",
+                        metadata = op.data if isinstance(op.data, dict) else {}
+                        if self._copy_asset_file(
+                            "html_snapshot",
+                            op.item_id,
+                            self.local_html_snapshots_dir,
+                            self.remote_html_snapshots_dir,
+                            metadata,
+                        ):
+                            self._handle_post_copy(
+                                "html_snapshot",
+                                metadata,
+                                self.remote_db_path,
+                                op.item_id,
+                                self.remote_html_snapshots_dir,
                             )
+                            result.changes_applied["html_snapshots_copied"] += 1
+                            result.detailed_changes["html_snapshots_copied"].append(
+                                f"'{op.item_id}'"
+                            )
+                            if self.app:
+                                self.app._add_log(
+                                    "sync_local_to_remote",
+                                    f"Copied HTML snapshot to remote: {op.item_id}",
+                                )
 
                 elif op.operation_type == "delete":
                     if op.item_type == "paper":
@@ -1042,11 +1281,205 @@ class SyncService:
                                     f"Updating remote HTML snapshot: {op.item_id} with local version",
                                 )
 
-    def _copy_pdf_file(self, source: Path, destination: Path):
-        """Copy a PDF file from source to destination."""
-        if source.exists():
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, destination)
+    def _handle_post_copy(
+        self,
+        asset_type: str,
+        metadata: Dict[str, object],
+        target_db_path: Path,
+        filename: str,
+        target_dir: Path,
+    ) -> None:
+        """Apply metadata updates after copying a file-based asset."""
+        if asset_type != "html_snapshot" or not isinstance(metadata, dict):
+            return
+
+        papers = metadata.get("papers", []) or []
+        relative_path = metadata.get("relative_path") or self._default_html_snapshot_path(
+            filename
+        )
+
+        self._update_html_snapshot_references(target_db_path, papers, relative_path)
+
+        stored_paths = metadata.get("stored_paths") or []
+        for stored in stored_paths:
+            if not stored:
+                continue
+            try:
+                alt_path = target_dir / stored
+            except Exception:
+                continue
+            dest_path = target_dir / filename
+            if alt_path == dest_path:
+                continue
+            if alt_path.exists():
+                try:
+                    alt_path.unlink()
+                except Exception:
+                    pass
+
+    def _resolve_asset_source_path(
+        self,
+        asset_type: str,
+        filename: str,
+        source_dir: Path,
+        metadata: Optional[Dict[str, object]],
+    ) -> Path:
+        """Determine the best source path for a sync asset."""
+        candidates: List[Path] = []
+        primary = source_dir / filename
+        candidates.append(primary)
+
+        if metadata:
+            meta_path = metadata.get("path")
+            if meta_path:
+                try:
+                    candidates.append(Path(meta_path))
+                except Exception:
+                    pass
+            file_info = metadata.get("file")
+            if isinstance(file_info, dict):
+                file_meta_path = file_info.get("path")
+                if file_meta_path:
+                    try:
+                        candidates.append(Path(file_meta_path))
+                    except Exception:
+                        pass
+            if asset_type == "html_snapshot":
+                for stored in metadata.get("stored_paths", []) or []:
+                    if not stored:
+                        continue
+                    try:
+                        candidates.append(source_dir / stored)
+                        candidates.append(source_dir / Path(stored).name)
+                    except Exception:
+                        continue
+
+        # Remove duplicates while preserving order
+        seen: set = set()
+        unique_candidates: List[Path] = []
+        for candidate in candidates:
+            try:
+                key = candidate.resolve()
+            except Exception:
+                key = candidate
+            if key in seen:
+                continue
+            seen.add(key)
+            unique_candidates.append(candidate)
+
+        for candidate in unique_candidates:
+            try:
+                if candidate.exists():
+                    return candidate
+            except Exception:
+                continue
+
+        return primary
+
+    def _copy_asset_file(
+        self,
+        asset_type: str,
+        filename: str,
+        source_dir: Path,
+        destination_dir: Path,
+        metadata: Optional[Dict[str, object]] = None,
+    ) -> bool:
+        """Copy a sync asset (PDF or HTML snapshot) from source to destination."""
+        source_path = self._resolve_asset_source_path(
+            asset_type, filename, source_dir, metadata
+        )
+        if not source_path.exists():
+            if self.app:
+                self.app._add_log(
+                    "sync_asset_missing",
+                    f"Source {asset_type} '{filename}' not found at {source_path}",
+                )
+            return False
+
+        destination_path = destination_dir / filename
+        destination_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_path, destination_path)
+        return True
+
+    def _repair_missing_assets(self, asset_type: str, result: SyncResult) -> None:
+        """Repair missing assets by copying them from remote when referenced."""
+        if asset_type == "pdf":
+            self.local_pdf_dir.mkdir(parents=True, exist_ok=True)
+            self.remote_pdf_dir.mkdir(parents=True, exist_ok=True)
+
+            remote_assets = self._build_pdf_map(
+                self.remote_db_path, self.remote_pdf_dir
+            )
+
+            for filename, remote_info in remote_assets.items():
+                destination_path = self.local_pdf_dir / filename
+                if destination_path.exists():
+                    continue
+
+                if not self._copy_asset_file(
+                    "pdf",
+                    filename,
+                    self.remote_pdf_dir,
+                    self.local_pdf_dir,
+                    remote_info,
+                ):
+                    continue
+
+                result.changes_applied["pdfs_copied"] += 1
+                result.detailed_changes["pdfs_copied"].append(
+                    f"'{filename}' (recovered from remote)"
+                )
+
+                if self.app:
+                    self.app._add_log(
+                        "sync_pdf_repair",
+                        f"Recovered missing PDF from remote: {filename}",
+                    )
+
+            return
+
+        if asset_type == "html_snapshot":
+            self.local_html_snapshots_dir.mkdir(parents=True, exist_ok=True)
+            self.remote_html_snapshots_dir.mkdir(parents=True, exist_ok=True)
+
+            remote_assets = self._build_html_snapshot_map(
+                self.remote_db_path, self.remote_html_snapshots_dir
+            )
+
+            for filename, remote_info in remote_assets.items():
+                destination_path = self.local_html_snapshots_dir / filename
+                if destination_path.exists():
+                    continue
+
+                if not self._copy_asset_file(
+                    "html_snapshot",
+                    filename,
+                    self.remote_html_snapshots_dir,
+                    self.local_html_snapshots_dir,
+                    remote_info,
+                ):
+                    continue
+
+                self._handle_post_copy(
+                    "html_snapshot",
+                    remote_info,
+                    self.local_db_path,
+                    filename,
+                    self.local_html_snapshots_dir,
+                )
+
+                result.changes_applied["html_snapshots_copied"] += 1
+                result.detailed_changes["html_snapshots_copied"].append(
+                    f"'{filename}' (recovered from remote)"
+                )
+
+                if self.app:
+                    self.app._add_log(
+                        "sync_html_snapshot_repair",
+                        f"Recovered missing HTML snapshot from remote: {filename}",
+                    )
+
+            return
 
     def _map_paper_title(self, original_title: str) -> str:
         """Map paper title to its new title if it was renamed during keep_both resolution."""
@@ -1123,32 +1556,35 @@ class SyncService:
             local_papers = self._get_collection_papers(self.local_db_path, local_id)
             remote_papers = self._get_collection_papers(self.remote_db_path, remote_id)
 
-            if local_papers != remote_papers:
+            local_titles = set(local_papers.keys())
+            remote_titles = set(remote_papers.keys())
+
+            if local_titles != remote_titles:
                 # Collections differ - merge union and include any "keep both" versions
-                all_papers = local_papers | remote_papers  # Union of both sets
+                all_titles = local_titles | remote_titles  # Union of both sets
 
                 # Check for any "keep both" papers that should be included
                 # Look for papers with " (Remote Version)" suffix that correspond to papers in this collection
-                keep_both_papers = set()
-                for paper_title in list(all_papers):
+                keep_both_titles = set()
+                for paper_title in list(all_titles):
                     # Check if there's a "Remote Version" of this paper that should be included
                     if paper_title in self.title_mappings:
                         remote_version_title = self.title_mappings[paper_title]
-                        keep_both_papers.add(remote_version_title)
+                        keep_both_titles.add(remote_version_title)
                     # Also check reverse mapping - if this is a remote version, include the original
                     elif paper_title.endswith(" (Remote Version)"):
                         original_title = paper_title.replace(" (Remote Version)", "")
-                        if original_title in all_papers or self._paper_exists_in_db(
+                        if original_title in all_titles or self._paper_exists_in_db(
                             self.local_db_path, original_title
                         ):
-                            keep_both_papers.add(original_title)
+                            keep_both_titles.add(original_title)
 
                 # Add all keep_both papers to the collection
-                all_papers = all_papers | keep_both_papers
+                all_titles = all_titles | keep_both_titles
 
                 # Update both local and remote with the merged set
-                self._replace_collection_in_local(local_data, all_papers)
-                self._replace_collection_in_remote(local_data, all_papers)
+                self._replace_collection_in_local(local_data, all_titles)
+                self._replace_collection_in_remote(local_data, all_titles)
 
                 result.changes_applied["collections_updated"] += 1
                 result.detailed_changes["collections_updated"].append(
@@ -1157,8 +1593,8 @@ class SyncService:
                 if self.app:
                     local_count = len(local_papers)
                     remote_count = len(remote_papers)
-                    merged_count = len(all_papers)
-                    keep_both_count = len(keep_both_papers)
+                    merged_count = len(all_titles)
+                    keep_both_count = len(keep_both_titles)
                     self.app._add_log(
                         "sync_collections",
                         (
@@ -1190,26 +1626,14 @@ class SyncService:
         finally:
             conn.close()
 
-    def _database_has_uuid_column(self, db_path: Path) -> bool:
-        """Check if database has the uuid column in papers table."""
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        try:
-            cursor.execute("PRAGMA table_info(papers)")
-            columns = [row[1] for row in cursor.fetchall()]
-            return "uuid" in columns
-        finally:
-            conn.close()
-
     def _sync_uuids(self):
         """
         Synchronize UUIDs between local and remote databases.
 
-        Strategy:
-        1. Match papers by title
-        2. For matching papers, use local UUID if exists, otherwise remote UUID
-        3. If neither has UUID, generate new one
-        4. Update both databases to have the same UUID
+        Strategy (two-phase approach to avoid conflicts):
+        1. Match papers by title and determine target UUIDs
+        2. First pass: Clear conflicting UUIDs using temporary values
+        3. Second pass: Set all papers to their target UUIDs
         """
         local_conn = sqlite3.connect(self.local_db_path)
         local_conn.row_factory = sqlite3.Row
@@ -1233,6 +1657,9 @@ class SyncService:
                 for row in remote_cursor.fetchall()
             }
 
+            # Phase 1: Determine target UUIDs for all papers
+            local_updates = {}  # paper_id -> target_uuid
+            remote_updates = {}  # paper_id -> target_uuid
             synced_count = 0
 
             # Process papers that exist in both databases
@@ -1245,53 +1672,90 @@ class SyncService:
                     if local_uuid and remote_uuid:
                         # Both have UUIDs - use local as source of truth
                         if local_uuid != remote_uuid:
-                            remote_cursor.execute(
-                                "UPDATE papers SET uuid = ? WHERE id = ?",
-                                (local_uuid, remote_id),
-                            )
+                            remote_updates[remote_id] = local_uuid
                             synced_count += 1
                     elif local_uuid and not remote_uuid:
                         # Only local has UUID - copy to remote
-                        remote_cursor.execute(
-                            "UPDATE papers SET uuid = ? WHERE id = ?",
-                            (local_uuid, remote_id),
-                        )
+                        remote_updates[remote_id] = local_uuid
                         synced_count += 1
                     elif not local_uuid and remote_uuid:
                         # Only remote has UUID - copy to local
-                        local_cursor.execute(
-                            "UPDATE papers SET uuid = ? WHERE id = ?",
-                            (remote_uuid, local_id),
-                        )
+                        local_updates[local_id] = remote_uuid
                         synced_count += 1
                     elif not local_uuid and not remote_uuid:
                         # Neither has UUID - generate new one and set both
                         new_uuid = str(uuid.uuid4())
-                        local_cursor.execute(
-                            "UPDATE papers SET uuid = ? WHERE id = ?",
-                            (new_uuid, local_id),
-                        )
-                        remote_cursor.execute(
-                            "UPDATE papers SET uuid = ? WHERE id = ?",
-                            (new_uuid, remote_id),
-                        )
+                        local_updates[local_id] = new_uuid
+                        remote_updates[remote_id] = new_uuid
                         synced_count += 1
 
             # Handle papers only in local (generate UUID if needed)
             for title, (local_id, local_uuid) in local_papers.items():
                 if title not in remote_papers and not local_uuid:
-                    new_uuid = str(uuid.uuid4())
-                    local_cursor.execute(
-                        "UPDATE papers SET uuid = ? WHERE id = ?", (new_uuid, local_id)
-                    )
+                    local_updates[local_id] = str(uuid.uuid4())
 
             # Handle papers only in remote (generate UUID if needed)
             for title, (remote_id, remote_uuid) in remote_papers.items():
                 if title not in local_papers and not remote_uuid:
-                    new_uuid = str(uuid.uuid4())
-                    remote_cursor.execute(
-                        "UPDATE papers SET uuid = ? WHERE id = ?", (new_uuid, remote_id)
+                    remote_updates[remote_id] = str(uuid.uuid4())
+
+            # Phase 2: Clear conflicting UUIDs by setting them to temporary values
+            # Collect all target UUIDs to avoid conflicts
+            target_uuids = set(local_updates.values()) | set(remote_updates.values())
+
+            # Generate safe temporary UUIDs (guaranteed not to conflict with targets)
+            def generate_safe_temp_uuid():
+                while True:
+                    temp = str(uuid.uuid4())
+                    if temp not in target_uuids:
+                        return temp
+
+            # Clear conflicting UUIDs in local database
+            for paper_id, target_uuid in local_updates.items():
+                # Check if another paper already has this UUID
+                local_cursor.execute(
+                    "SELECT id FROM papers WHERE uuid = ? AND id != ?",
+                    (target_uuid, paper_id),
+                )
+                if local_cursor.fetchone():
+                    # Set conflicting paper to temporary UUID
+                    temp_uuid = generate_safe_temp_uuid()
+                    local_cursor.execute(
+                        "UPDATE papers SET uuid = ? WHERE uuid = ? AND id != ?",
+                        (temp_uuid, target_uuid, paper_id),
                     )
+
+            # Clear conflicting UUIDs in remote database
+            for paper_id, target_uuid in remote_updates.items():
+                # Check if another paper already has this UUID
+                remote_cursor.execute(
+                    "SELECT id FROM papers WHERE uuid = ? AND id != ?",
+                    (target_uuid, paper_id),
+                )
+                if remote_cursor.fetchone():
+                    # Set conflicting paper to temporary UUID
+                    temp_uuid = generate_safe_temp_uuid()
+                    remote_cursor.execute(
+                        "UPDATE papers SET uuid = ? WHERE uuid = ? AND id != ?",
+                        (temp_uuid, target_uuid, paper_id),
+                    )
+
+            # Commit conflict resolution
+            local_conn.commit()
+            remote_conn.commit()
+
+            # Phase 3: Apply all UUID updates
+            for paper_id, target_uuid in local_updates.items():
+                local_cursor.execute(
+                    "UPDATE papers SET uuid = ? WHERE id = ?",
+                    (target_uuid, paper_id),
+                )
+
+            for paper_id, target_uuid in remote_updates.items():
+                remote_cursor.execute(
+                    "UPDATE papers SET uuid = ? WHERE id = ?",
+                    (target_uuid, paper_id),
+                )
 
             local_conn.commit()
             remote_conn.commit()
@@ -1345,11 +1809,27 @@ class SyncService:
             conn.close()
         return collections
 
-    def _get_collection_papers(self, db_path: Path, collection_id: int) -> set:
-        """Get set of paper titles in a collection."""
+    def _get_collection_papers(
+        self, db_path: Path, collection_id: int
+    ) -> Dict[str, Optional[str]]:
+        """Get mapping of paper titles to UUIDs (when available) for a collection."""
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         try:
+            has_uuid = self._database_has_uuid_column(db_path)
+            if has_uuid:
+                cursor.execute(
+                    """
+                    SELECT p.title, p.uuid
+                    FROM papers p
+                    JOIN paper_collections pc ON p.id = pc.paper_id
+                    WHERE pc.collection_id = ?
+                    """,
+                    (collection_id,),
+                )
+                rows = cursor.fetchall()
+                return {title: uuid for title, uuid in rows}
+
             cursor.execute(
                 """
                 SELECT p.title
@@ -1359,7 +1839,8 @@ class SyncService:
                 """,
                 (collection_id,),
             )
-            return set(row[0] for row in cursor.fetchall())
+            rows = cursor.fetchall()
+            return {title: None for (title,) in rows}
         finally:
             conn.close()
 
@@ -1456,6 +1937,14 @@ class SyncService:
             if "uuid" in available_columns and not paper_dict.get("uuid"):
                 paper_dict["uuid"] = str(uuid.uuid4())
 
+            # Check if paper with this UUID already exists
+            if "uuid" in available_columns and paper_dict.get("uuid"):
+                cursor.execute("SELECT id FROM papers WHERE uuid = ?", (paper_dict["uuid"],))
+                existing = cursor.fetchone()
+                if existing:
+                    # Paper with this UUID already exists, skip insertion
+                    return existing[0]
+
             # Insert paper (excluding id and authors, filtering None values, and checking column existence)
             filtered_fields = []
             filtered_values = []
@@ -1521,6 +2010,14 @@ class SyncService:
             # Generate UUID if target has uuid column but paper doesn't have one
             if "uuid" in available_columns and not paper_dict.get("uuid"):
                 paper_dict["uuid"] = str(uuid.uuid4())
+
+            # Check if paper with this UUID already exists
+            if "uuid" in available_columns and paper_dict.get("uuid"):
+                cursor.execute("SELECT id FROM papers WHERE uuid = ?", (paper_dict["uuid"],))
+                existing = cursor.fetchone()
+                if existing:
+                    # Paper with this UUID already exists, skip insertion
+                    return existing[0]
 
             # Insert paper (excluding id and authors, filtering None values, and checking column existence)
             filtered_fields = []
@@ -1630,23 +2127,18 @@ class SyncService:
             remote_papers = self._get_collection_papers(
                 self.remote_db_path, remote_collection_id
             )
-            for paper_title in remote_papers:
-                # Try to find paper by original title first
-                cursor.execute("SELECT id FROM papers WHERE title = ?", (paper_title,))
-                paper_row = cursor.fetchone()
-
-                # If not found and there's a title mapping, try the mapped title
-                if not paper_row and paper_title in self.title_mappings:
-                    mapped_title = self.title_mappings[paper_title]
-                    cursor.execute(
-                        "SELECT id FROM papers WHERE title = ?", (mapped_title,)
-                    )
-                    paper_row = cursor.fetchone()
-
-                if paper_row:
-                    cursor.execute(
-                        "INSERT OR IGNORE INTO paper_collections (paper_id, collection_id) VALUES (?, ?)",
-                        (paper_row[0], new_collection_id),
+            for paper_title, paper_uuid in remote_papers.items():
+                linked = self._link_paper_to_collection(
+                    cursor,
+                    self.local_db_path,
+                    new_collection_id,
+                    paper_title,
+                    paper_uuid,
+                )
+                if not linked and self.app:
+                    self.app._add_log(
+                        "sync_collections_warning",
+                        f"Could not link paper '{paper_title}' to local collection '{collection_data['name']}'",
                     )
 
             conn.commit()
@@ -1677,23 +2169,18 @@ class SyncService:
             local_papers = self._get_collection_papers(
                 self.local_db_path, local_collection_id
             )
-            for paper_title in local_papers:
-                # Try to find paper by original title first
-                cursor.execute("SELECT id FROM papers WHERE title = ?", (paper_title,))
-                paper_row = cursor.fetchone()
-
-                # If not found and there's a title mapping, try the mapped title
-                if not paper_row and paper_title in self.title_mappings:
-                    mapped_title = self.title_mappings[paper_title]
-                    cursor.execute(
-                        "SELECT id FROM papers WHERE title = ?", (mapped_title,)
-                    )
-                    paper_row = cursor.fetchone()
-
-                if paper_row:
-                    cursor.execute(
-                        "INSERT OR IGNORE INTO paper_collections (paper_id, collection_id) VALUES (?, ?)",
-                        (paper_row[0], new_collection_id),
+            for paper_title, paper_uuid in local_papers.items():
+                linked = self._link_paper_to_collection(
+                    cursor,
+                    self.remote_db_path,
+                    new_collection_id,
+                    paper_title,
+                    paper_uuid,
+                )
+                if not linked and self.app:
+                    self.app._add_log(
+                        "sync_collections_warning",
+                        f"Could not link paper '{paper_title}' to remote collection '{collection_data['name']}'",
                     )
 
             conn.commit()
@@ -1756,22 +2243,16 @@ class SyncService:
             new_collection_id = cursor.lastrowid
 
             for paper_title in local_papers:
-                # Try to find paper by original title first
-                cursor.execute("SELECT id FROM papers WHERE title = ?", (paper_title,))
-                paper_row = cursor.fetchone()
-
-                # If not found and there's a title mapping, try the mapped title
-                if not paper_row and paper_title in self.title_mappings:
-                    mapped_title = self.title_mappings[paper_title]
-                    cursor.execute(
-                        "SELECT id FROM papers WHERE title = ?", (mapped_title,)
-                    )
-                    paper_row = cursor.fetchone()
-
-                if paper_row:
-                    cursor.execute(
-                        "INSERT OR IGNORE INTO paper_collections (paper_id, collection_id) VALUES (?, ?)",
-                        (paper_row[0], new_collection_id),
+                linked = self._link_paper_to_collection(
+                    cursor,
+                    self.remote_db_path,
+                    new_collection_id,
+                    paper_title,
+                )
+                if not linked and self.app:
+                    self.app._add_log(
+                        "sync_collections_warning",
+                        f"Could not link paper '{paper_title}' while updating remote collection '{collection_name}'",
                     )
             conn.commit()
         finally:
@@ -1808,22 +2289,16 @@ class SyncService:
             new_collection_id = cursor.lastrowid
 
             for paper_title in remote_papers:
-                # Try to find paper by original title first
-                cursor.execute("SELECT id FROM papers WHERE title = ?", (paper_title,))
-                paper_row = cursor.fetchone()
-
-                # If not found and there's a title mapping, try the mapped title
-                if not paper_row and paper_title in self.title_mappings:
-                    mapped_title = self.title_mappings[paper_title]
-                    cursor.execute(
-                        "SELECT id FROM papers WHERE title = ?", (mapped_title,)
-                    )
-                    paper_row = cursor.fetchone()
-
-                if paper_row:
-                    cursor.execute(
-                        "INSERT OR IGNORE INTO paper_collections (paper_id, collection_id) VALUES (?, ?)",
-                        (paper_row[0], new_collection_id),
+                linked = self._link_paper_to_collection(
+                    cursor,
+                    self.local_db_path,
+                    new_collection_id,
+                    paper_title,
+                )
+                if not linked and self.app:
+                    self.app._add_log(
+                        "sync_collections_warning",
+                        f"Could not link paper '{paper_title}' while updating local collection '{collection_name}'",
                     )
             conn.commit()
         finally:
@@ -2018,5 +2493,10 @@ class SyncService:
                 )
             return True
         except Exception as e:
-            # Silently fail for auto-sync, don't spam logs
+            # Log error but don't fail sync - will try manual fallback
+            if self.app:
+                self.app._add_log(
+                    "sync_db_upgrade_failed",
+                    f"Alembic upgrade failed for {db_path.name}: {str(e)}",
+                )
             return False

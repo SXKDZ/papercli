@@ -12,6 +12,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Markdown, ProgressBar, Static
 
 from ng.services import SyncConflict, SyncService
+from ng.services.formatting import format_file_size
 
 
 class SyncDialog(ModalScreen):
@@ -392,10 +393,45 @@ class SyncDialog(ModalScreen):
                 f"Found markdown widgets - local: {local_md is not None}, remote: {remote_md is not None}",
             )
 
-            local_paper_id = conflict.local_data.get("id")
-            local_paper_title = conflict.local_data.get("title", "Unknown Title")
-            remote_paper_id = conflict.remote_data.get("id")
-            remote_paper_title = conflict.remote_data.get("title", "Unknown Title")
+            def resolve_title(data: Dict, default: str) -> str:
+                title = data.get("title")
+                if title:
+                    return title
+                # Fall back to item identifier if available
+                return default
+
+            def resolve_identifier(data: Dict) -> str:
+                identifier = data.get("uuid") or data.get("id")
+                return str(identifier) if identifier not in (None, "", "None") else ""
+
+            local_title = resolve_title(conflict.local_data, conflict.item_id or "Untitled")
+            remote_title = resolve_title(conflict.remote_data, conflict.item_id or "Untitled")
+            local_identifier = resolve_identifier(conflict.local_data)
+            remote_identifier = resolve_identifier(conflict.remote_data)
+
+            def build_header(side: str) -> str:
+                prefix = "Local" if side == "local" else "Remote"
+                data = conflict.local_data if side == "local" else conflict.remote_data
+                title = local_title if side == "local" else remote_title
+                identifier = local_identifier if side == "local" else remote_identifier
+
+                if conflict.conflict_type == "paper":
+                    if identifier:
+                        return f"**{prefix} Paper:** {title} ({identifier})\n\n"
+                    return f"**{prefix} Paper:** {title}\n\n"
+                if conflict.conflict_type == "pdf":
+                    return f"**{prefix} PDF:** {conflict.item_id}\n\n"
+                if conflict.conflict_type == "html_snapshot":
+                    return f"**{prefix} HTML Snapshot:** {conflict.item_id}\n\n"
+
+                display_name = title or conflict.item_id or "Conflict Item"
+                return f"**{prefix}:** {display_name}\n\n"
+
+            def format_size(value) -> str:
+                try:
+                    return format_file_size(int(value))
+                except (TypeError, ValueError):
+                    return str(value) if value not in (None, "") else "N/A"
 
             if conflict.conflict_type == "paper":
                 self.app._add_log(
@@ -405,12 +441,7 @@ class SyncDialog(ModalScreen):
 
                 def build_side_with_diffs(side: str) -> str:
                     parts: list[str] = [
-                        (
-                            f"**Paper #{local_paper_id}:** {local_paper_title}\n\n"
-                            if side == "local"
-                            else f"**Paper #{remote_paper_id}:** {remote_paper_title}\n\n"
-                        ),
-                        # type_line,
+                        build_header(side),
                         "#### Differences\n",
                     ]
 
@@ -466,24 +497,75 @@ class SyncDialog(ModalScreen):
                 local_info = conflict.local_data
                 remote_info = conflict.remote_data
                 local_md.update(
-                    f"**Paper #{local_paper_id}:** {local_paper_title}\n\n"
+                    build_header("local")
                     + "#### PDF Differences\n"
                     + "\n".join(
                         [
-                            f"- **File Size:** {local_info.get('size', 'N/A')}",
+                            f"- **File Size:** {format_size(local_info.get('size'))}",
                             f"- **Modified:** {local_info.get('modified', 'N/A')}",
                             f"- **Hash:** {local_info.get('hash', 'N/A')}",
                         ]
                     )
                 )
                 remote_md.update(
-                    f"**Paper #{remote_paper_id}:** {remote_paper_title}\n\n"
+                    build_header("remote")
                     + "#### PDF Differences\n"
                     + "\n".join(
                         [
-                            f"- **File Size:** {remote_info.get('size', 'N/A')}",
+                            f"- **File Size:** {format_size(remote_info.get('size'))}",
                             f"- **Modified:** {remote_info.get('modified', 'N/A')}",
                             f"- **Hash:** {remote_info.get('hash', 'N/A')}",
+                        ]
+                    )
+                )
+            elif conflict.conflict_type == "html_snapshot":
+                local_info = conflict.local_data
+                remote_info = conflict.remote_data
+                local_file = local_info.get("file", local_info)
+                remote_file = remote_info.get("file", remote_info)
+                local_refs = []
+                for entry in local_info.get("papers", []):
+                    if not entry:
+                        continue
+                    label = entry.get("title") or entry.get("uuid")
+                    if label:
+                        local_refs.append(label)
+
+                remote_refs = []
+                for entry in remote_info.get("papers", []):
+                    if not entry:
+                        continue
+                    label = entry.get("title") or entry.get("uuid")
+                    if label:
+                        remote_refs.append(label)
+
+                def render_reference_list(refs: List[str]) -> str:
+                    if not refs:
+                        return "None"
+                    preview = sorted(set(refs))
+                    return ", ".join(preview[:5]) + ("..." if len(preview) > 5 else "")
+
+                local_md.update(
+                    build_header("local")
+                    + "#### HTML Snapshot Differences\n"
+                    + "\n".join(
+                        [
+                            f"- **File Size:** {format_size(local_file.get('size'))}",
+                            f"- **Modified:** {local_file.get('modified', 'N/A')}",
+                            f"- **Hash:** {local_file.get('hash', 'N/A')}",
+                            f"- **Referenced By:** {render_reference_list(local_refs)}",
+                        ]
+                    )
+                )
+                remote_md.update(
+                    build_header("remote")
+                    + "#### HTML Snapshot Differences\n"
+                    + "\n".join(
+                        [
+                            f"- **File Size:** {format_size(remote_file.get('size'))}",
+                            f"- **Modified:** {remote_file.get('modified', 'N/A')}",
+                            f"- **Hash:** {remote_file.get('hash', 'N/A')}",
+                            f"- **Referenced By:** {render_reference_list(remote_refs)}",
                         ]
                     )
                 )
@@ -669,6 +751,7 @@ class SyncDialog(ModalScreen):
                         title_mapping = {
                             "pdfs_copied": f"PDFs Copied: {len(items)}",
                             "pdfs_updated": f"PDFs Updated: {len(items)}",
+                            "html_snapshots_copied": f"HTML Snapshots Copied: {len(items)}",
                             "papers_added": f"Papers Added: {len(items)}",
                             "papers_updated": f"Papers Updated: {len(items)}",
                             "collections_synced": f"Collections Synced: {len(items)}",
