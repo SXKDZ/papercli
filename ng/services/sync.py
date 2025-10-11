@@ -140,7 +140,8 @@ class SyncResult:
             )
         if self.changes_applied["pdfs_copied"] > 0:
             c = self.changes_applied["pdfs_copied"]
-            summary_parts.append(f"{_pluralizer.pluralize('PDF', c, True)} copied")
+            pdf_text = "PDF" if c == 1 else "PDFs"
+            summary_parts.append(f"{c} {pdf_text} copied")
         if self.changes_applied["html_snapshots_copied"] > 0:
             c = self.changes_applied["html_snapshots_copied"]
             summary_parts.append(f"{_pluralizer.pluralize('HTML snapshot', c, True)} copied")
@@ -158,10 +159,24 @@ class SyncService:
         app,
         progress_callback=None,
     ):
-        self.local_data_dir = Path(local_data_dir)
-        self.remote_data_dir = Path(remote_data_dir)
+        self.local_data_dir = Path(local_data_dir).expanduser().resolve()
+
+        remote_path = Path(remote_data_dir).expanduser()
+        remote_path_str = remote_path.as_posix().lower()
+        remote_looks_like_file = remote_path.suffix in {".db", ".sqlite"} or (
+            remote_path_str.endswith("papers.db") and remote_path.name == "papers.db"
+        )
+
+        if remote_looks_like_file:
+            # Treat provided path as the database file itself
+            resolved_path = remote_path.resolve()
+            self.remote_db_path = resolved_path
+            self.remote_data_dir = resolved_path.parent
+        else:
+            self.remote_data_dir = remote_path.resolve()
+            self.remote_db_path = self.remote_data_dir / "papers.db"
+
         self.local_db_path = self.local_data_dir / "papers.db"
-        self.remote_db_path = self.remote_data_dir / "papers.db"
         self.local_pdf_dir = self.local_data_dir / "pdfs"
         self.remote_pdf_dir = self.remote_data_dir / "pdfs"
         self.local_html_snapshots_dir = self.local_data_dir / "html_snapshots"
@@ -412,6 +427,12 @@ class SyncService:
             )
 
         try:
+            if self.app:
+                self.app._add_log(
+                    "sync_paths",
+                    f"Local DB: {self.local_db_path} | Remote DB: {self.remote_db_path}",
+                )
+
             # Fix absolute PDF paths to relative before sync to prevent conflicts
             if self.progress_callback:
                 self.progress_callback("Converting absolute PDF paths to relative...")
@@ -600,6 +621,8 @@ class SyncService:
             self._repair_missing_assets("pdf", result)
             self._repair_missing_assets("html_snapshot", result)
 
+            remote_operations_present = any(op.target == "remote" for op in operations)
+
             if self.progress_callback:
                 self.progress_callback("Synchronizing local to remote...")
             if self.app:
@@ -611,6 +634,23 @@ class SyncService:
                 )
             self._sync_local_to_remote(operations, result)
             time.sleep(0.1)
+
+            if remote_operations_present:
+                try:
+                    self._mirror_database(self.local_db_path, self.remote_db_path)
+                    if self.app:
+                        self.app._add_log(
+                            "sync_database_mirror",
+                            f"Mirrored local database to remote at {self.remote_db_path}",
+                        )
+                except Exception as mirror_error:
+                    if self.app:
+                        self.app._add_log(
+                            "sync_database_mirror_error",
+                            f"Failed to mirror database to remote: {mirror_error}",
+                        )
+                    # Surface the error to alert caller but continue cleanup
+                    raise
 
             # Step 4: Handle collections automatically (by timestamp)
             if self.progress_callback:
@@ -665,8 +705,12 @@ class SyncService:
                             )
                         if changes["pdfs_copied"]:
                             c = changes["pdfs_copied"]
+                            pdf_text = "PDF" if c == 1 else "PDFs"
+                            change_details.append(f"{c} {pdf_text} copied")
+                        if changes["html_snapshots_copied"]:
+                            c = changes["html_snapshots_copied"]
                             change_details.append(
-                                f"{_pluralizer.pluralize('PDF', c, True)} copied"
+                                f"{_pluralizer.pluralize('HTML snapshot', c, True)} copied"
                             )
                         if changes["pdfs_updated"]:
                             c = changes["pdfs_updated"]
@@ -992,7 +1036,11 @@ class SyncService:
                     )
                 operations.append(
                     SyncOperation(
-                        "delete", "remote", conflict_op.item_type, conflict_op.item_id
+                        "delete",
+                        "remote",
+                        conflict_op.item_type,
+                        conflict_op.item_id,
+                        conflict_op.data.get("remote"),
                     )
                 )
                 operations.append(
@@ -1014,7 +1062,11 @@ class SyncService:
                     )
                 operations.append(
                     SyncOperation(
-                        "delete", "local", conflict_op.item_type, conflict_op.item_id
+                        "delete",
+                        "local",
+                        conflict_op.item_type,
+                        conflict_op.item_id,
+                        conflict_op.data.get("local"),
                     )
                 )
                 operations.append(
@@ -1057,7 +1109,13 @@ class SyncService:
                             f"Remote version renamed to: '{new_title}'",
                         )
                     operations.append(
-                        SyncOperation("delete", "remote", "paper", conflict_op.item_id)
+                        SyncOperation(
+                            "delete",
+                            "remote",
+                            "paper",
+                            conflict_op.item_id,
+                            conflict_op.data.get("remote"),
+                        )
                     )
                     operations.append(
                         SyncOperation("add", "remote", "paper", new_title, remote_data)
@@ -1170,7 +1228,9 @@ class SyncService:
 
                 elif op.operation_type == "delete":
                     if op.item_type == "paper":
-                        self._delete_paper_by_title(self.local_db_path, op.item_id)
+                        self._delete_paper_by_title(
+                            self.local_db_path, op.item_id, op.data
+                        )
                         if self.app:
                             self.app._add_log(
                                 "sync_remote_to_local",
@@ -1261,7 +1321,9 @@ class SyncService:
 
                 elif op.operation_type == "delete":
                     if op.item_type == "paper":
-                        self._delete_paper_by_title(self.remote_db_path, op.item_id)
+                        self._delete_paper_by_title(
+                            self.remote_db_path, op.item_id, op.data
+                        )
                         if self.app:
                             self.app._add_log(
                                 "sync_local_to_remote",
@@ -2071,14 +2133,55 @@ class SyncService:
         finally:
             conn.close()
 
-    def _delete_paper_by_title(self, db_path: Path, title: str):
-        """Delete a paper from database by its title."""
+    def _mirror_database(self, source_path: Path, destination_path: Path) -> None:
+        """Mirror the entire SQLite database from source to destination using backup API."""
+        destination_path.parent.mkdir(parents=True, exist_ok=True)
+        source_conn = sqlite3.connect(source_path)
+        try:
+            dest_conn = sqlite3.connect(destination_path)
+            try:
+                source_conn.backup(dest_conn)
+                dest_conn.commit()
+            finally:
+                dest_conn.close()
+        finally:
+            source_conn.close()
+
+    def _delete_paper_by_title(
+        self, db_path: Path, title: str, paper_data: Optional[Dict] = None
+    ) -> bool:
+        """Delete a paper from database by title, preferring UUID when available."""
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         try:
-            cursor.execute("SELECT id FROM papers WHERE title = ?", (title,))
-            paper = cursor.fetchone()
-            if paper:
+            candidates: List[Tuple[str, str]] = []
+
+            if paper_data:
+                uuid_value = paper_data.get("uuid")
+                if uuid_value and self._database_has_uuid_column(db_path):
+                    candidates.append(("uuid", uuid_value))
+
+                data_title = paper_data.get("title")
+                if data_title:
+                    candidates.append(("title", data_title))
+
+            candidates.append(("title", title))
+
+            seen: set = set()
+            for query_type, value in candidates:
+                if not value or (query_type, value) in seen:
+                    continue
+                seen.add((query_type, value))
+
+                if query_type == "uuid":
+                    cursor.execute("SELECT id FROM papers WHERE uuid = ?", (value,))
+                else:
+                    cursor.execute("SELECT id FROM papers WHERE title = ?", (value,))
+
+                paper = cursor.fetchone()
+                if not paper:
+                    continue
+
                 paper_id = paper[0]
                 cursor.execute(
                     "DELETE FROM paper_authors WHERE paper_id = ?", (paper_id,)
@@ -2088,6 +2191,9 @@ class SyncService:
                 )
                 cursor.execute("DELETE FROM papers WHERE id = ?", (paper_id,))
                 conn.commit()
+                return True
+
+            return False
         finally:
             conn.close()
 

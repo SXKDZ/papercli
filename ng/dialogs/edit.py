@@ -1,6 +1,6 @@
 import os
 import traceback
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Optional
 
 import requests
 from bs4 import BeautifulSoup
@@ -295,6 +295,10 @@ class EditDialog(ModalScreen):
         self.input_widgets: Dict[str, Input | TextArea] = {}
         self.current_paper_type = paper_data.get("paper_type", "conference")
         self.changed_fields = set()
+        self._pending_async_operations: List[Dict[str, Any]] = []
+        self._pending_save_result: Optional[Dict[str, Any]] = None
+        self._async_operation_in_progress = False
+        self._dialog_closed = False
 
     def _get_field_count_for_type(self, paper_type: str) -> int:
         """Get the number of fields for a given paper type."""
@@ -344,6 +348,71 @@ class EditDialog(ModalScreen):
         data_dir = os.path.dirname(db_manager.db_path)
         html_snapshot_dir = os.path.join(data_dir, "html_snapshots")
         return os.path.join(html_snapshot_dir, html_path)
+
+    def _normalize_html_snapshot_path(self, html_path: str) -> str:
+        """Normalize an HTML snapshot path, converting absolute paths to relative."""
+        if not html_path or not html_path.strip():
+            return ""
+
+        html_path = html_path.strip()
+
+        if html_path.lower().startswith(("http://", "https://")):
+            return html_path
+
+        if os.path.isabs(html_path):
+            db_manager = get_db_manager()
+            data_dir = os.path.dirname(db_manager.db_path)
+            html_snapshot_dir = os.path.join(data_dir, "html_snapshots")
+            try:
+                return os.path.relpath(html_path, html_snapshot_dir)
+            except Exception:
+                return os.path.basename(html_path)
+
+        return html_path
+
+    def _download_webpage_snapshot(self, url: str) -> Dict[str, Any]:
+        """Download a webpage snapshot and return metadata for further processing."""
+        pdf_dir = get_pdf_directory()
+        data_dir = os.path.dirname(pdf_dir)
+        html_snapshot_dir = os.path.join(data_dir, "html_snapshots")
+        os.makedirs(html_snapshot_dir, exist_ok=True)
+
+        initial_title = self.paper_data.get("title") or "webpage"
+        try:
+            response = requests.get(url, timeout=30)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.content, "html.parser")
+            title_tag = soup.find("title")
+            if title_tag:
+                extracted = title_tag.get_text(strip=True)
+                if extracted:
+                    initial_title = extracted
+        except Exception:
+            # Fall back to existing title if fetch fails
+            pass
+
+        webpage_service = WebpageSnapshotService(app=self.parent_app)
+        html_path, html_content = webpage_service.snapshot_webpage(
+            url=url,
+            title=initial_title,
+            html_output_dir=html_snapshot_dir,
+        )
+
+        metadata_extractor = MetadataExtractor(
+            pdf_manager=self.pdf_manager, app=self.parent_app
+        )
+        metadata = metadata_extractor.extract_from_webpage(url, html_content)
+
+        try:
+            relative_html_path = os.path.relpath(html_path, html_snapshot_dir)
+        except Exception:
+            relative_html_path = os.path.basename(html_path)
+
+        return {
+            "html_absolute_path": html_path,
+            "relative_path": relative_html_path,
+            "metadata": metadata,
+        }
 
     def _process_pdf_path(self, pdf_path: str) -> str:
         """Process PDF path: copy file if needed and return relative path for database."""
@@ -632,10 +701,226 @@ class EditDialog(ModalScreen):
         elif event.button.id == "snapshot-button":
             self.action_refresh_snapshot()
 
+    def _start_async_save_operations(
+        self, operations: List[Dict[str, Any]], result: Dict[str, Any]
+    ) -> None:
+        """Kick off queued asynchronous asset operations before final save."""
+        if not operations:
+            self._complete_save(result)
+            return
+
+        self._pending_async_operations = operations
+        self._pending_save_result = result
+        self._async_operation_in_progress = True
+        if self.parent_app:
+            self.parent_app.notify(
+                "Save running in background…", severity="information"
+            )
+        self._process_next_async_operation()
+        self._ensure_dialog_closed()
+
+    def _ensure_dialog_closed(self) -> None:
+        """Close the dialog if it's still open."""
+        if not self._dialog_closed:
+            self._dialog_closed = True
+            self.dismiss(None)
+
+    def _process_next_async_operation(self) -> None:
+        """Process the next pending asset operation in the queue."""
+        if not self._pending_async_operations:
+            pending_result = self._pending_save_result or {}
+            self._pending_save_result = None
+            self._async_operation_in_progress = False
+            self._complete_save(pending_result)
+            return
+
+        operation = self._pending_async_operations.pop(0)
+        operation_type = operation.get("type")
+        value = operation.get("value")
+        title = self.paper_data.get("title", "paper")
+
+        def run_operation():
+            if operation_type == "pdf":
+                relative_path = self._process_pdf_path(value)
+                absolute_path = (
+                    self.pdf_manager.get_absolute_path(relative_path)
+                    if relative_path
+                    else ""
+                )
+                return {
+                    "relative_path": relative_path,
+                    "absolute_path": absolute_path,
+                }
+            elif operation_type == "html":
+                return self._download_webpage_snapshot(value)
+            return {}
+
+        def on_complete(result, error):
+            self._handle_async_operation_result(operation, result, error)
+
+        operation_name = (
+            f"edit_save_pdf_{title}"
+            if operation_type == "pdf"
+            else f"edit_save_html_{title}"
+        )
+        initial_message = None
+
+        if operation_type == "pdf":
+            initial_message = f"Downloading PDF for '{title}'..."
+        elif operation_type == "html":
+            initial_message = f"Capturing webpage snapshot for '{title}'..."
+
+        if self.background_service:
+            self.background_service.run_operation(
+                operation_func=run_operation,
+                operation_name=operation_name,
+                initial_message=initial_message,
+                on_complete=on_complete,
+            )
+        else:
+            try:
+                result = run_operation()
+                on_complete(result, None)
+            except Exception as e:
+                on_complete(None, str(e))
+
+    def _handle_async_operation_result(
+        self, operation: Dict[str, Any], result: Optional[Dict[str, Any]], error: Optional[str]
+    ) -> None:
+        """Handle completion of a single asynchronous asset operation."""
+        operation_type = operation.get("type")
+        field_name = operation.get("field")
+
+        if error:
+            if self.parent_app:
+                self.parent_app.notify(
+                    f"Failed to process {operation_type or 'asset'}: {error}",
+                    severity="error",
+                )
+            # Preserve existing value for the field if available
+            if (
+                self._pending_save_result is not None
+                and field_name
+                and field_name not in self._pending_save_result
+            ):
+                self._pending_save_result[field_name] = self.paper_data.get(field_name)
+            self._process_next_async_operation()
+            return
+
+        if not result:
+            # No data returned; treat as failure
+            if self.parent_app:
+                self.parent_app.notify(
+                    f"No result from {operation_type or 'asset'} operation",
+                    severity="error",
+                )
+            if (
+                self._pending_save_result is not None
+                and field_name
+                and field_name not in self._pending_save_result
+            ):
+                self._pending_save_result[field_name] = self.paper_data.get(field_name)
+            self._process_next_async_operation()
+            return
+
+        if operation_type == "pdf":
+            relative_path = result.get("relative_path")
+            if not relative_path:
+                if self.parent_app:
+                    self.parent_app.notify(
+                        "PDF download did not produce a file path",
+                        severity="error",
+                    )
+                self._pending_async_operations.clear()
+                self._pending_save_result = None
+                self._async_operation_in_progress = False
+                return
+
+            # Update pending save result and local state
+            if self._pending_save_result is not None:
+                self._pending_save_result["pdf_path"] = relative_path
+            self.paper_data["pdf_path"] = relative_path
+
+            # Update the form field with the resolved absolute path for clarity
+            if not self._dialog_closed:
+                widget_key = f"pdf_path_{self.current_paper_type}"
+                if widget_key in self.input_widgets:
+                    pdf_widget = self.input_widgets[widget_key]
+                    absolute_path = result.get("absolute_path", "")
+                    if hasattr(pdf_widget, "value"):
+                        pdf_widget.value = absolute_path or relative_path
+            self.changed_fields.add("pdf_path")
+
+        elif operation_type == "html":
+            relative_path = result.get("relative_path")
+            if not relative_path:
+                if self.parent_app:
+                    self.parent_app.notify(
+                        "HTML snapshot did not produce a file path",
+                        severity="error",
+                    )
+                self._pending_async_operations.clear()
+                self._pending_save_result = None
+                self._async_operation_in_progress = False
+                return
+
+            if self._pending_save_result is not None:
+                self._pending_save_result["html_snapshot_path"] = relative_path
+            self.paper_data["html_snapshot_path"] = relative_path
+
+            # Update form field to show the generated file
+            if not self._dialog_closed:
+                widget_key = f"html_snapshot_path_{self.current_paper_type}"
+                if widget_key in self.input_widgets:
+                    html_widget = self.input_widgets[widget_key]
+                    absolute_path = result.get("html_absolute_path", "")
+                    if hasattr(html_widget, "value"):
+                        html_widget.value = absolute_path or relative_path
+            self.changed_fields.add("html_snapshot_path")
+
+            # Apply any extracted metadata
+            metadata = result.get("metadata", {})
+            if metadata:
+                self._update_fields_with_extracted_data(metadata)
+
+            if self.parent_app:
+                self.parent_app.notify(
+                    "HTML snapshot captured successfully",
+                    severity="information",
+                )
+
+        # Continue with remaining operations
+        self._process_next_async_operation()
+
+    def _complete_save(self, result: Dict[str, Any]) -> None:
+        """Finalize save operation after all processing is complete."""
+        self.changed_fields.clear()
+
+        if self.callback:
+            try:
+                callback_result = self.callback(result)
+                # If callback returns None when result is not None, paper may have been deleted
+                if callback_result is None and result is not None:
+                    # Paper was deleted or failed to update, close dialog silently
+                    if not self._dialog_closed:
+                        self._dialog_closed = True
+                        self.dismiss(None)
+                    return
+            except Exception as e:
+                # Handle any errors from callback
+                if self.parent_app:
+                    error_details = f"Error saving paper: {str(e)}\nFull traceback:\n{traceback.format_exc()}"
+                    self.parent_app.notify(f"Error saving paper: {e}", severity="error")
+                return
+        if not self._dialog_closed:
+            self._dialog_closed = True
+            self.dismiss(result)
+
     def action_save(self) -> None:
         """Handle save action."""
         result = {"paper_type": self.current_paper_type}
         changes_made = []
+        async_operations: List[Dict[str, Any]] = []
 
         # Get the current paper type's visible fields
         visible_fields = self.fields_by_type.get(
@@ -708,38 +993,41 @@ class EditDialog(ModalScreen):
             elif field_name == "year":
                 result["year"] = int(new_value) if new_value.isdigit() else None
             elif field_name == "pdf_path":
-                # Special handling for PDF path
-                result["pdf_path"] = (
-                    self._process_pdf_path(new_value) if new_value else None
-                )
+                # Special handling for PDF path (allow async download when URL provided)
+                if new_value and new_value.lower().startswith(("http://", "https://")):
+                    async_operations.append(
+                        {"type": "pdf", "value": new_value, "field": field_name}
+                    )
+                else:
+                    result["pdf_path"] = (
+                        self._process_pdf_path(new_value) if new_value else None
+                    )
+            elif field_name == "html_snapshot_path":
+                if new_value and new_value.lower().startswith(("http://", "https://")):
+                    async_operations.append(
+                        {"type": "html", "value": new_value, "field": field_name}
+                    )
+                else:
+                    result["html_snapshot_path"] = (
+                        self._normalize_html_snapshot_path(new_value)
+                        if new_value
+                        else None
+                    )
             else:
                 result[field_name] = new_value if new_value else None
 
-        # Clear changed fields when saving
-        self.changed_fields.clear()
+        if async_operations:
+            self._start_async_save_operations(async_operations, result)
+            return
 
-        if self.callback:
-            try:
-                callback_result = self.callback(result)
-                # If callback returns None when result is not None, paper may have been deleted
-                if callback_result is None and result is not None:
-                    # Paper was deleted or failed to update, close dialog silently
-                    self.dismiss(None)
-                    return
-            except Exception as e:
-                # Handle any errors from callback
-                if self.parent_app:
-                    error_details = f"Error saving paper: {str(e)}\nFull traceback:\n{traceback.format_exc()}"
-                    self.parent_app.notify(f"Error saving paper: {e}", severity="error")
-                return
-        self.dismiss(result)
+        self._complete_save(result)
 
     def action_cancel(self) -> None:
         """Handle cancel action."""
         self.changed_fields.clear()
         if self.callback:
             self.callback(None)
-        self.dismiss(None)
+        self._ensure_dialog_closed()
 
     def action_extract_pdf(self) -> None:
         """Handle Extract action - from PDF or HTML depending on paper type."""
@@ -1114,44 +1402,7 @@ class EditDialog(ModalScreen):
 
         def refresh_snapshot_operation():
             """Refresh the webpage snapshot."""
-            # Get directories
-            pdf_dir = get_pdf_directory()
-            data_dir = os.path.dirname(pdf_dir)
-            html_snapshot_dir = os.path.join(data_dir, "html_snapshots")
-
-            # Get initial title for filename
-            try:
-                response = requests.get(url, timeout=30)
-                soup = BeautifulSoup(response.content, "html.parser")
-                title_tag = soup.find("title")
-                initial_title = (
-                    title_tag.get_text(strip=True) if title_tag else "webpage"
-                )
-            except Exception:
-                initial_title = title or "webpage"
-
-            # Create snapshot
-            webpage_service = WebpageSnapshotService(app=self.parent_app)
-            html_path, html_content = webpage_service.snapshot_webpage(
-                url=url,
-                title=initial_title,
-                html_output_dir=html_snapshot_dir,
-            )
-
-            # Extract metadata
-            metadata_extractor = MetadataExtractor(
-                pdf_manager=self.pdf_manager, app=self.parent_app
-            )
-            metadata = metadata_extractor.extract_from_webpage(url, html_content)
-
-            # Convert to relative path
-            relative_html_path = os.path.relpath(html_path, html_snapshot_dir)
-
-            return {
-                "html_snapshot_path": relative_html_path,
-                "html_absolute_path": html_path,
-                "metadata": metadata,
-            }
+            return self._download_webpage_snapshot(url)
 
         def on_snapshot_complete(result, error):
             """Handle snapshot completion."""
@@ -1167,11 +1418,15 @@ class EditDialog(ModalScreen):
                     self.parent_app.notify("No snapshot created", severity="error")
                 return
 
-            # Update the html_snapshot_path field
+            # Update stored data and the html_snapshot_path field
+            relative_path = result.get("relative_path")
+            if relative_path:
+                self.paper_data["html_snapshot_path"] = relative_path
+
             html_path_widget_key = f"html_snapshot_path_{self.current_paper_type}"
             if html_path_widget_key in self.input_widgets:
                 html_path_widget = self.input_widgets[html_path_widget_key]
-                html_path_widget.value = result["html_absolute_path"]
+                html_path_widget.value = result.get("html_absolute_path", "")
                 self.changed_fields.add("html_snapshot_path")
 
             # Update metadata fields if extracted

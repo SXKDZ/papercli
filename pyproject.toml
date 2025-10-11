@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "papercli"
-version = "2.2.1"
+version = "2.2.2"
 description = "A command-line paper management system for researchers and academics"
 readme = "README.md"
 license = {text = "MIT"}
