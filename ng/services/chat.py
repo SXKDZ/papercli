@@ -9,14 +9,14 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List
 
 import PyPDF2
 import tiktoken
+from bs4 import BeautifulSoup
+from ng.db.database import get_db_manager
+from ng.services import PDFManager, dialog_utils, llm_utils, prompts
 from openai import OpenAI
 from pluralizer import Pluralizer
 
-from ng.services import PDFManager, dialog_utils, llm_utils, prompts
-
 if TYPE_CHECKING:
     from ng.db.models import Paper
-
 
 class ChatService:
     """Service for chat functionality."""
@@ -102,8 +102,6 @@ class ChatService:
                         hasattr(paper, "html_snapshot_path")
                         and paper.html_snapshot_path
                     ):
-                        from ng.db.database import get_db_manager
-
                         db_manager = get_db_manager()
                         data_dir = os.path.dirname(db_manager.db_path)
                         html_snapshot_dir = os.path.join(data_dir, "html_snapshots")
@@ -257,9 +255,6 @@ class ChatService:
                 and paper.html_snapshot_path
             ):
                 try:
-                    from ng.db.database import get_db_manager
-                    from bs4 import BeautifulSoup
-
                     db_manager = get_db_manager()
                     data_dir = os.path.dirname(db_manager.db_path)
                     html_snapshot_dir = os.path.join(data_dir, "html_snapshots")

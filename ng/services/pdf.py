@@ -10,12 +10,9 @@ import traceback
 from typing import Any, Callable, Dict, Optional, Tuple
 
 import PyPDF2
-from pluralizer import Pluralizer
-
 from ng.db.database import get_pdf_directory
-from ng.services.formatting import format_file_size
-from ng.services import http_utils
-from ng.services.metadata import MetadataExtractor
+from ng.services import MetadataExtractor, format_file_size, http_utils
+from pluralizer import Pluralizer
 
 
 class PDFService:

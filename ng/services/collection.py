@@ -1,10 +1,9 @@
 from typing import List, Optional
 
-from sqlalchemy import func
-from sqlalchemy.orm import joinedload
-
 from ng.db.database import get_db_session
 from ng.db.models import Collection, Paper, paper_collections
+from sqlalchemy import func
+from sqlalchemy.orm import joinedload
 
 
 class CollectionService:

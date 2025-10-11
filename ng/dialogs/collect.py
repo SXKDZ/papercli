@@ -1,16 +1,14 @@
 import time
 from typing import Any, Callable, Dict, List
 
+from ng.db.models import Collection, Paper
+from ng.services import dialog_utils, format_title_by_words
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.events import Click, MouseDown, MouseUp
 from textual.reactive import reactive
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Label, ListItem, ListView, Static, Rule
-
-from ng.db.models import Collection, Paper
-from ng.services import dialog_utils
-from ng.services.formatting import format_title_by_words
+from textual.widgets import Button, Input, Label, ListItem, ListView, Rule, Static
 
 
 class CollectDialog(ModalScreen):
@@ -213,7 +211,7 @@ class CollectDialog(ModalScreen):
 
         # Track last click times per item for double-click detection
         self._last_click_time: Dict[str, float] = {}
-        
+
         # Track filter text for paper lists
         self.collection_papers_filter = ""
         self.all_papers_filter = ""
@@ -320,15 +318,19 @@ class CollectDialog(ModalScreen):
     def _is_paper_changed(self, paper_id: int) -> bool:
         """Check if a paper has been moved to/from collections."""
         return any(move[0] == paper_id for move in self.paper_moves)
-    
-    def _is_paper_changed_in_collection(self, paper_id: int, collection_name: str) -> bool:
+
+    def _is_paper_changed_in_collection(
+        self, paper_id: int, collection_name: str
+    ) -> bool:
         """Check if a paper was added to a specific collection in this session."""
         return any(
             move[0] == paper_id and move[1] == collection_name and move[2] == "add"
             for move in self.paper_moves
         )
-    
-    def _is_paper_changed_in_all_papers(self, paper_id: int, collection_name: str = None) -> bool:
+
+    def _is_paper_changed_in_all_papers(
+        self, paper_id: int, collection_name: str = None
+    ) -> bool:
         """Check if a paper was removed from the currently selected collection."""
         if not collection_name:
             return False
@@ -422,9 +424,11 @@ class CollectDialog(ModalScreen):
         # Apply search filter (case-insensitive partial match on title)
         filter_text = (self.all_papers_filter or "").strip().lower()
         if filter_text:
+
             def matches(p):
                 title = (p.title or "").lower()
                 return filter_text in title
+
             available_papers = [p for p in available_papers if matches(p)]
 
         # Sort available papers by modified date (newest first)
@@ -437,7 +441,9 @@ class CollectDialog(ModalScreen):
         for idx, paper in enumerate(sorted_available_papers):
             title = format_title_by_words(paper.title or "")
             # Only show italic if removed from current collection
-            collection_name = self.selected_collection.name if self.selected_collection else None
+            collection_name = (
+                self.selected_collection.name if self.selected_collection else None
+            )
             is_changed = self._is_paper_changed_in_all_papers(paper.id, collection_name)
             label_classes = "changed-paper" if is_changed else ""
             label = Label(title, classes=label_classes)
@@ -458,7 +464,9 @@ class CollectDialog(ModalScreen):
         # Sort papers by: 1) newly added in this session (top), 2) modified date (newest first)
         def sort_key(paper):
             # Check if this paper was added in the current session
-            is_newly_added = self._is_paper_changed_in_collection(paper.id, collection.name)
+            is_newly_added = self._is_paper_changed_in_collection(
+                paper.id, collection.name
+            )
             if is_newly_added:
                 return (0, 0)  # Highest priority - newly added papers go to top
             else:
@@ -470,9 +478,11 @@ class CollectDialog(ModalScreen):
         papers_source = collection.papers
         filter_text = (self.collection_papers_filter or "").strip().lower()
         if filter_text:
+
             def matches(p):
                 title = (p.title or "").lower()
                 return filter_text in title
+
             papers_source = [p for p in papers_source if matches(p)]
 
         sorted_papers = sorted(papers_source, key=sort_key)

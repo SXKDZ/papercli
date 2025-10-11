@@ -2,19 +2,16 @@ import os
 import webbrowser
 from typing import Any, Callable, Dict
 
-from pluralizer import Pluralizer
-from rich.text import Text
-from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, VerticalScroll
-from textual.screen import ModalScreen
-from textual.widgets import Button, Markdown, Static
-
 from ng.db.models import Paper
 from ng.dialogs.chat import ChatDialog
 from ng.dialogs.confirm import ConfirmDialog
 from ng.dialogs.edit import EditDialog
-from ng.services import PDFManager, PDFService, SystemService, theme
-from ng.services.formatting import format_file_size
+from ng.services import PDFManager, PDFService, SystemService, format_file_size
+from pluralizer import Pluralizer
+from textual.app import ComposeResult
+from textual.containers import Container, Horizontal, VerticalScroll
+from textual.screen import ModalScreen
+from textual.widgets import Button, Markdown, Static
 
 _pluralizer = Pluralizer()
 
@@ -397,6 +394,7 @@ class DetailDialog(ModalScreen):
             content.append("## HTML Snapshot")
             # Get absolute path for HTML snapshot
             import os
+
             from ng.db.database import get_db_manager
 
             db_manager = get_db_manager()

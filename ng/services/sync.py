@@ -11,10 +11,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from pluralizer import Pluralizer
-
+import ng
+from alembic import command
+from alembic.config import Config
+from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from ng.db.database import ensure_schema_current
 from ng.services import DatabaseHealthService
+from pluralizer import Pluralizer
+from sqlalchemy import create_engine
 
 _pluralizer = Pluralizer()
 
@@ -2416,12 +2421,6 @@ class SyncService:
     def _upgrade_database_schema(self, db_path: Path) -> bool:
         """Upgrade database schema using Alembic migrations. Returns True if successful."""
         try:
-            import ng
-            from alembic import command
-            from alembic.config import Config
-            from alembic.script import ScriptDirectory
-            from alembic.runtime.migration import MigrationContext
-
             # Try to find alembic.ini
             alembic_ini_path = "alembic.ini"
             alembic_dir = "alembic"
@@ -2441,8 +2440,6 @@ class SyncService:
             alembic_cfg.set_main_option("script_location", str(alembic_dir))
 
             # Check current database revision
-            from sqlalchemy import create_engine
-
             engine = create_engine(f"sqlite:///{db_path}")
             with engine.connect() as connection:
                 context = MigrationContext.configure(connection)

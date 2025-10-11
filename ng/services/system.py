@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 import pyperclip
 
 if TYPE_CHECKING:
-    from ng.services.pdf import PDFManager
+    from ng.services import PDFManager
 
 
 class SystemService:

@@ -9,13 +9,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
 
-from sqlalchemy import create_engine, event, inspect, text
-from sqlalchemy.orm import sessionmaker
-
 from ng.db.database import get_pdf_directory
 from ng.db.models import Author, Paper, PaperAuthor
-from ng.services.formatting import format_file_size, format_title_by_words
-from ng.services.pdf import PDFManager
+from ng.services import PDFManager, format_file_size, format_title_by_words
+from sqlalchemy import create_engine, event, inspect, text
+from sqlalchemy.orm import sessionmaker
 
 
 class DatabaseHealthService:
@@ -119,7 +117,9 @@ class DatabaseHealthService:
             )
 
         if report["missing_htmls"]["summary"]["missing_html_count"] > 0:
-            report["issues_found"].append("Papers with missing HTML snapshot files found.")
+            report["issues_found"].append(
+                "Papers with missing HTML snapshot files found."
+            )
             report["recommendations"].append(
                 "Verify HTML snapshot file locations or remove missing papers."
             )
@@ -418,7 +418,9 @@ class DatabaseHealthService:
         data_dir = Path(os.path.dirname(db_manager.db_path))
         html_dir = data_dir / "html_snapshots"
 
-        self._add_log("missing_htmls_start", f"Checking for missing HTML snapshots in {html_dir}")
+        self._add_log(
+            "missing_htmls_start", f"Checking for missing HTML snapshots in {html_dir}"
+        )
 
         try:
             # Get all papers
@@ -464,7 +466,9 @@ class DatabaseHealthService:
                         )
 
         except Exception as e:
-            self._add_log("missing_htmls_error", f"Error finding missing HTML snapshots: {e}")
+            self._add_log(
+                "missing_htmls_error", f"Error finding missing HTML snapshots: {e}"
+            )
         finally:
             session.close()
 
@@ -593,7 +597,7 @@ class DatabaseHealthService:
             )
 
             dependencies = {}
-            
+
             # Mapping of package names to their actual import names (for special cases)
             package_to_module = {
                 "beautifulsoup4": "bs4",
@@ -601,11 +605,11 @@ class DatabaseHealthService:
                 "python-levenshtein": "Levenshtein",
                 "python-dotenv": "dotenv",
             }
-            
+
             # Read dependencies from requirements.txt
             requirements_path = Path(__file__).parent.parent.parent / "requirements.txt"
             dep_modules = []
-            
+
             if requirements_path.exists():
                 try:
                     with open(requirements_path, "r") as f:
@@ -616,7 +620,14 @@ class DatabaseHealthService:
                                 continue
                             # Extract package name (remove version specifiers)
                             # Handle formats like: package>=1.0.0, package==1.0.0, package
-                            package_name = line.split(">=")[0].split("==")[0].split("<")[0].split(">")[0].split("~=")[0].strip()
+                            package_name = (
+                                line.split(">=")[0]
+                                .split("==")[0]
+                                .split("<")[0]
+                                .split(">")[0]
+                                .split("~=")[0]
+                                .strip()
+                            )
                             if package_name:
                                 package_lower = package_name.lower()
                                 # Check if there's a special mapping, otherwise use default conversion
@@ -626,10 +637,10 @@ class DatabaseHealthService:
                                     # Default: lowercase and replace hyphens with underscores
                                     module_name = package_lower.replace("-", "_")
                                 dep_modules.append((module_name, package_name))
-                    
+
                     self._add_log(
-                        "system_health_info", 
-                        f"Found {len(dep_modules)} dependencies in requirements.txt"
+                        "system_health_info",
+                        f"Found {len(dep_modules)} dependencies in requirements.txt",
                     )
                 except Exception as e:
                     self._add_log(
@@ -672,26 +683,36 @@ class DatabaseHealthService:
                                 version = module.VERSION
                         except:
                             pass
-                        
+
                         # If that didn't work, try pkg_resources or importlib.metadata
                         if not version:
                             try:
                                 from importlib.metadata import version as get_version
+
                                 version = get_version(package_name)
                             except:
                                 try:
                                     import pkg_resources
-                                    version = pkg_resources.get_distribution(package_name).version
+
+                                    version = pkg_resources.get_distribution(
+                                        package_name
+                                    ).version
                                 except:
                                     version = "installed"
-                        
-                        dependencies[module_name] = {"installed": True, "version": version}
+
+                        dependencies[module_name] = {
+                            "installed": True,
+                            "version": version,
+                        }
                         self._add_log(
                             "system_health_info",
                             f"Module {module_name}: Found (version {version})",
                         )
                     else:
-                        dependencies[module_name] = {"installed": False, "version": None}
+                        dependencies[module_name] = {
+                            "installed": False,
+                            "version": None,
+                        }
                         self._add_log(
                             "system_health_info",
                             f"Module {module_name}: Missing",

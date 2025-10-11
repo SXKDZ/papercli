@@ -1,11 +1,10 @@
 from typing import Any, Dict, List
 
 from fuzzywuzzy import fuzz
-from sqlalchemy import and_, or_
-from sqlalchemy.orm import joinedload
-
 from ng.db.database import get_db_session
 from ng.db.models import Author, Collection, Paper, PaperAuthor
+from sqlalchemy import and_, or_
+from sqlalchemy.orm import joinedload
 
 
 class SearchService:

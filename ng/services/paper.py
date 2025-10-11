@@ -2,16 +2,14 @@ from __future__ import annotations
 
 import os
 from datetime import datetime
-from pluralizer import Pluralizer
 from typing import Any, Dict, List, Optional
-
-from sqlalchemy import text
-from sqlalchemy.orm import joinedload
 
 from ng.db.database import get_db_session
 from ng.db.models import Author, Collection, Paper, PaperAuthor
-from ng.services import paper_tracker
-from ng.services.pdf import PDFManager
+from ng.services import PDFManager, paper_tracker
+from pluralizer import Pluralizer
+from sqlalchemy import text
+from sqlalchemy.orm import joinedload
 
 
 class PaperService:

@@ -169,3 +169,6 @@ publish_version.py
 # Claude Code settings
 .claude/
 CLAUDE.md
+
+# Serena MCP server files
+.serena/

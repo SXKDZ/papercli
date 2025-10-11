@@ -2,7 +2,7 @@
 
 from typing import Any, Dict, List
 
-from ng.services.formatting import (
+from ng.services import (
     format_authors_list,
     format_collections_list,
     format_field_change,

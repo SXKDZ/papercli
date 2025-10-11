@@ -11,14 +11,19 @@ import bibtexparser
 import PyPDF2
 import requests
 import rispy
+from bs4 import BeautifulSoup
+from ng.db.database import get_db_manager
+from ng.services import (
+    fix_broken_lines,
+    http_utils,
+    llm_utils,
+    normalize_paper_data,
+    prompts,
+)
 from openai import OpenAI
-from titlecase import titlecase
-
-from ng.services import http_utils, llm_utils, prompts
-from ng.services.utils import fix_broken_lines, normalize_paper_data
 
 if TYPE_CHECKING:
-    from ng.services.pdf import PDFManager
+    from ng.services import PDFManager
 
 
 def _truncate_for_logging(content: str, max_chars: int = 300) -> tuple[str, str]:
@@ -697,9 +702,6 @@ class MetadataExtractor:
     def generate_webpage_summary(self, html_snapshot_path: str) -> str:
         """Generate an academic summary of a webpage using LLM analysis of the HTML content."""
         try:
-            from ng.db.database import get_db_manager
-            from bs4 import BeautifulSoup
-
             # Get absolute path to HTML snapshot
             db_manager = get_db_manager()
             data_dir = os.path.dirname(db_manager.db_path)
@@ -998,8 +1000,6 @@ class MetadataExtractor:
             Dictionary with paper metadata
         """
         try:
-            from bs4 import BeautifulSoup
-
             soup = BeautifulSoup(html_content, "html.parser")
 
             for script in soup(["script", "style"]):

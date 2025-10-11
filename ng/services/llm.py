@@ -5,11 +5,8 @@ import threading
 from functools import partial
 from typing import TYPE_CHECKING, Any, Callable, Dict, List
 
+from ng.services import MetadataExtractor, PDFManager, format_title_by_words
 from pluralizer import Pluralizer
-
-from ng.services.formatting import format_title_by_words
-from ng.services.metadata import MetadataExtractor
-from ng.services.pdf import PDFManager
 
 if TYPE_CHECKING:
     from ng.db.models import Paper

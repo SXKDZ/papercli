@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from ng.services.pdf import PDFManager
+from ng.services import PDFManager
 
 
 def get_paper_fields(paper) -> Dict[str, Any]:

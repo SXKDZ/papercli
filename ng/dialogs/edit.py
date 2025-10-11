@@ -2,6 +2,18 @@ import os
 import traceback
 from typing import Any, Callable, Dict, List
 
+import requests
+from bs4 import BeautifulSoup
+from ng.db.database import get_db_manager, get_pdf_directory
+from ng.services import (
+    BackgroundOperationService,
+    CollectionService,
+    MetadataExtractor,
+    PDFExtractionHandler,
+    PDFManager,
+    WebpageSnapshotService,
+    normalize_paper_data,
+)
 from pluralizer import Pluralizer
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
@@ -17,15 +29,6 @@ from textual.widgets import (
     Static,
     TextArea,
 )
-
-from ng.services import (
-    BackgroundOperationService,
-    CollectionService,
-    MetadataExtractor,
-    PDFManager,
-    normalize_paper_data,
-)
-from ng.services.pdf import PDFExtractionHandler
 
 
 class EditDialog(ModalScreen):
@@ -337,9 +340,6 @@ class EditDialog(ModalScreen):
         if not html_path:
             return ""
         # HTML snapshots are stored in html_snapshots folder
-        import os
-        from ng.db.database import get_db_manager
-
         db_manager = get_db_manager()
         data_dir = os.path.dirname(db_manager.db_path)
         html_snapshot_dir = os.path.join(data_dir, "html_snapshots")
@@ -757,8 +757,6 @@ class EditDialog(ModalScreen):
                 return
 
             # Get absolute path
-            from ng.db.database import get_db_manager
-
             db_manager = get_db_manager()
             data_dir = os.path.dirname(db_manager.db_path)
             html_snapshot_dir = os.path.join(data_dir, "html_snapshots")
@@ -906,8 +904,6 @@ class EditDialog(ModalScreen):
                 return
 
             # Get absolute path
-            from ng.db.database import get_db_manager
-
             db_manager = get_db_manager()
             data_dir = os.path.dirname(db_manager.db_path)
             html_snapshot_dir = os.path.join(data_dir, "html_snapshots")
@@ -1118,19 +1114,12 @@ class EditDialog(ModalScreen):
 
         def refresh_snapshot_operation():
             """Refresh the webpage snapshot."""
-            from ng.services.webpage import WebpageSnapshotService
-            from ng.services.pdf import get_pdf_directory
-            import os
-
             # Get directories
             pdf_dir = get_pdf_directory()
             data_dir = os.path.dirname(pdf_dir)
             html_snapshot_dir = os.path.join(data_dir, "html_snapshots")
 
             # Get initial title for filename
-            import requests
-            from bs4 import BeautifulSoup
-
             try:
                 response = requests.get(url, timeout=30)
                 soup = BeautifulSoup(response.content, "html.parser")

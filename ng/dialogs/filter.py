@@ -1,12 +1,11 @@
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict
 
+from ng.services import CollectionService
 from textual.app import ComposeResult
 from textual.containers import Container, HorizontalScroll, VerticalScroll
 from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, RadioButton, RadioSet, Select, Static
-
-from ng.services.collection import CollectionService
 
 
 class FilterDialog(ModalScreen):

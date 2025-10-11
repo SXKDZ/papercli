@@ -6,9 +6,8 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from ng.services import SyncService
 from pluralizer import Pluralizer
-
-from ng.services.sync import SyncService
 
 
 class AutoSyncService:

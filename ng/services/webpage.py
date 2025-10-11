@@ -1,19 +1,18 @@
 from __future__ import annotations
 
+import asyncio
+import base64
+import mimetypes
 import re
+import traceback
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Tuple, Optional
-import base64
-import traceback
-
-import asyncio
-from concurrent.futures import ThreadPoolExecutor
-import mimetypes
+from typing import TYPE_CHECKING, Tuple
 from urllib.parse import urljoin
 
-from playwright.async_api import async_playwright
 from bs4 import BeautifulSoup
+from playwright.async_api import async_playwright
 
 if TYPE_CHECKING:
     pass

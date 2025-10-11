@@ -7,12 +7,16 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Tuple
 
 from ng.db.database import get_pdf_directory
-from ng.services.formatting import format_title_by_words
-from ng.services.metadata import MetadataExtractor
-from ng.services.paper import PaperService
-from ng.services.pdf import PDFManager, PDFService
-from ng.services.system import SystemService
-from ng.services.utils import normalize_paper_data
+from ng.services import (
+    MetadataExtractor,
+    PaperService,
+    PDFManager,
+    PDFService,
+    SystemService,
+    WebpageSnapshotService,
+    format_title_by_words,
+    normalize_paper_data,
+)
 
 if TYPE_CHECKING:
     from ng.db.models import Paper
@@ -709,8 +713,6 @@ class AddPaperService:
         Returns:
             Dictionary with paper object and snapshot information
         """
-        from ng.services.webpage import WebpageSnapshotService
-
         try:
             # Get directories for snapshots
             pdf_dir = get_pdf_directory()

@@ -3,14 +3,19 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING, Any, Dict, List
 
-from pluralizer import Pluralizer
-
 from ng.commands import CommandHandler
 from ng.db.models import Paper
 from ng.dialogs import AddDialog, ConfirmDialog, DetailDialog, EditDialog
-from ng.services import AddPaperService, PaperService, PDFService, validation
-from ng.services.background import BackgroundOperationService
-from ng.services.pdf import PDFDownloadHandler, PDFDownloadTaskFactory
+from ng.services import (
+    AddPaperService,
+    BackgroundOperationService,
+    PaperService,
+    PDFDownloadHandler,
+    PDFDownloadTaskFactory,
+    PDFService,
+    validation,
+)
+from pluralizer import Pluralizer
 
 if TYPE_CHECKING:
     from ng.papercli import PaperCLIApp
@@ -411,6 +416,7 @@ class PaperCommandHandler(CommandHandler):
     async def _open_html_file(self, paper: Paper):
         """Open HTML snapshot file for a paper."""
         import os
+
         from ng.db.database import get_db_manager
 
         db_manager = get_db_manager()

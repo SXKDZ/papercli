@@ -6,7 +6,6 @@ Centralized location for model capabilities and parameter requirements.
 import os
 from typing import Any, Dict
 
-
 # Comprehensive list of reasoning models that use max_completion_tokens
 REASONING_MODELS = {
     # o1 series

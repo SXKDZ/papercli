@@ -2,9 +2,8 @@
 
 import re
 
-from titlecase import titlecase
-
 from ng.services.formatting import format_title_by_words
+from titlecase import titlecase
 
 
 def fix_broken_lines(text: str) -> str:

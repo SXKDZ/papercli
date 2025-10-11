@@ -1,14 +1,10 @@
 import os
+import re
 from datetime import datetime
 from typing import Any, Callable, Dict, List
 
 import PyPDF2
-from pluralizer import Pluralizer
-from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, VerticalScroll
-from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Markdown, Static
-
+from ng.db.database import get_db_manager
 from ng.services import (
     BackgroundOperationService,
     ChatService,
@@ -17,11 +13,16 @@ from ng.services import (
     PDFManager,
     SystemService,
     dialog_utils,
+    format_title_by_words,
     llm_utils,
     prompts,
     theme,
 )
-from ng.services.formatting import format_title_by_words
+from pluralizer import Pluralizer
+from textual.app import ComposeResult
+from textual.containers import Container, Horizontal, VerticalScroll
+from textual.screen import ModalScreen
+from textual.widgets import Button, Input, Markdown, Static
 
 _pluralizer = Pluralizer()
 
@@ -272,8 +273,6 @@ class ChatDialog(ModalScreen):
                     and hasattr(paper, "html_snapshot_path")
                     and paper.html_snapshot_path
                 ):
-                    from ng.db.database import get_db_manager
-
                     db_manager = get_db_manager()
                     data_dir = os.path.dirname(db_manager.db_path)
                     html_snapshot_dir = os.path.join(data_dir, "html_snapshots")
@@ -413,9 +412,6 @@ class ChatDialog(ModalScreen):
                     error_widget.can_focus = True
                     chat_container.mount(error_widget)
                     continue
-                elif role == "thinking":
-                    role_color = theme.get_markup_color("info", app=self.app)
-                    role_text = "⏵ Thinking"
                 else:
                     # Unknown role, use default
                     role_color = theme.get_markup_color("text", app=self.app)
@@ -555,6 +551,37 @@ class ChatDialog(ModalScreen):
         elif event.button.id == "close-button":
             self.dismiss(None)
 
+    def _format_thinking_content(self, thinking: str) -> str:
+        """Format thinking content with proper paragraph breaks and quoting.
+
+        Args:
+            thinking: Raw thinking content from LLM
+
+        Returns:
+            Formatted thinking content with quote marks and paragraph breaks
+        """
+        # Split headers that might be concatenated without newlines
+        thinking_with_breaks = re.sub(
+            r"([.!?])\*\*([^*]+)\*\*", r"\1\n\n**\2**", thinking
+        )
+
+        lines = thinking_with_breaks.split("\n")
+        formatted_lines = []
+        for i, line in enumerate(lines):
+            # Check if line is a header (starts with bold text)
+            if re.match(r"^\*\*[^*]+\*\*\s*$", line.strip()) and i > 0:
+                # Add blank line before header if not already there
+                if formatted_lines and formatted_lines[-1] != "":
+                    formatted_lines.append("")
+            formatted_lines.append(line)
+
+        formatted_thinking = "\n".join(formatted_lines)
+        # Quote the entire block
+        quoted_lines = [
+            f"> {line}" if line else ">" for line in formatted_thinking.split("\n")
+        ]
+        return "\n".join(quoted_lines)
+
     def _on_streaming_update(self, content: str, thinking: str = "") -> None:
         """Handle streaming content updates."""
         # Stop loading animation on first content update and ensure widget ref
@@ -576,10 +603,8 @@ class ChatDialog(ModalScreen):
         # separator between thinking and content yet; only add it on completion.
         display_content = content
         if thinking:
-            # Format thinking as markdown quote block with header included
-            thinking_lines = thinking.split("\n")
-            quoted_thinking = "\n".join(f">{f' {line}' if line else ''}" for line in thinking_lines)
-            display_content = f"> **◆ Thinking**\n>\n{quoted_thinking}\n\n{content}"
+            quoted_thinking = self._format_thinking_content(thinking)
+            display_content = f"> **◆ Thinking ◆**\n>\n{quoted_thinking}\n\n{content}"
 
         if self._streaming_widget:
             self._streaming_widget.update(display_content)
@@ -615,11 +640,9 @@ class ChatDialog(ModalScreen):
         # Build display content with thinking prepended if available
         display_content = final_content
         if final_thinking:
-            # Format thinking as markdown quote block with header included
-            thinking_lines = final_thinking.split("\n")
-            quoted_thinking = "\n".join(f">{f' {line}' if line else ''}" for line in thinking_lines)
+            quoted_thinking = self._format_thinking_content(final_thinking)
             display_content = (
-                f"> **◆ Thinking**\n>\n{quoted_thinking}\n\n{final_content}"
+                f"> **◆ Thinking ◆**\n>\n{quoted_thinking}\n\n{final_content}"
             )
 
         # Add token info to response
@@ -959,7 +982,37 @@ class ChatDialog(ModalScreen):
             if role == "user":
                 lines.append(f"**You**: {content}")
             elif role == "assistant":
-                lines.append(f"**Assistant ({self.model_name})**: {content}")
+                # Check if there's thinking content stored separately
+                if "thinking" in entry and entry["thinking"]:
+                    # Add thinking section with proper formatting
+                    quoted_thinking = self._format_thinking_content(entry["thinking"])
+
+                    lines.append(f"**Assistant ({self.model_name})**:")
+                    lines.append("")
+                    lines.append("> **◆ Thinking ◆**")
+                    lines.append(">")
+                    lines.append(quoted_thinking)
+                    lines.append("")
+                    # Remove thinking from content if it was embedded
+                    # Content might have thinking already embedded, extract just the response part
+                    content_parts = content.split("\n\n")
+                    # Find where actual content starts (after token info removal if present)
+                    clean_content = content
+                    for part in content_parts:
+                        if not part.strip().startswith(
+                            ">"
+                        ) and not part.strip().startswith("*(~"):
+                            clean_content = "\n\n".join(
+                                [
+                                    p
+                                    for p in content_parts
+                                    if not p.strip().startswith(">") and p.strip()
+                                ]
+                            )
+                            break
+                    lines.append(clean_content)
+                else:
+                    lines.append(f"**Assistant ({self.model_name})**: {content}")
             elif role == "system":
                 lines.append(f"**System ({self.model_name})**: {content}")
             elif role == "thinking":
