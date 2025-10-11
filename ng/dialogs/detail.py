@@ -127,6 +127,10 @@ class DetailDialog(ModalScreen):
         if is_website:
             # Hide PDF button for websites
             pdf_button.display = False
+            html_button.display = True
+            folder_button.display = True
+            html_button.disabled = True
+            folder_button.disabled = True
 
             # Show and enable HTML button and folder button if snapshot exists
             try:
@@ -145,15 +149,9 @@ class DetailDialog(ModalScreen):
                     if os.path.exists(html_absolute_path):
                         html_button.disabled = False
                         folder_button.disabled = False
-                    else:
-                        html_button.display = False
-                        folder_button.display = False
-                else:
-                    html_button.display = False
-                    folder_button.display = False
             except Exception:
-                html_button.display = False
-                folder_button.display = False
+                html_button.disabled = True
+                folder_button.disabled = True
         else:
             # For non-website papers: hide HTML button, show PDF/folder if available
             html_button.display = False
