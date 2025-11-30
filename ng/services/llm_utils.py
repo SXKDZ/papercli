@@ -6,6 +6,8 @@ Centralized location for model capabilities and parameter requirements.
 import os
 from typing import Any, Dict
 
+from . import constants
+
 # Comprehensive list of reasoning models that use max_completion_tokens
 REASONING_MODELS = {
     # o1 series
@@ -72,9 +74,9 @@ def get_model_parameters(
 
     # Use environment defaults if not provided
     if max_tokens is None:
-        max_tokens = int(os.getenv("OPENAI_MAX_TOKENS", "4000"))
+        max_tokens = int(os.getenv("OPENAI_MAX_TOKENS", str(constants.DEFAULT_MAX_TOKENS)))
     if temperature is None:
-        temperature = float(os.getenv("OPENAI_TEMPERATURE", "0.7"))
+        temperature = float(os.getenv("OPENAI_TEMPERATURE", str(constants.DEFAULT_TEMPERATURE)))
 
     # Set token parameter based on model type
     if is_reasoning_model(model_name):

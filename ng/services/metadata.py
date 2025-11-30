@@ -14,11 +14,13 @@ import rispy
 from bs4 import BeautifulSoup
 from ng.db.database import get_db_manager
 from ng.services import (
+    constants,
     fix_broken_lines,
     http_utils,
     llm_utils,
     normalize_paper_data,
     prompts,
+    sanitize_for_logging,
 )
 from openai import OpenAI
 
@@ -192,7 +194,7 @@ class MetadataExtractor:
 
         # Initialize chat service if not available
         client = OpenAI()
-        model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+        model_name = os.getenv("OPENAI_MODEL", constants.DEFAULT_EXTRACTION_MODEL)
 
         try:
             prompt = prompts.venue_extraction_prompt(venue_field)
@@ -515,8 +517,8 @@ class MetadataExtractor:
                 if len(pdf_reader.pages) == 0:
                     raise Exception("PDF file is empty")
 
-                # Extract text from first 1-2 pages
-                pages_to_extract = min(2, len(pdf_reader.pages))
+                # Extract text from first pages for metadata extraction
+                pages_to_extract = min(constants.DEFAULT_PDF_METADATA_PAGES, len(pdf_reader.pages))
                 text_content = ""
 
                 for i in range(pages_to_extract):
@@ -526,8 +528,11 @@ class MetadataExtractor:
                 if not text_content.strip():
                     raise Exception("Could not extract text from PDF")
 
+                # Sanitize PDF text to remove surrogate characters that can't be encoded
+                text_content = sanitize_for_logging(text_content)
+
             client = OpenAI()
-            model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+            model_name = os.getenv("OPENAI_MODEL", constants.DEFAULT_EXTRACTION_MODEL)
 
             prompt = prompts.metadata_extraction_prompt(text_content)
 
@@ -637,7 +642,7 @@ class MetadataExtractor:
                     return ""
 
                 # Extract text from first N pages to stay within token limits (configurable)
-                max_pages = int(os.getenv("PAPERCLI_PDF_PAGES", "10"))
+                max_pages = int(os.getenv("PAPERCLI_PDF_PAGES", str(constants.DEFAULT_PDF_SUMMARY_PAGES)))
                 pages_to_extract = min(max_pages, len(pdf_reader.pages))
                 full_text = ""
 
@@ -648,8 +653,11 @@ class MetadataExtractor:
                 if not full_text.strip():
                     return ""
 
+                # Sanitize PDF text to remove surrogate characters that can't be encoded
+                full_text = sanitize_for_logging(full_text)
+
             client = OpenAI()
-            model_name = os.getenv("OPENAI_MODEL", "gpt-4o")
+            model_name = os.getenv("OPENAI_MODEL", constants.DEFAULT_CHAT_MODEL)
 
             prompt = prompts.summary_academic_summary(full_text)
 
@@ -676,7 +684,16 @@ class MetadataExtractor:
 
             response = client.chat.completions.create(**params)
 
-            summary_response = response.choices[0].message.content.strip()
+            # Handle None or empty response from API
+            content = response.choices[0].message.content
+            if content is None:
+                self.app._add_log(
+                    "paper_summary_error",
+                    f"OpenAI API returned None content for PDF: {pdf_path}"
+                )
+                return ""
+
+            summary_response = content.strip()
 
             # Log the LLM response
             self.app._add_log(
@@ -722,12 +739,15 @@ class MetadataExtractor:
                 return ""
 
             # Limit text length (similar to PDF page limit)
-            max_chars = 20000
+            max_chars = constants.DEFAULT_HTML_MAX_CHARS
             if len(full_text) > max_chars:
                 full_text = full_text[:max_chars]
 
+            # Sanitize HTML text to remove surrogate characters that can't be encoded
+            full_text = sanitize_for_logging(full_text)
+
             client = OpenAI()
-            model_name = os.getenv("OPENAI_MODEL", "gpt-4o")
+            model_name = os.getenv("OPENAI_MODEL", constants.DEFAULT_CHAT_MODEL)
 
             prompt = prompts.summary_academic_summary(full_text)
 
@@ -754,7 +774,16 @@ class MetadataExtractor:
 
             response = client.chat.completions.create(**params)
 
-            summary_response = response.choices[0].message.content.strip()
+            # Handle None or empty response from API
+            content = response.choices[0].message.content
+            if content is None:
+                self.app._add_log(
+                    "webpage_summary_error",
+                    f"OpenAI API returned None content for HTML: {html_absolute_path}"
+                )
+                return ""
+
+            summary_response = content.strip()
 
             # Log the LLM response
             self.app._add_log(
@@ -1008,7 +1037,7 @@ class MetadataExtractor:
             text_content = soup.get_text(separator="\n", strip=True)
 
             client = OpenAI()
-            model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+            model_name = os.getenv("OPENAI_MODEL", constants.DEFAULT_EXTRACTION_MODEL)
 
             prompt = prompts.webpage_metadata_extraction_prompt(text_content, url)
 

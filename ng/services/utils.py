@@ -6,6 +6,24 @@ from ng.services.formatting import format_title_by_words
 from titlecase import titlecase
 
 
+def sanitize_for_logging(text: str) -> str:
+    """
+    Sanitize text for safe logging by removing surrogate characters.
+
+    Surrogate characters (like \\ud835 from mathematical symbols in PDFs)
+    cannot be encoded in UTF-8 and will cause encoding errors in logs.
+
+    Args:
+        text: Text that may contain surrogate characters
+
+    Returns:
+        Sanitized text safe for UTF-8 encoding
+    """
+    if not isinstance(text, str):
+        text = str(text)
+    return text.encode('utf-8', errors='replace').decode('utf-8')
+
+
 def fix_broken_lines(text: str) -> str:
     """Fix broken lines in text - join lines that are not proper sentence endings."""
     if not text:

@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict
 
 from dotenv import load_dotenv, set_key
-from ng.services import dialog_utils, llm_utils
+from ng.services import constants, dialog_utils, llm_utils
 from openai import OpenAI
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
@@ -145,7 +145,7 @@ class ConfigDialog(ModalScreen):
             "PAPERCLI_REMOTE_PATH": "",
             "PAPERCLI_AUTO_SYNC": "false",
             "PAPERCLI_AUTO_SYNC_INTERVAL": "5",
-            "PAPERCLI_PDF_PAGES": "10",
+            "PAPERCLI_PDF_PAGES": str(constants.DEFAULT_PDF_SUMMARY_PAGES),
             "PAPERCLI_THEME": "textual-dark",
         }
         self._load_available_models()
@@ -230,7 +230,7 @@ class ConfigDialog(ModalScreen):
                         with Horizontal(classes="form-row"):
                             yield Label("Model:", classes="form-label")
                             model_options = self._build_model_options()
-                            current_model = os.getenv("OPENAI_MODEL", "gpt-4o")
+                            current_model = os.getenv("OPENAI_MODEL", constants.DEFAULT_CHAT_MODEL)
                             # Ensure we have a valid default model
                             default_model = (
                                 current_model
@@ -387,7 +387,7 @@ class ConfigDialog(ModalScreen):
                         # PDF Pages Limit
                         with Horizontal(classes="form-row"):
                             yield Label("PDF Pages Limit:", classes="form-label")
-                            pdf_pages = os.getenv("PAPERCLI_PDF_PAGES", "10")
+                            pdf_pages = os.getenv("PAPERCLI_PDF_PAGES", str(constants.DEFAULT_PDF_SUMMARY_PAGES))
                             yield Input(
                                 value=pdf_pages,
                                 placeholder="10",
@@ -425,7 +425,7 @@ class ConfigDialog(ModalScreen):
         if event.select.id == "model-select":
             if event.value and str(event.value).startswith("SEPARATOR_"):
                 # Prevent selecting separator items by reverting to previous valid selection
-                current_model = os.getenv("OPENAI_MODEL", "gpt-4o")
+                current_model = os.getenv("OPENAI_MODEL", constants.DEFAULT_CHAT_MODEL)
                 if current_model in self.available_models:
                     event.select.value = current_model
                 else:
@@ -507,7 +507,7 @@ class ConfigDialog(ModalScreen):
             if (
                 selected_model
                 and not str(selected_model).startswith("SEPARATOR_")
-                and selected_model != os.getenv("OPENAI_MODEL", "gpt-4o")
+                and selected_model != os.getenv("OPENAI_MODEL", constants.DEFAULT_CHAT_MODEL)
             ):
                 changes["OPENAI_MODEL"] = selected_model
 
@@ -579,7 +579,7 @@ class ConfigDialog(ModalScreen):
                 changes["PAPERCLI_AUTO_SYNC_INTERVAL"] = str(auto_sync_interval)
 
             # PDF Pages
-            if str(pdf_pages) != os.getenv("PAPERCLI_PDF_PAGES", "10"):
+            if str(pdf_pages) != os.getenv("PAPERCLI_PDF_PAGES", str(constants.DEFAULT_PDF_SUMMARY_PAGES)):
                 changes["PAPERCLI_PDF_PAGES"] = str(pdf_pages)
 
             # Theme

@@ -11,12 +11,13 @@ import PyPDF2
 import tiktoken
 from bs4 import BeautifulSoup
 from ng.db.database import get_db_manager
-from ng.services import PDFManager, dialog_utils, llm_utils, prompts
+from ng.services import PDFManager, dialog_utils, llm_utils, prompts, sanitize_for_logging
 from openai import OpenAI
 from pluralizer import Pluralizer
 
 if TYPE_CHECKING:
     from ng.db.models import Paper
+
 
 class ChatService:
     """Service for chat functionality."""

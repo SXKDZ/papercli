@@ -10,7 +10,7 @@ from pluralizer import Pluralizer
 
 from ng.commands import CommandHandler
 from ng.dialogs import ConfigDialog, DoctorDialog, MessageDialog, SyncDialog
-from ng.services import DatabaseHealthService
+from ng.services import DatabaseHealthService, constants, llm_utils
 from ng.version import VersionManager
 
 if TYPE_CHECKING:
@@ -1017,7 +1017,7 @@ gpt-3.5-turbo                   - GPT-3.5 Turbo model (faster, cheaper)"""
 
     def _show_current_model(self):
         """Show the current OpenAI model."""
-        current_model = os.getenv("OPENAI_MODEL", "gpt-4o")
+        current_model = os.getenv("OPENAI_MODEL", constants.DEFAULT_CHAT_MODEL)
         self.app.notify(
             f"Current OpenAI model: {current_model}", severity="information"
         )
@@ -1184,7 +1184,7 @@ gpt-3.5-turbo                   - GPT-3.5 Turbo model (faster, cheaper)"""
 
     def _show_current_pdf_pages(self):
         """Show the current PDF pages limit."""
-        pdf_pages = int(os.getenv("PAPERCLI_PDF_PAGES", "10"))
+        pdf_pages = int(os.getenv("PAPERCLI_PDF_PAGES", str(constants.DEFAULT_PDF_SUMMARY_PAGES)))
         self.app.notify(f"Current PDF pages limit: {pdf_pages}", severity="information")
 
     def _set_pdf_pages(self, pages):
@@ -1262,14 +1262,14 @@ gpt-3.5-turbo                   - GPT-3.5 Turbo model (faster, cheaper)"""
 
     def _show_all_config(self):
         """Show all current configuration."""
-        model = os.getenv("OPENAI_MODEL", "gpt-4o")
+        model = os.getenv("OPENAI_MODEL", constants.DEFAULT_CHAT_MODEL)
         api_key = os.getenv("OPENAI_API_KEY", "")
         max_tokens = int(os.getenv("OPENAI_MAX_TOKENS", "4000"))
         temperature = os.getenv("OPENAI_TEMPERATURE", "0.7")
         remote_path = os.getenv("PAPERCLI_REMOTE_PATH", "Not set")
         auto_sync = os.getenv("PAPERCLI_AUTO_SYNC", "false").lower() == "true"
         auto_sync_interval = int(os.getenv("PAPERCLI_AUTO_SYNC_INTERVAL", "5"))
-        pdf_pages = int(os.getenv("PAPERCLI_PDF_PAGES", "10"))
+        pdf_pages = int(os.getenv("PAPERCLI_PDF_PAGES", str(constants.DEFAULT_PDF_SUMMARY_PAGES)))
         theme = os.getenv("PAPERCLI_THEME", getattr(self.app, "theme", "textual-dark"))
 
         if api_key:
