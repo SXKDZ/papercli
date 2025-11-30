@@ -5,7 +5,22 @@ Ordered to avoid circular imports during module initialization.
 
 # Level 1: Core utilities with no dependencies
 from . import http_utils
-from .utils import fix_broken_lines, normalize_paper_data
+from . import constants
+from .utils import fix_broken_lines, normalize_paper_data, sanitize_for_logging
+from .constants import (
+    DEFAULT_CHAT_MODEL,
+    DEFAULT_EXTRACTION_MODEL,
+    DEFAULT_MAX_TOKENS,
+    DEFAULT_TEMPERATURE,
+    DEFAULT_REASONING_EFFORT,
+    DEFAULT_SHOW_THINKING,
+    DEFAULT_PDF_SUMMARY_PAGES,
+    DEFAULT_PDF_METADATA_PAGES,
+    DEFAULT_HTML_MAX_CHARS,
+    DEFAULT_AUTO_SYNC,
+    DEFAULT_AUTO_SYNC_INTERVAL,
+    DEFAULT_THEME,
+)
 
 # Level 2: Formatting utilities (no dependencies)
 from .formatting import (
@@ -77,6 +92,7 @@ __all__ = [
     "SearchService",
     "fix_broken_lines",
     "normalize_paper_data",
+    "sanitize_for_logging",
     "SyncOperation",
     "SyncConflict",
     "SyncResult",
@@ -102,4 +118,18 @@ __all__ = [
     "paper_tracker",
     "prompts",
     "llm_utils",
+    "constants",
+    # Application constants (from constants.py)
+    "DEFAULT_CHAT_MODEL",
+    "DEFAULT_EXTRACTION_MODEL",
+    "DEFAULT_MAX_TOKENS",
+    "DEFAULT_TEMPERATURE",
+    "DEFAULT_REASONING_EFFORT",
+    "DEFAULT_SHOW_THINKING",
+    "DEFAULT_PDF_SUMMARY_PAGES",
+    "DEFAULT_PDF_METADATA_PAGES",
+    "DEFAULT_HTML_MAX_CHARS",
+    "DEFAULT_AUTO_SYNC",
+    "DEFAULT_AUTO_SYNC_INTERVAL",
+    "DEFAULT_THEME",
 ]

@@ -12,6 +12,7 @@ from ng.services import (
     PaperService,
     PDFManager,
     SystemService,
+    constants,
     dialog_utils,
     format_title_by_words,
     llm_utils,
@@ -160,9 +161,9 @@ class ChatDialog(ModalScreen):
         self.callback = callback
         self.chat_history = []
         self.chat_display_content = ""
-        self.model_name = os.getenv("OPENAI_MODEL", "gpt-4o")
+        self.model_name = os.getenv("OPENAI_MODEL", constants.DEFAULT_CHAT_MODEL)
         self.summary_in_progress = False
-        self.default_pdf_pages_limit = int(os.getenv("PAPERCLI_PDF_PAGES", "10"))
+        self.default_pdf_pages_limit = int(os.getenv("PAPERCLI_PDF_PAGES", str(constants.DEFAULT_PDF_SUMMARY_PAGES)))
         self.pdf_start_page = 1
         self.pdf_end_page = self.default_pdf_pages_limit
         self.total_pdf_pages = 0
