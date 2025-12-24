@@ -47,7 +47,8 @@ class PaperCLIApp(App):
         ("question_mark", "show_help", "Help"),
         # Function keys
         ("f1", "show_add_dialog", "Add"),
-        ("f2", "open_paper", "PDF"),
+        ("f2", "open_paper_pdf", "PDF"),  # For non-website papers
+        ("f2", "open_paper_html", "HTML"),  # For website papers
         ("f3", "show_details", "Details"),
         ("f4", "chat_paper", "Chat"),
         ("f5", "edit_paper", "Edit"),
@@ -119,6 +120,31 @@ class PaperCLIApp(App):
             except Exception:
                 # LogPanel may not be initialized yet during startup
                 pass
+
+    def check_action(self, action: str, parameters: tuple) -> bool | None:
+        """Control which actions are visible in the footer based on current state."""
+        # Only process F2 actions
+        if action not in ("open_paper_html", "open_paper_pdf"):
+            return True
+
+        # Check if current paper is a website
+        is_website = False
+        try:
+            if self.main_screen:
+                paper_list = self.main_screen.query_one("#paper-list-view")
+                current_paper = paper_list.get_current_paper()
+                if current_paper:
+                    is_website = current_paper.paper_type == "website"
+        except Exception:
+            pass
+
+        # Show "HTML" binding for websites, "PDF" for others
+        if action == "open_paper_html":
+            return is_website  # Show only for website papers
+        elif action == "open_paper_pdf":
+            return not is_website  # Show only for non-website papers
+
+        return True
 
     def load_papers(self):
         """Load papers from database and update the PaperList widget."""
@@ -269,8 +295,12 @@ class PaperCLIApp(App):
         if hasattr(self.screen, "action_show_add_dialog"):
             self.screen.action_show_add_dialog()
 
-    def action_open_paper(self) -> None:
-        """Open paper (F2)."""
+    def action_open_paper_pdf(self) -> None:
+        """Open paper PDF (F2)."""
+        self.run_worker(self.paper_commands.handle_open_command([]), exclusive=False)
+
+    def action_open_paper_html(self) -> None:
+        """Open paper HTML (F2)."""
         self.run_worker(self.paper_commands.handle_open_command([]), exclusive=False)
 
     def action_chat_paper(self) -> None:

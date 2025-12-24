@@ -91,6 +91,7 @@ class MainScreen(Screen):
     def on_mount(self) -> None:
         """Initialize header stats when screen is mounted."""
         self.call_later(self.update_header_stats)
+        self.call_later(self.app.refresh_bindings)
 
     def action_cursor_up(self) -> None:
         paper_list = self.query_one("#paper-list-view")
@@ -157,6 +158,8 @@ class MainScreen(Screen):
     def on_paper_list_stats_changed(self, message: PaperList.StatsChanged) -> None:
         """Handle stats change from paper list."""
         self.update_header_stats()
+        # Refresh bindings to update F2 label (PDF vs HTML)
+        self.app.refresh_bindings()
 
     def update_paper_list(self, papers: List[Paper]) -> None:
         """Updates the paper list with new data."""
@@ -164,6 +167,8 @@ class MainScreen(Screen):
         paper_list_widget.set_papers(papers)
         # Update header stats
         self.update_header_stats()
+        # Refresh bindings to update F2 label
+        self.app.refresh_bindings()
 
     def update_header_stats(self) -> None:
         """Update the header with current paper statistics."""
@@ -196,7 +201,7 @@ class MainScreen(Screen):
 
 ### Function Keys
 - **F1** - Add papers
-- **F2** - Open selected paper in default PDF viewer
+- **F2** - Open selected paper (PDF or HTML)
 - **F3** - Show paper details
 - **F4** - Chat with paper
 - **F5** - Edit paper

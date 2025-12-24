@@ -540,6 +540,8 @@ class PaperList(DataTable):
             current_paper = self.get_current_paper()
             if current_paper:
                 self.current_paper_id = current_paper.id
+        # Post stats changed to update header and refresh bindings
+        self.post_message(self.StatsChanged())
 
     # Movement methods
     def move_up(self) -> None:
